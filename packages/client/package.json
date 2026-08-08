@@ -1,0 +1,17 @@
+{
+  "name": "@one-status/client",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@one-status/crypto": "workspace:*",
+    "@one-status/protocol": "workspace:*"
+  },
+  "devDependencies": {
+    "@one-status/api": "workspace:*"
+  }
+}
+

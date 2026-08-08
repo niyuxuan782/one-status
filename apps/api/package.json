@@ -1,0 +1,27 @@
+{
+  "name": "@one-status/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/app.ts",
+    "./runtime": "./src/runtime.ts"
+  },
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "start": "tsx src/server.ts"
+  },
+  "dependencies": {
+    "@one-status/client": "workspace:*",
+    "@one-status/crypto": "workspace:*",
+    "@one-status/local-config": "workspace:*",
+    "@one-status/protocol": "workspace:*",
+    "@secretlint/core": "^13.0.4",
+    "@secretlint/secretlint-rule-preset-recommend": "^13.0.4",
+    "fastify": "^5.6.0",
+    "lucide": "^1.30.0",
+    "smol-toml": "^1.7.1",
+    "yaml": "^2.9.0",
+    "zod": "^4.0.0"
+  }
+}

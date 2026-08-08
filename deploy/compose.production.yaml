@@ -1,0 +1,86 @@
+name: one-status-cloud
+
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: "one-status:${ONE_STATUS_IMAGE_TAG:-production}"
+    restart: unless-stopped
+    environment:
+      ONE_STATUS_RELEASE_ID: "${ONE_STATUS_IMAGE_TAG:-production}"
+    command:
+      - server
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8787"
+      - --db
+      - /data/one-status.sqlite
+      - --dashboard
+      - "false"
+      - --trust-proxy
+      - "true"
+    volumes:
+      - "${ONE_STATUS_DATA_DIR:?set ONE_STATUS_DATA_DIR}:/data"
+    expose:
+      - "8787"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:8787/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "5"
+    networks:
+      - private
+
+  caddy:
+    image: caddy:2.10.2-alpine
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      ONE_STATUS_ACME_EMAIL: "${ONE_STATUS_ACME_EMAIL:?set ONE_STATUS_ACME_EMAIL}"
+      ONE_STATUS_DOMAIN: "${ONE_STATUS_DOMAIN:?set ONE_STATUS_DOMAIN}"
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - "${ONE_STATUS_CADDY_DATA_DIR:?set ONE_STATUS_CADDY_DATA_DIR}:/data"
+      - "${ONE_STATUS_CADDY_CONFIG_DIR:?set ONE_STATUS_CADDY_CONFIG_DIR}:/config"
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "5"
+    networks:
+      - private
+
+networks:
+  private:
+    driver: bridge

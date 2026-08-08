@@ -1,0 +1,20 @@
+{
+  "name": "@one-status/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "one-status": "./src/main.ts"
+  },
+  "scripts": {
+    "start": "tsx src/main.ts"
+  },
+  "dependencies": {
+    "@one-status/api": "workspace:*",
+    "@one-status/client": "workspace:*",
+    "@one-status/crypto": "workspace:*",
+    "@one-status/local-config": "workspace:*",
+    "@one-status/mcp": "workspace:*",
+    "@one-status/protocol": "workspace:*"
+  }
+}

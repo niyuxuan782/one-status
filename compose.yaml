@@ -1,0 +1,13 @@
+services:
+  mcp:
+    build: .
+    image: one-status:0.1.0
+    restart: unless-stopped
+    ports:
+      - "${ONE_STATUS_MCP_PUBLISH_HOST:-127.0.0.1}:${ONE_STATUS_MCP_PORT:-3000}:3000"
+    environment:
+      ONE_STATUS_AGENT_ID: "${ONE_STATUS_AGENT_ID:-remote-agent}"
+      ONE_STATUS_MCP_BEARER_TOKEN: "${ONE_STATUS_MCP_BEARER_TOKEN:?set ONE_STATUS_MCP_BEARER_TOKEN}"
+      ONE_STATUS_STATUS_KEY: "${ONE_STATUS_STATUS_KEY:?set ONE_STATUS_STATUS_KEY}"
+      ONE_STATUS_TOKEN: "${ONE_STATUS_TOKEN:?set ONE_STATUS_TOKEN}"
+      ONE_STATUS_URL: "${ONE_STATUS_URL:?set ONE_STATUS_URL to an HTTPS sync API}"

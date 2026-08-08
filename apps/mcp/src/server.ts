@@ -1,0 +1,295 @@
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type {
+  DecryptedStatusSnapshot,
+  SyncedStatusVault,
+} from "@one-status/client";
+import type { StatusDocument } from "@one-status/protocol";
+import { z } from "zod";
+import {
+  applyStatusMutation,
+  digestStatusMutation,
+  statusMutationSchema,
+} from "./operations.js";
+import type { RuntimeToolGateway } from "./tool-gateway.js";
+
+type Vault = Pick<SyncedStatusVault, "read" | "mutate">;
+
+export function createMcpServer(
+  vault: Vault,
+  agentId: string,
+  toolGateway?: RuntimeToolGateway,
+): McpServer {
+  const server = new McpServer(
+    {
+      name: "one-status",
+      version: "0.1.0",
+    },
+    {
+      instructions:
+        "One Status is the authoritative live source for the user's portable state. " +
+        "When the user asks to read, load, restore, continue, or show their One Status context, " +
+        "call status_get_context before inspecting repository files or using shell commands. " +
+        "Use the focused status tools for profile, memory, project, and context requests. " +
+        "Use tools_list to discover approved OAuth actions and tools_execute to run them without exposing credentials.",
+    },
+  );
+
+  server.registerTool(
+    "read_status",
+    {
+      description: "Read the latest decrypted One Status state for this user.",
+      inputSchema: {
+        section: z
+          .enum([
+            "all",
+            "identity",
+            "preferences",
+            "memory",
+            "projects",
+            "workspace",
+            "permissions",
+            "tools",
+            "tasks",
+          ])
+          .default("all"),
+      },
+    },
+    async ({ section }) => {
+      const snapshot = await vault.read();
+      const data = section === "all" ? snapshot.status : snapshot.status[section];
+      return toolResult({ version: snapshot.version, section, data });
+    },
+  );
+
+  server.registerTool(
+    "write_status",
+    {
+      description:
+        "Apply one validated status mutation, preserving concurrent changes from other devices.",
+      inputSchema: {
+        mutationId: z
+          .uuid()
+          .describe("Stable UUID for retrying the same logical mutation."),
+        mutation: statusMutationSchema,
+      },
+    },
+    async ({ mutationId, mutation }) => {
+      const snapshot = await vault.mutate(
+        (status) => {
+          applyStatusMutation(
+            status,
+            mutation,
+            agentId,
+            new Date().toISOString(),
+            mutationId,
+          );
+        },
+        { mutationId, mutationDigest: digestStatusMutation(mutation) },
+      );
+      return toolResult({
+        version: snapshot.version,
+        mutation: mutation.type,
+        deduplicated: snapshot.deduplicated ?? false,
+      });
+    },
+  );
+
+  server.registerTool(
+    "status_get_profile",
+    {
+      description: "Get the user's identity and durable preferences.",
+      inputSchema: {},
+    },
+    async () => {
+      const snapshot = await vault.read();
+      return toolResult({
+        version: snapshot.version,
+        identity: snapshot.status.identity,
+        preferences: snapshot.status.preferences,
+      });
+    },
+  );
+
+  server.registerTool(
+    "status_get_memory",
+    {
+      description: "Get user, project, or session memory from the latest status.",
+      inputSchema: {
+        scope: z.enum(["user", "project", "session"]).optional(),
+        projectId: z.string().min(1).optional(),
+      },
+    },
+    async ({ scope, projectId }) => {
+      const snapshot = await vault.read();
+      const memory = snapshot.status.memory.filter(
+        (entry) =>
+          (!scope || entry.scope === scope) &&
+          (!projectId || entry.projectId === projectId),
+      );
+      return toolResult({ version: snapshot.version, memory });
+    },
+  );
+
+  server.registerTool(
+    "status_search_memory",
+    {
+      description: "Search decrypted memory locally by content or tag.",
+      inputSchema: {
+        query: z.string().min(1),
+        limit: z.number().int().min(1).max(50).default(20),
+      },
+    },
+    async ({ query, limit }) => {
+      const snapshot = await vault.read();
+      const normalizedQuery = query.toLocaleLowerCase();
+      const memory = snapshot.status.memory
+        .filter((entry) =>
+          [entry.content, ...entry.tags].some((value) =>
+            value.toLocaleLowerCase().includes(normalizedQuery),
+          ),
+        )
+        .slice(0, limit);
+      return toolResult({ version: snapshot.version, memory });
+    },
+  );
+
+  server.registerTool(
+    "status_get_project",
+    {
+      description: "Get a project and its active tasks and project memory.",
+      inputSchema: {
+        projectId: z.string().min(1).optional(),
+      },
+    },
+    async ({ projectId }) => {
+      const snapshot = await vault.read();
+      const id = projectId ?? snapshot.status.workspace.activeProjectId;
+      if (!id || !snapshot.status.projects[id]) {
+        throw new Error("Project was not found and no active project is set.");
+      }
+      return toolResult(projectView(snapshot, id));
+    },
+  );
+
+  server.registerTool(
+    "status_get_context",
+    {
+      title: "Get current One Status context",
+      description:
+        "Call this when the user asks for their One Status context, wants to continue a project, " +
+        "or needs state restored in a new session. Returns the live handoff context, active project, " +
+        "open tasks, and session memory; repository files and chat history are not substitutes.",
+      inputSchema: {},
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async () => {
+      const snapshot = await vault.read();
+      const projectId = snapshot.status.workspace.activeProjectId;
+      return toolResult({
+        version: snapshot.version,
+        workspace: snapshot.status.workspace,
+        project: projectId ? snapshot.status.projects[projectId] ?? null : null,
+        openTasks: Object.values(snapshot.status.tasks).filter(
+          (task) => task.status !== "done",
+        ),
+        sessionMemory: snapshot.status.memory.filter(
+          (entry) => entry.scope === "session",
+        ),
+      });
+    },
+  );
+
+  server.registerTool(
+    "status_update_context",
+    {
+      description: "Update the handoff context after meaningful task progress.",
+      inputSchema: {
+        currentContext: z.string().min(1),
+        projectId: z.string().min(1).optional(),
+      },
+    },
+    async ({ currentContext, projectId }) => {
+      const snapshot = await vault.mutate((status) => {
+        applyStatusMutation(
+          status,
+          { type: "update_context", currentContext, projectId },
+          agentId,
+        );
+      });
+      return toolResult({
+        version: snapshot.version,
+        workspace: snapshot.status.workspace,
+      });
+    },
+  );
+
+  if (toolGateway) {
+    server.registerTool(
+      "tools_list",
+      {
+        title: "List approved One Status tools",
+        description:
+          "List OAuth connections and actions the current Agent is allowed to use.",
+        inputSchema: {},
+        annotations: {
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false,
+        },
+      },
+      async () => toolResult(await toolGateway.list()),
+    );
+
+    server.registerTool(
+      "tools_execute",
+      {
+        title: "Execute an approved One Status action",
+        description:
+          "Execute one action returned by tools_list. OAuth credentials remain inside One Status.",
+        inputSchema: {
+          connectionId: z.uuid(),
+          action: z.string().min(1),
+          arguments: z.record(z.string(), z.unknown()).default({}),
+        },
+      },
+      async ({ connectionId, action, arguments: arguments_ }) =>
+        toolResult({
+          result: await toolGateway.execute({
+            connectionId,
+            action,
+            arguments: arguments_,
+          }),
+        }),
+    );
+  }
+
+  return server;
+}
+
+function projectView(snapshot: DecryptedStatusSnapshot, projectId: string) {
+  return {
+    version: snapshot.version,
+    project: snapshot.status.projects[projectId],
+    tasks: Object.values(snapshot.status.tasks).filter(
+      (task) => task.projectId === projectId,
+    ),
+    memory: snapshot.status.memory.filter(
+      (entry) => entry.scope === "project" && entry.projectId === projectId,
+    ),
+  };
+}
+
+function toolResult(payload: Record<string, unknown>) {
+  return {
+    content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
+    structuredContent: payload,
+  };
+}
+
+export type { Vault, StatusDocument };

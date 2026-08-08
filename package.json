@@ -1,0 +1,58 @@
+{
+  "name": "one-status",
+  "version": "0.1.0",
+  "description": "Portable identity, context, memory, and permission layer for AI agents",
+  "private": false,
+  "type": "module",
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/niyuxuan782/one-status#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/niyuxuan782/one-status.git"
+  },
+  "bugs": {
+    "url": "https://github.com/niyuxuan782/one-status/issues"
+  },
+  "bin": {
+    "one-status": "dist/one-status.js"
+  },
+  "files": [
+    "dist/one-status.js",
+    "dist/THIRD_PARTY_NOTICES.txt",
+    "deploy",
+    "docs",
+    "scripts/deploy-production.sh",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "packageManager": "pnpm@10.33.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "pnpm typecheck && pnpm build:bundle",
+    "build:bundle": "node scripts/build.mjs",
+    "brew:install:local": "scripts/install-homebrew-local.sh",
+    "check": "pnpm typecheck && pnpm test",
+    "demo": "pnpm --filter @one-status/demo start",
+    "dev:api": "pnpm --filter @one-status/api dev",
+    "start:api": "pnpm --filter @one-status/api start",
+    "start:mcp": "pnpm --filter @one-status/mcp start",
+    "pack:local": "pnpm build && npm pack --pack-destination dist",
+    "prepack": "pnpm build:bundle",
+    "release:prepare": "node scripts/prepare-release.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "@types/node": "^24.3.0",
+    "esbuild": "^0.28.0",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2",
+    "vitest": "^4.0.0"
+  }
+}

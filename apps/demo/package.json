@@ -1,0 +1,17 @@
+{
+  "name": "@one-status/demo",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/main.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.25.0",
+    "@one-status/api": "workspace:*",
+    "@one-status/client": "workspace:*",
+    "@one-status/crypto": "workspace:*",
+    "@one-status/local-config": "workspace:*"
+  }
+}
+

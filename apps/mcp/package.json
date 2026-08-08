@@ -1,0 +1,23 @@
+{
+  "name": "@one-status/mcp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/server.ts",
+    "./config": "./src/config.ts",
+    "./http": "./src/http.ts",
+    "./stdio": "./src/stdio.ts"
+  },
+  "scripts": {
+    "start": "tsx src/main.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.25.0",
+    "@one-status/client": "workspace:*",
+    "@one-status/crypto": "workspace:*",
+    "@one-status/local-config": "workspace:*",
+    "@one-status/protocol": "workspace:*",
+    "zod": "^4.0.0"
+  }
+}
