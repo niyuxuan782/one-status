@@ -45,7 +45,7 @@ describe("sync API", () => {
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({
       name: "One Status",
-      version: "0.1.0",
+      version: "0.1.1",
       health: "/health",
     });
   });

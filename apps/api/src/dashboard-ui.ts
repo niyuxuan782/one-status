@@ -21,6 +21,7 @@ import {
   Settings2,
   ShieldCheck,
   MessageSquare,
+  Terminal,
   Trash2,
   X,
   type IconNode,
@@ -49,6 +50,7 @@ const iconMap = {
   shield: renderIcon(ShieldCheck),
   slack: renderIcon(MessageSquare),
   status: renderIcon(CircleUserRound),
+  terminal: renderIcon(Terminal),
   trash: renderIcon(Trash2),
   x: renderIcon(X),
 };
@@ -222,6 +224,7 @@ a { color: inherit; }
 .card-head p { margin: 4px 0 0; color: var(--muted); font-size: 11px; }
 .card-body { min-height: 66px; margin: 14px 0; color: #444b51; font-size: 13px; line-height: 1.55; }
 .card-actions { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding-top: 13px; border-top: 1px solid #eceeef; }
+.provider-buttons { display: flex; align-items: center; gap: 8px; }
 .provider-card { position: relative; overflow: hidden; }
 .provider-card.provider-google { --provider-accent: #4285f4; }
 .provider-card.provider-github { --provider-accent: #24292f; }
@@ -341,6 +344,7 @@ tr:last-child td { border-bottom: 0; }
   .modal { width: 100%; max-height: calc(100dvh - 16px); border-radius: 7px 7px 0 0; }
   .modal > header, #modal-content { padding-left: 16px; padding-right: 16px; }
   .provider-card .card-actions, .grant-row { align-items: stretch; flex-direction: column; }
+  .provider-buttons { width: 100%; flex-direction: column; }
   .provider-card .card-actions .button, .grant-row .button { width: 100%; }
   .connection-head { align-items: flex-start; }
   .permission-toolbar { align-items: flex-start; flex-direction: column; }
@@ -506,6 +510,23 @@ function dashboardClient(): void {
       }
       if (action === "connect-provider") {
         return connectProvider(target.dataset.provider!, target as HTMLButtonElement);
+      }
+      if (action === "import-github-cli") {
+        if (confirm("从本机 GitHub CLI 导入当前 OAuth 会话？凭据会加密保存到 Permission Vault，并随加密状态同步。")) {
+          const button = target as HTMLButtonElement;
+          const restore = setButtonBusy(button, "正在验证 gh");
+          try {
+            await api("/v1/dashboard/oauth/providers/github/import-cli", {
+              method: "POST",
+              body: {},
+            });
+            await load(false);
+            toast("GitHub CLI 账号已导入");
+          } finally {
+            restore();
+          }
+        }
+        return;
       }
       if (action === "disconnect-connection") {
         if (confirm("断开这个 OAuth 连接？")) {
@@ -941,11 +962,14 @@ function dashboardClient(): void {
       ${sectionHeader("连接与权限", `${integrations.connections.length} 个连接 · ${integrations.grants.length} 条 Agent 授权`)}
       <div class="card-grid">${integrations.providers.map((provider: any) => {
         const connections = integrations.connections.filter((connection: any) => connection.provider === provider.id);
+        const cliImport = provider.id === "github"
+          ? `<button class="button secondary" data-action="import-github-cli" type="button">${icon("terminal")}从 gh 导入</button>`
+          : "";
         return `<article class="item-card provider-card provider-${provider.id}"><span class="provider-line"></span>
-          <div class="card-head"><div class="provider-heading"><span class="provider-icon">${providerIcon(provider.id)}</span><div><h3>${escapeHtml(provider.label)}</h3><p>${provider.configured ? "OAuth App 已配置" : "需要配置 OAuth App"}</p></div></div><button class="icon-button" data-action="configure-provider" data-provider="${provider.id}" type="button" title="配置">${icon("settings")}</button></div>
+          <div class="card-head"><div class="provider-heading"><span class="provider-icon">${providerIcon(provider.id)}</span><div><h3>${escapeHtml(provider.label)}</h3><p>${connections.length ? `${connections.length} 个账号已连接` : provider.configured ? "OAuth App 已配置" : provider.id === "github" ? "可配置 OAuth App 或导入 gh" : "需要配置 OAuth App"}</p></div></div><button class="icon-button" data-action="configure-provider" data-provider="${provider.id}" type="button" title="配置">${icon("settings")}</button></div>
           <div class="card-body">${escapeHtml(provider.description)}<div class="tag-list provider-scopes">${provider.scopes.map((scope: string) => `<span class="tag">${escapeHtml(shortScope(scope))}</span>`).join("")}</div></div>
           ${connections.map((connection: any) => renderConnection(connection, provider)).join("")}
-          <div class="card-actions"><small>${connections.length ? connections.length + " 个账号" : provider.configured ? "可以开始账号授权" : "先完成 App 配置"}</small><button class="button ${provider.configured ? "" : "secondary"}" data-action="connect-provider" data-provider="${provider.id}" type="button" ${provider.configured ? "" : "disabled"}>${icon("key")}${connections.length ? "连接其他账号" : "连接账号"}</button></div>
+          <div class="card-actions"><small>${connections.length ? connections.length + " 个账号" : provider.configured ? "可以开始账号授权" : provider.id === "github" ? "gh 登录可直接导入" : "先完成 App 配置"}</small><div class="provider-buttons">${cliImport}<button class="button ${provider.configured ? "" : "secondary"}" data-action="connect-provider" data-provider="${provider.id}" type="button" ${provider.configured ? "" : "disabled"}>${icon("key")}${connections.length ? "连接其他账号" : "连接账号"}</button></div></div>
         </article>`;
       }).join("")}</div>`;
   }
@@ -953,7 +977,8 @@ function dashboardClient(): void {
   function renderConnection(connection: any, provider: any): string {
     const agents = ["codex", "claude-code"];
     const status = connectionDisplayStatus(connection);
-    return `<div class="connection"><div class="connection-head"><div><strong>${escapeHtml(connection.label)}</strong><small>更新于 ${formatDate(connection.updatedAt)}</small></div><span class="connection-status ${status.key}">${status.label}</span></div><div class="connection-scopes"><small>账号授权范围</small><div class="tag-list">${connection.scopes.map((scope: string) => `<span class="tag">${escapeHtml(shortScope(scope))}</span>`).join("") || '<span class="tag">未返回 scope</span>'}</div></div>${agents.map((agent) => {
+    const source = connection.source === "imported" ? " · GitHub CLI 导入" : "";
+    return `<div class="connection"><div class="connection-head"><div><strong>${escapeHtml(connection.label)}</strong><small>更新于 ${formatDate(connection.updatedAt)}${source}</small></div><span class="connection-status ${status.key}">${status.label}</span></div><div class="connection-scopes"><small>账号授权范围</small><div class="tag-list">${connection.scopes.map((scope: string) => `<span class="tag">${escapeHtml(shortScope(scope))}</span>`).join("") || '<span class="tag">未返回 scope</span>'}</div></div>${agents.map((agent) => {
       const grant = snapshot.integrations.grants.find((entry: any) => entry.connectionId === connection.id && entry.agentId === agent);
       const count = grant?.actions.length || 0;
       return `<div class="grant-row"><span>${agentLabel(agent)} · ${count ? `允许 ${count}/${provider.actions.length} 项操作` : "尚未授权操作"}</span><button class="button secondary" data-action="edit-grant" data-id="${connection.id}" data-agent="${agent}" type="button">${icon("shield")}权限</button></div>`;

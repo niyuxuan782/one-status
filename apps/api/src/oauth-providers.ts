@@ -739,7 +739,7 @@ function requiredClientSecret(config: OAuthProviderConfig): string {
 function githubHeaders(): Record<string, string> {
   return {
     "x-github-api-version": "2022-11-28",
-    "user-agent": "one-status/0.1.0",
+    "user-agent": "one-status/0.1.1",
   };
 }
 

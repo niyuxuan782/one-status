@@ -34,10 +34,10 @@ if ! git -C "$TAP_DIR" diff --cached --quiet; then
 fi
 
 if [[ "$SERVICE_WAS_STARTED" == true ]]; then
-  brew services stop one-status/local/one-status
+  brew services stop one-status
 fi
 if brew list --formula one-status >/dev/null 2>&1; then
-  brew uninstall one-status/local/one-status
+  brew uninstall --formula one-status
 fi
 if brew tap | grep -qx "one-status/local"; then
   brew untap one-status/local

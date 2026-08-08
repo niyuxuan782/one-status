@@ -5,9 +5,9 @@
 | 交付物 | 生成命令 | 入口 |
 | --- | --- | --- |
 | 单文件 CLI | `pnpm build` | `dist/one-status.js` |
-| npm tarball | `pnpm pack:local` | `dist/one-status-0.1.0.tgz` |
+| npm tarball | `pnpm pack:local` | `dist/one-status-0.1.1.tgz` |
 | Homebrew Formula | `pnpm release:prepare` | `Formula/one-status.rb` |
-| Docker image | `docker build -t one-status:0.1.0 .` | `one-status` |
+| Docker image | `docker build -t one-status:0.1.1 .` | `one-status` |
 
 单文件 CLI 将业务包、Fastify、MCP SDK 与 Zod 打入同一个 ESM 文件。运行时只要求 Node.js 22+，安装阶段无需下载 JavaScript 依赖。
 构建过程会生成 `dist/THIRD_PARTY_NOTICES.txt`；npm 包、Homebrew 安装和 Docker 镜像都会携带该文件。
@@ -32,7 +32,7 @@ ONE_STATUS_INSTALL_PREFIX=/usr/local ./scripts/install-local.sh
 
 ```bash
 pnpm pack:local
-npm install -g ./dist/one-status-0.1.0.tgz
+npm install -g ./dist/one-status-0.1.1.tgz
 one-status version
 ```
 
@@ -95,6 +95,8 @@ $(brew --prefix)/var/one-status/one-status.sqlite.permission-key
 
 桌面 MVP 的 OAuth callback 固定走本机回环地址。`ONE_STATUS_PUBLIC_URL` 只适合同时持有 flow state 与 Permission Vault 的单用户受信任部署，不能指向仅运行密文 Sync API 的共享云。
 
+已运行 `gh auth login` 的设备可在 `连接与权限` 页面点击 `从 gh 导入`。后台只执行无 shell 的 `gh auth token --hostname github.com`，随后直接向 GitHub 验证账号和 scope；导入凭据进入加密 Permission Vault。移除这类连接不会注销 GitHub CLI。Homebrew LaunchAgent 会自动检测 `/opt/homebrew/bin/gh` 和 `/usr/local/bin/gh`；其他安装位置可通过绝对路径 `ONE_STATUS_GH_PATH` 指定。
+
 仓库内 Formula 使用 GitHub Release URL：
 
 ```text
@@ -130,7 +132,7 @@ Release workflow 权限：
 
 ## 已验证
 
-- npm tarball 全局安装后 `one-status version` 返回 `0.1.0`。
-- Formula 安装到 `/opt/homebrew/Cellar/one-status/0.1.0`。
+- npm tarball 全局安装后 `one-status version` 返回 `0.1.1`。
+- Formula 安装到 `/opt/homebrew/Cellar/one-status/0.1.1`。
 - `brew test one-status/local/one-status` 通过版本与帮助检查。
 - 单文件产物启动同步 API 和 HTTP MCP 后，官方 MCP Client 成功列出 Status 与 Tool Gateway 工具并调用 `status_get_profile`。

@@ -83,7 +83,7 @@ npm 本地 tarball：
 
 ```bash
 pnpm pack:local
-npm install -g ./dist/one-status-0.1.0.tgz
+npm install -g ./dist/one-status-0.1.1.tgz
 ```
 
 无需 Homebrew 的本地安装：
@@ -175,6 +175,8 @@ http://127.0.0.1:8787/
 `Agents 与工具` 页面读取本机 Codex、Claude Code 配置并生成只读清单。MCP Secret 值、URL query、Skill 正文和 Rule 正文不会进入清单；扫描结果不会自动上传。
 
 OAuth App 在 `连接与权限` 页面配置。界面会显示 Google、GitHub、Slack 各自需要登记的 Callback URL。授权完成后可分别为 `codex` 和 `claude-code` 开放具体只读动作。
+
+GitHub 还提供本机快速导入：点击 `从 gh 导入` 后，One Status 调用已登录的 GitHub CLI 获取当前 OAuth 会话，向 GitHub `/user` 验证账号和 scope，再加密写入 Permission Vault。该凭据归 GitHub CLI 管理；从 One Status 断开时只删除 Vault 副本，不影响 `gh` 登录。导入流程不会把 Token 放入命令参数、页面响应或 Activity。
 
 GitHub OAuth App 会申请 `repo`，用于用户在 Handoff 页面明确确认后的私有仓库 push/clone。该 Provider scope 不会自动开放给 Agent；Agent 仍只能调用权限页面勾选的资料与仓库读取动作。规模化版本会迁移到可按仓库安装的 GitHub App token。
 

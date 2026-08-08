@@ -115,7 +115,7 @@ Git、测试和 Secret 结果由程序采集。Agent 只负责生成目标、决
 | Handoff | 已有本机映射、Secret 预览、显式 commit/push、精确 commit clone/update、Agent 启动和本机活动记录 |
 | Agents 与工具 | 已有只读 Agent、MCP、Skills、Plugins、Rules Inventory |
 | Memory | 已有编辑；来源、候选确认和可读 Agent 待加入 |
-| Connections | Google 已完成真实账号与跨设备调用验收；GitHub、Slack 等待 Provider App 账号配置 |
+| Connections | Google 已完成真实 OAuth 与跨设备调用验收；GitHub 支持 OAuth App 和本机 `gh` 会话导入；Slack 等待 Workspace App 配置 |
 | Devices | 已有稳定 installation ID、活动时间、在线状态与撤销 |
 | Activity | 已有本机 Handoff 活动；同步与工具时间线待加入 |
 | Security | 已有本机 Permission Vault、二次加密同步、恢复密钥流程和 macOS Keychain profile；密钥轮换待加入 |

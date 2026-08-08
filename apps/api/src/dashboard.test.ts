@@ -21,6 +21,9 @@ describe("local dashboard", () => {
   let directory: string;
   let backend: MemoryDashboardBackend;
   let handoffs: TestHandoffRuntime;
+  let githubCliImporter: {
+    import(userId: string): Promise<ReturnType<PermissionVault["upsertConnection"]>>;
+  };
   let permissionVault: PermissionVault;
 
   beforeEach(async () => {
@@ -31,10 +34,16 @@ describe("local dashboard", () => {
       path: ":memory:",
       key: new Uint8Array(32).fill(7),
     });
+    githubCliImporter = {
+      async import() {
+        throw new Error("GitHub CLI importer was not configured for this test.");
+      },
+    };
     app = createApp({
       dbPath: join(directory, "sync.sqlite"),
       dashboard: {
         backend,
+        githubCliImporter,
         handoffs,
         inventory: {
           async get() {
@@ -357,6 +366,8 @@ describe("local dashboard", () => {
     expect(script.body).toContain("onboarding-register");
     expect(script.body).toContain("/v1/dashboard/onboarding/login");
     expect(script.body).toContain("connectionDisplayStatus");
+    expect(script.body).toContain("import-github-cli");
+    expect(script.body).toContain("从 gh 导入");
     expect(script.body).toContain("gatewayAddress.textContent = location.host");
     expect(script.body).toContain('data-form="handoff-publish"');
     expect(script.body).toContain('data-form="handoff-open"');
@@ -365,6 +376,7 @@ describe("local dashboard", () => {
     expect(script.body).not.toContain('params.get("message")');
     expect(styles.statusCode).toBe(200);
     expect(styles.body).toContain("max-height: calc(100dvh - 16px)");
+    expect(styles.body).toContain(".provider-buttons");
   });
 
   it("persists supported Agent grants and clears them on disconnect", async () => {
@@ -430,6 +442,75 @@ describe("local dashboard", () => {
     expect(disconnected.statusCode).toBe(200);
     expect(disconnected.json()).toEqual({ disconnected: true });
     expect(revokeFetch).toHaveBeenCalledOnce();
+    expect(permissionVault.listConnections("user-1")).toEqual([]);
+    expect(permissionVault.listGrants("user-1")).toEqual([]);
+  });
+
+  it("imports an external GitHub CLI credential without Provider App config", async () => {
+    const importToken = "github-cli-import-token";
+    const importMock = vi.fn(async (userId: string) =>
+      permissionVault.upsertConnection({
+        accountId: "42",
+        credential: { accessToken: importToken, tokenType: "Bearer" },
+        label: "ryan",
+        provider: "github",
+        scopes: ["repo", "read:org"],
+        source: "imported",
+        userId,
+      }),
+    );
+    githubCliImporter.import = importMock;
+    const page = await app.inject({
+      method: "GET",
+      url: "/integrations",
+      headers: { accept: "text/html", host: "127.0.0.1:8787" },
+    });
+    const setCookie = page.headers["set-cookie"]!;
+    const cookie = (Array.isArray(setCookie) ? setCookie[0]! : setCookie).split(
+      ";",
+    )[0]!;
+    const csrf = page.body.match(/name="one-status-csrf" content="([^"]+)"/)?.[1];
+    const headers = {
+      cookie,
+      host: "127.0.0.1:8787",
+      origin: "http://127.0.0.1:8787",
+      "x-one-status-csrf": csrf!,
+    };
+
+    const imported = await app.inject({
+      method: "POST",
+      url: "/v1/dashboard/oauth/providers/github/import-cli",
+      headers,
+      payload: {},
+    });
+    expect(imported.statusCode).toBe(200);
+    expect(imported.json()).toMatchObject({
+      connected: true,
+      connection: {
+        accountId: "42",
+        credentialOwnership: "external",
+        label: "ryan",
+        source: "imported",
+      },
+    });
+    expect(imported.body).not.toContain(importToken);
+    expect(importMock).toHaveBeenCalledWith("user-1");
+    expect(permissionVault.getProviderConfig("user-1", "github")).toBeNull();
+
+    const connectionId = imported.json().connection.id as string;
+    permissionVault.setGrant("user-1", connectionId, "codex", [
+      "github.repositories.list",
+    ]);
+    const revokeFetch = vi.fn();
+    vi.stubGlobal("fetch", revokeFetch);
+    const disconnected = await app.inject({
+      method: "DELETE",
+      url: `/v1/dashboard/oauth/connections/${connectionId}`,
+      headers,
+    });
+    expect(disconnected.statusCode).toBe(200);
+    expect(disconnected.json()).toEqual({ disconnected: true });
+    expect(revokeFetch).not.toHaveBeenCalled();
     expect(permissionVault.listConnections("user-1")).toEqual([]);
     expect(permissionVault.listGrants("user-1")).toEqual([]);
   });

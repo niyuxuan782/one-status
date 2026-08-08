@@ -2,7 +2,10 @@ import { readFile, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { PermissionVault } from "./permission-vault.js";
+import {
+  PermissionVault,
+  type PermissionVaultBundle,
+} from "./permission-vault.js";
 
 describe("Permission Vault", () => {
   const directories: string[] = [];
@@ -105,6 +108,61 @@ describe("Permission Vault", () => {
     vault.close();
   });
 
+  it("tracks imported credential ownership and resets it on OAuth reconnect", () => {
+    const vault = new PermissionVault({
+      path: ":memory:",
+      key: new Uint8Array(32).fill(9),
+    });
+    const imported = vault.upsertConnection({
+      accountId: "42",
+      credential: { accessToken: "github-cli-token" },
+      label: "ryan",
+      provider: "github",
+      scopes: ["repo", "read:org"],
+      source: "imported",
+      userId: "user-1",
+    });
+    expect(imported).toMatchObject({
+      credentialOwnership: "external",
+      source: "imported",
+    });
+
+    const restored = new PermissionVault({
+      path: ":memory:",
+      key: new Uint8Array(32).fill(10),
+    });
+    restored.importBundle("user-1", vault.exportBundle("user-1"));
+    expect(restored.getConnection("user-1", imported.id)).toMatchObject({
+      credentialOwnership: "external",
+      source: "imported",
+    });
+
+    const managed = vault.upsertConnection({
+      accountId: "42",
+      credential: {
+        accessToken: "oauth-token",
+        refreshToken: "oauth-refresh",
+      },
+      label: "ryan",
+      provider: "github",
+      scopes: ["read:user", "repo"],
+      userId: "user-1",
+    });
+    expect(managed).toMatchObject({
+      credentialOwnership: "managed",
+      id: imported.id,
+      source: "oauth",
+    });
+    expect(
+      vault.getConnectionWithCredential("user-1", managed.id)?.credential,
+    ).toEqual({
+      accessToken: "oauth-token",
+      refreshToken: "oauth-refresh",
+    });
+    vault.close();
+    restored.close();
+  });
+
   it("derives expiration status and rejects unsafe OAuth redirects", () => {
     const vault = new PermissionVault({
       path: ":memory:",
@@ -194,6 +252,19 @@ describe("Permission Vault", () => {
     expect(second.getAllowedActions("user-1", connection.id, "codex")).toEqual(
       ["calendar.events.list"],
     );
+
+    const legacyBundle = structuredClone(bundle) as PermissionVaultBundle;
+    const legacyConnection = legacyBundle.connections[0]! as unknown as Record<
+      string,
+      unknown
+    >;
+    delete legacyConnection.source;
+    delete legacyConnection.credentialOwnership;
+    second.importBundle("user-1", legacyBundle);
+    expect(second.getConnection("user-1", connection.id)).toMatchObject({
+      credentialOwnership: "managed",
+      source: "oauth",
+    });
 
     second.deleteConnection("user-1", connection.id);
     const deletion = second.exportBundle("user-1");

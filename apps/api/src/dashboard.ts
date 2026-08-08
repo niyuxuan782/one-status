@@ -8,6 +8,7 @@ import { z } from "zod";
 import type { AuthenticatedSession } from "./database.js";
 import type { DashboardBackend } from "./dashboard-backend.js";
 import type { HandoffService } from "./handoff.js";
+import { GitHubCliCredentialImporter } from "./github-cli-import.js";
 import {
   dashboardCss,
   dashboardJs,
@@ -51,6 +52,7 @@ export interface DashboardRuntime {
     | "unmapProject"
     | "write"
   >;
+  githubCliImporter?: Pick<GitHubCliCredentialImporter, "import">;
   inventory: Pick<LocalInventoryService, "get" | "refresh">;
   onboarding?: Pick<LocalOnboardingService, "login" | "register" | "status">;
   permissionVault: PermissionVault;
@@ -65,6 +67,9 @@ export function registerDashboardRoutes(
 ): void {
   const dashboardSession = randomBytes(32).toString("base64url");
   const csrfToken = randomBytes(32).toString("base64url");
+  const githubCliImporter =
+    runtime.githubCliImporter ??
+    new GitHubCliCredentialImporter(runtime.permissionVault);
 
   app.get("/assets/dashboard.css", async (_request, reply) => {
     return reply
@@ -84,7 +89,7 @@ export function registerDashboardRoutes(
       if (path === "/" && !request.headers.accept?.includes("text/html")) {
         return {
           name: "One Status",
-          version: "0.1.0",
+          version: "0.1.1",
           tagline: "One user. One status. Every AI. Private by design.",
           dashboard: "/",
           health: "/health",
@@ -449,6 +454,22 @@ export function registerDashboardRoutes(
   );
 
   app.post(
+    "/v1/dashboard/oauth/providers/github/import-cli",
+    async (request, reply) => {
+      if (!authorizeDashboardWrite(request, reply, dashboardSession, csrfToken)) {
+        return;
+      }
+      return dashboardCall(reply, () =>
+        withPermissionVault(runtime, async () => {
+          const userId = await runtime.backend.userId();
+          const connection = await githubCliImporter.import(userId);
+          return { connected: true, connection };
+        }),
+      );
+    },
+  );
+
+  app.post(
     "/v1/dashboard/oauth/providers/:provider/start",
     async (request, reply) => {
       if (!authorizeDashboardWrite(request, reply, dashboardSession, csrfToken)) {
@@ -579,16 +600,20 @@ export function registerDashboardRoutes(
             id,
           );
           if (!connection) return reply.code(404).send({ error: "not_found" });
-          const config = runtime.permissionVault.getProviderConfig(
-            userId,
-            connection.provider,
-          );
-          if (!config) throw new Error("OAuth provider configuration is missing.");
-          await revokeOAuthCredential({
-            config,
-            credential: connection.credential,
-            provider: connection.provider,
-          });
+          if (connection.credentialOwnership === "managed") {
+            const config = runtime.permissionVault.getProviderConfig(
+              userId,
+              connection.provider,
+            );
+            if (!config) {
+              throw new Error("OAuth provider configuration is missing.");
+            }
+            await revokeOAuthCredential({
+              config,
+              credential: connection.credential,
+              provider: connection.provider,
+            });
+          }
           runtime.permissionVault.deleteConnection(userId, id);
           return { disconnected: true };
         }),

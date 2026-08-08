@@ -18,7 +18,7 @@ import {
 } from "@one-status/local-config";
 import type { MemoryScope, StatusDocument } from "@one-status/protocol";
 
-const VERSION = "0.1.0";
+const VERSION = "0.1.1";
 
 interface ParsedArguments {
   command: string;

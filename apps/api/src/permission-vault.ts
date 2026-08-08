@@ -45,12 +45,14 @@ export interface OAuthCredential {
 
 export interface OAuthConnection {
   accountId: string;
+  credentialOwnership: "managed" | "external";
   createdAt: string;
   expiresAt: string | null;
   id: string;
   label: string;
   provider: OAuthProvider;
   scopes: string[];
+  source: "oauth" | "imported";
   status: "connected" | "expired" | "error";
   updatedAt: string;
 }
@@ -87,6 +89,7 @@ interface PermissionVaultOptions {
 
 interface ConnectionRow {
   account_id: string;
+  credential_ownership: OAuthConnection["credentialOwnership"];
   created_at: string;
   credentials: string;
   expires_at: string | null;
@@ -94,6 +97,7 @@ interface ConnectionRow {
   label: string;
   provider: OAuthProvider;
   scopes: string;
+  source: OAuthConnection["source"];
   status: OAuthConnection["status"];
   updated_at: string;
 }
@@ -147,6 +151,8 @@ export class PermissionVault {
         label TEXT NOT NULL,
         scopes TEXT NOT NULL,
         credentials TEXT NOT NULL,
+        source TEXT NOT NULL DEFAULT 'oauth',
+        credential_ownership TEXT NOT NULL DEFAULT 'managed',
         expires_at TEXT,
         status TEXT NOT NULL,
         created_at TEXT NOT NULL,
@@ -184,6 +190,7 @@ export class PermissionVault {
         updated_at TEXT NOT NULL
       );
     `);
+    ensureConnectionMetadataColumns(this.#database);
   }
 
   close(): void {
@@ -348,23 +355,36 @@ export class PermissionVault {
     label: string;
     provider: OAuthProvider;
     scopes: string[];
+    source?: OAuthConnection["source"];
     userId: string;
   }): OAuthConnection {
     const accountId = requiredTextValue(input.accountId, "OAuth account ID", 500);
     const label = requiredTextValue(input.label, "OAuth account label", 500);
     const expiresAt = normalizeExpiration(input.expiresAt);
+    const source = input.source ?? "oauth";
+    const credentialOwnership = ownershipForSource(source);
     const existing = this.#database
       .prepare(
-        `SELECT id, created_at, credentials FROM oauth_connections
+        `SELECT id, created_at, credentials, source, credential_ownership
+           FROM oauth_connections
           WHERE user_id = ? AND provider = ? AND account_id = ?`,
       )
       .get(input.userId, input.provider, accountId) as
-      | { created_at: string; credentials: string; id: string }
+      | {
+          created_at: string;
+          credential_ownership: OAuthConnection["credentialOwnership"];
+          credentials: string;
+          id: string;
+          source: OAuthConnection["source"];
+        }
       | undefined;
     const id = existing?.id ?? randomUUID();
     const now = new Date().toISOString();
     const createdAt = existing?.created_at ?? now;
-    const previousCredential = existing
+    const previousCredential =
+      existing &&
+      existing.source === source &&
+      existing.credential_ownership === credentialOwnership
       ? parseCredential(
           this.#decrypt(
             existing.credentials,
@@ -380,12 +400,14 @@ export class PermissionVault {
       .prepare(
         `INSERT INTO oauth_connections
            (id, user_id, provider, account_id, label, scopes, credentials,
-            expires_at, status, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'connected', ?, ?)
+            source, credential_ownership, expires_at, status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'connected', ?, ?)
          ON CONFLICT(user_id, provider, account_id) DO UPDATE SET
            label = excluded.label,
            scopes = excluded.scopes,
            credentials = excluded.credentials,
+           source = excluded.source,
+           credential_ownership = excluded.credential_ownership,
            expires_at = excluded.expires_at,
            status = 'connected',
            updated_at = excluded.updated_at`,
@@ -401,6 +423,8 @@ export class PermissionVault {
           JSON.stringify(credential),
           `connection:${input.userId}:${id}`,
         ),
+        source,
+        credentialOwnership,
         expiresAt,
         createdAt,
         now,
@@ -632,7 +656,18 @@ export class PermissionVault {
   }
 
   importBundle(userId: string, bundleValue: PermissionVaultBundle): void {
-    const bundle = permissionVaultBundleSchema.parse(bundleValue);
+    const bundle = permissionVaultBundleSchema.parse(
+      normalizePermissionVaultBundle(bundleValue),
+    );
+    if (
+      bundle.connections.some(
+        (connection) =>
+          connection.credentialOwnership !==
+          ownershipForSource(connection.source),
+      )
+    ) {
+      throw new Error("Permission Vault connection ownership is invalid.");
+    }
     const connectionIds = new Set(
       bundle.connections.map((connection) => connection.id),
     );
@@ -685,8 +720,9 @@ export class PermissionVault {
           .prepare(
             `INSERT INTO oauth_connections
                (id, user_id, provider, account_id, label, scopes, credentials,
-                expires_at, status, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                source, credential_ownership, expires_at, status, created_at,
+                updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           )
           .run(
             connection.id,
@@ -699,6 +735,8 @@ export class PermissionVault {
               JSON.stringify(validateCredential(connection.credential)),
               `connection:${userId}:${connection.id}`,
             ),
+            connection.source,
+            connection.credentialOwnership,
             normalizeExpiration(connection.expiresAt),
             connection.status,
             connection.createdAt,
@@ -853,6 +891,7 @@ const permissionVaultBundleSchema: z.ZodType<PermissionVaultBundle> = z
       z
         .object({
           accountId: z.string().min(1).max(500),
+          credentialOwnership: z.enum(["managed", "external"]),
           createdAt: z.iso.datetime({ offset: true }),
           credential: oauthCredentialSchema,
           expiresAt: z.iso.datetime({ offset: true }).nullable(),
@@ -860,6 +899,7 @@ const permissionVaultBundleSchema: z.ZodType<PermissionVaultBundle> = z
           label: z.string().min(1).max(500),
           provider: z.enum(oauthProviders),
           scopes: z.array(z.string().min(1).max(20_000)),
+          source: z.enum(["oauth", "imported"]),
           status: z.enum(["connected", "expired", "error"]),
           updatedAt: z.iso.datetime({ offset: true }),
         })
@@ -895,6 +935,27 @@ const permissionVaultBundleSchema: z.ZodType<PermissionVaultBundle> = z
   })
   .strict();
 
+function normalizePermissionVaultBundle(value: unknown): unknown {
+  if (!value || typeof value !== "object") return value;
+  const bundle = value as Record<string, unknown>;
+  if (!Array.isArray(bundle.connections)) return value;
+  return {
+    ...bundle,
+    connections: bundle.connections.map((connection) => {
+      if (!connection || typeof connection !== "object") return connection;
+      const record = connection as Record<string, unknown>;
+      const source = record.source ?? "oauth";
+      return {
+        ...record,
+        credentialOwnership:
+          record.credentialOwnership ??
+          (source === "imported" ? "external" : "managed"),
+        source,
+      };
+    }),
+  };
+}
+
 function toConnection(row: ConnectionRow): OAuthConnection {
   const expired =
     row.status === "connected" &&
@@ -902,15 +963,43 @@ function toConnection(row: ConnectionRow): OAuthConnection {
     Date.parse(row.expires_at) <= Date.now();
   return {
     accountId: row.account_id,
+    credentialOwnership: row.credential_ownership,
     createdAt: row.created_at,
     expiresAt: row.expires_at,
     id: row.id,
     label: row.label,
     provider: row.provider,
     scopes: JSON.parse(row.scopes) as string[],
+    source: row.source,
     status: expired ? "expired" : row.status,
     updatedAt: row.updated_at,
   };
+}
+
+function ownershipForSource(
+  source: OAuthConnection["source"],
+): OAuthConnection["credentialOwnership"] {
+  return source === "imported" ? "external" : "managed";
+}
+
+function ensureConnectionMetadataColumns(database: DatabaseSyncType): void {
+  const columns = new Set(
+    (
+      database.prepare("PRAGMA table_info(oauth_connections)").all() as Array<{
+        name: string;
+      }>
+    ).map((column) => column.name),
+  );
+  if (!columns.has("source")) {
+    database.exec(
+      "ALTER TABLE oauth_connections ADD COLUMN source TEXT NOT NULL DEFAULT 'oauth'",
+    );
+  }
+  if (!columns.has("credential_ownership")) {
+    database.exec(
+      "ALTER TABLE oauth_connections ADD COLUMN credential_ownership TEXT NOT NULL DEFAULT 'managed'",
+    );
+  }
 }
 
 function hashState(state: string): string {
