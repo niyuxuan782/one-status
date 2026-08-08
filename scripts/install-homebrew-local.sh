@@ -6,6 +6,10 @@ TAP_DIR="${ONE_STATUS_LOCAL_TAP_DIR:-$HOME/.cache/one-status/homebrew-local}"
 VERSION="$(node -p "require('$ROOT/package.json').version")"
 SERVICE_WAS_STARTED=false
 SERVICE_PLIST="$HOME/Library/LaunchAgents/homebrew.mxcl.one-status.plist"
+INSTALLED_FORMULA="$(
+  brew list --formula --full-name 2>/dev/null |
+    awk '$0 == "one-status" || $0 ~ /\/one-status$/ { print; exit }'
+)"
 
 if [[ -f "$SERVICE_PLIST" ]] || \
   brew services list 2>/dev/null | awk '$1 == "one-status" && $2 == "started" { found = 1 } END { exit !found }'; then
@@ -34,10 +38,14 @@ if ! git -C "$TAP_DIR" diff --cached --quiet; then
 fi
 
 if [[ "$SERVICE_WAS_STARTED" == true ]]; then
-  brew services stop one-status
+  if [[ -n "$INSTALLED_FORMULA" ]]; then
+    brew services stop "$INSTALLED_FORMULA"
+  elif [[ -f "$SERVICE_PLIST" ]]; then
+    launchctl bootout "gui/$(id -u)" "$SERVICE_PLIST" >/dev/null 2>&1 || true
+  fi
 fi
-if brew list --formula one-status >/dev/null 2>&1; then
-  brew uninstall --formula one-status
+if [[ -n "$INSTALLED_FORMULA" ]]; then
+  brew uninstall --formula "$INSTALLED_FORMULA"
 fi
 if brew tap | grep -qx "one-status/local"; then
   brew untap one-status/local
