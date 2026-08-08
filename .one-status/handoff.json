@@ -1,0 +1,27 @@
+{
+  "format": "one-status.handoff",
+  "version": 1,
+  "generatedAt": "2026-08-08T23:19:44.649Z",
+  "projectId": "one-status",
+  "statusVersion": 14,
+  "repository": {
+    "commit": "b2d962952830e2e9eed71ab3c7cdf4930e4a061f",
+    "branch": "main",
+    "dirty": false,
+    "changedFiles": [],
+    "remote": "https://github.com/niyuxuan782/one-status.git"
+  },
+  "context": {
+    "currentGoal": "Complete Slack OAuth and public HTTPS activation, then verify cross-device Handoff.",
+    "decisions": [],
+    "currentContext": "One Status v0.1.1 is released with public Homebrew installation, Codex and Claude Code MCP, encrypted sync, Google Calendar OAuth, GitHub CLI credential import, and GitHub read/Handoff grants. Tencent Cloud release 20260808T230316Z is healthy internally with Status version 12; public HTTPS awaits the Lighthouse TCP 443 rule. Slack App activation awaits Workspace sign-in.",
+    "lastAgentId": "codex",
+    "completed": [],
+    "next": [],
+    "blocked": []
+  },
+  "validation": {
+    "secretScan": "passed",
+    "test": "not_run"
+  }
+}
