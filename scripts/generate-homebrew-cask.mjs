@@ -21,25 +21,25 @@ const armName = `One-Status-${version}-mac-arm64.dmg`;
 const intelName = `One-Status-${version}-mac-x64.dmg`;
 const armSha = await sha256(resolve(assetsDirectory, armName));
 const intelSha = await sha256(resolve(assetsDirectory, intelName));
-const releaseBase =
-  `https://github.com/niyuxuan782/one-status/releases/download/v${version}`;
-
 const cask = `cask "one-status" do
   version "${version}"
 
   on_arm do
     sha256 "${armSha}"
-    url "${releaseBase}/${armName}"
-  end
 
+    url "https://github.com/niyuxuan782/one-status/releases/download/v#{version}/One-Status-#{version}-mac-arm64.dmg"
+  end
   on_intel do
     sha256 "${intelSha}"
-    url "${releaseBase}/${intelName}"
+
+    url "https://github.com/niyuxuan782/one-status/releases/download/v#{version}/One-Status-#{version}-mac-x64.dmg"
   end
 
   name "One Status"
   desc "Personal Agent control center for AI environment sync and handoff"
-  homepage "https://os.furesta.top"
+  homepage "https://os.furesta.top/"
+
+  depends_on :macos
 
   app "One Status.app"
 
