@@ -1,14 +1,14 @@
 # One Status Handoff
 
-Generated: 2026-08-09T14:46:08.102Z
+Generated: 2026-08-09T17:51:55.963Z
 
 ## Current Goal
 
-Configure OAuth Apps and complete real-account acceptance for the 11 new providers, reauthorize Google Workspace and Slack scopes, then validate Open and Continue on a second physical device.
+Validate Open and Continue on a second physical device, then monitor v0.7 adoption and plan v0.8.
 
 ## Current Context
 
-One Status v0.6.0 is released and deployed. Source/tag commit: 11d9e9fa9de32bd4d87c0ebd28a7de6665fa7124. GitHub Actions CI run 31317955613 and Release run 31318055640 passed; the release publishes 12 CLI/macOS/Windows/Linux assets and GHCR digest sha256:9cbad1c5844a3a636ff93db9fbd7ae50b568caa7ab9d43c37deb89436123d019. GitHub Pages presents 14 Capability Packs and 69 controlled actions. Homebrew tap commit 338689731ed1df95894936cd985ebca50a34baa5 publishes Formula and Cask 0.6.0; local Formula install, brew test, style and strict audits passed. Tencent Cloud now runs release 20260809T143804Z with API 0.6.0; public HTTPS, redirect, auth denial, non-root/read-only containers, SQLite quick_check, foreign keys and agent_credentials migration passed. Local Homebrew LaunchAgent is healthy at 127.0.0.1:8787. Fresh Codex and Claude Code MCP processes used bound Agent credentials, read status version 77, listed 14 packs and the existing GitHub, Google and Slack grants. All 14 packs are installed for Codex and Claude Code. Real OAuth acceptance is complete for Google Workspace, GitHub and Slack; Google requires reauthorization for Gmail, Drive and Docs scopes, Slack requires history, search and chat scopes. Microsoft 365, Notion, Dropbox, Zoom, Canva, Asana, Trello, Airtable, Linear, Figma and Box have code-complete OAuth/action implementations and still need Provider App credentials plus real-account acceptance. ChatGPT Apps SDK/hosted Remote MCP and second-device Open and Continue remain next-stage validation.
+One Status v0.7.0 rollout is complete. The product is a cross-device personal AI tool control center for device inventory, model sources, confirmed configuration intents, Persona, encrypted Status sync, and Codex/Claude Code handoff. Release tag v0.7.0 points to 4df024b30a21a40fa2f632b08665e905309bc9ee; main 493f24f3119ecb61af8e5e2867120321b52b9b1a adds the final Formula and install guidance. Release workflow 31326336123 passed verify, macOS arm64/x64, Windows x64, Linux x64, Release, and GHCR container jobs. GitHub Release v0.7.0 has 16 assets; all 15 payload digests match SHA256SUMS, and all four Sidecar archives contain the CC Switch MIT notice and license. Homebrew tap commit b69652a1b1e3687fb68475587e5e96ad9995784f publishes Formula and Cask 0.7.0. This Mac now uses the official tap Formula and Cask: CLI, service, native Sidecar, and /Applications/One Status.app are healthy; Codex and Claude Code MCP are connected. Tencent Cloud release 20260809T173233Z serves API 0.7.0 at https://os.furesta.top; SQLite quick_check is ok and existing account and Status data were preserved. Remaining acceptance is Open and Continue on a second physical device at an exact Handoff commit.
 
 ## Architecture Decisions
 
@@ -53,11 +53,25 @@ One Status v0.6.0 is released and deployed. Source/tag commit: 11d9e9fa9de32bd4d
 - Updated Homebrew Formula and Cask at tap commit ab69ba134b84f14da9a75d397139684d315edb4a
 - Deployed Tencent Cloud release 20260809T094657Z; API 0.5.0 healthy and SQLite quick_check passed
 - Verified local Codex and Claude Code MCP connections and real Claude tools_list call
-- Google Workspace, GitHub and Slack real-account flows verified
+- Validate v0.6.0 Provider authorization capability
 - 14 Provider catalogs and 69 fixed actions released
-- Per-Agent grants, bound credentials and write approvals verified
+- Provider-specific authorization URL, callback, token exchange, refresh and revocation implementations covered by the automated suite
+- Google Workspace and Slack completed real browser OAuth, scope consent, callback and encrypted Vault storage
+- GitHub credential import and Gateway access verified
+- Codex and Claude Code granted all 20 available actions across Google, GitHub and Slack; writes retain exact Dashboard approval
+- Fresh MCP processes successfully executed GitHub, Google Calendar and Slack read actions
+- Acceptance criterion is authorization capability; persistent live connections for every Provider are optional rollout work
+- 31 test files and 252 tests passed
 - Two-device encrypted Demo passed
 - Codex and Claude Code adapters installed locally
+- Implemented the v0.7 device, AI tool, model source, configuration intent, and Persona product scope.
+- Added the CC Switch-derived Rust Device Sidecar with pinned MIT provenance, atomic apply, backup, rollback, and bounded recovery.
+- Passed 37 TypeScript test files with 302 tests, the encrypted two-device Demo, Rust fmt, Clippy, and 14 Sidecar tests.
+- Published GitHub Release v0.7.0 with 16 checksum-bound assets and GHCR image sha256:b0736b1e...8748.
+- Published Homebrew Formula and Cask 0.7.0 at tap commit b69652a1b1e3687fb68475587e5e96ad9995784f.
+- Installed the official tap Formula and Cask locally; verified CLI, Sidecar, service, GUI, Codex MCP, and Claude Code MCP.
+- Deployed Tencent Cloud release 20260809T173233Z with API 0.7.0; retained account and SQLite data and passed quick_check.
+- Updated main to 493f24f3119ecb61af8e5e2867120321b52b9b1a with final Formula, product metadata, and App/CLI coexistence guidance.
 
 ## Next
 
@@ -67,15 +81,12 @@ One Status v0.6.0 is released and deployed. Source/tag commit: 11d9e9fa9de32bd4d
 - Monitor post-release regression reports; ship patch v0.4.x if needed
 - Reauthorize the existing Slack connection for history, search, and chat scopes
 - Choose additional read actions for Codex and Claude Code in Connections
-- Complete OAuth acceptance for v0.6.0 Providers
-- Reauthorize Google Workspace for Gmail, Drive and Docs
-- Reauthorize Slack for history, search and chat
-- Create OAuth Apps and validate Microsoft 365, Notion, Dropbox, Zoom, Canva, Asana, Airtable, Linear, Figma and Box
-- Configure Trello API key and user Token
 - Install One Status 0.6.0 on Mac B
 - Login with recovery key
 - Open published Handoff at exact Git commit
 - Confirm Codex restores current context
+- Complete One Status v0.7.0 rollout and second-device acceptance
+- Install One Status 0.7.0 on a second physical device and run Open and Continue at the published exact Handoff commit.
 
 ## Blocked
 
@@ -84,6 +95,6 @@ One Status v0.6.0 is released and deployed. Source/tag commit: 11d9e9fa9de32bd4d
 ## Git State
 
 - Branch: main
-- Commit: 11d9e9fa9de32bd4d87c0ebd28a7de6665fa7124
+- Commit: 493f24f3119ecb61af8e5e2867120321b52b9b1a
 - Dirty: no
 - Tests: not run
