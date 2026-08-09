@@ -1,14 +1,14 @@
 # One Status Handoff
 
-Generated: 2026-08-08T23:19:44.649Z
+Generated: 2026-08-09T03:38:02.362Z
 
 ## Current Goal
 
-Complete Slack OAuth and public HTTPS activation, then verify cross-device Handoff.
+Validate Open and Continue on a second physical device.
 
 ## Current Context
 
-One Status v0.1.1 is released with public Homebrew installation, Codex and Claude Code MCP, encrypted sync, Google Calendar OAuth, GitHub CLI credential import, and GitHub read/Handoff grants. Tencent Cloud release 20260808T230316Z is healthy internally with Status version 12; public HTTPS awaits the Lighthouse TCP 443 rule. Slack App activation awaits Workspace sign-in.
+One Status v0.2.0 is released at https://github.com/niyuxuan782/one-status/releases/tag/v0.2.0 and deployed at https://os.furesta.top as Tencent Cloud release 20260809T033046Z. Public Homebrew installation, Status schema v2, Memory review, Task State, local project registration, Activity, Security, Handoff digest verification, and multi-device Slack refresh reconciliation are live. GitHub, Google Calendar, and Slack are connected and verified through independent Codex and Claude Code MCP processes. Full verification: 23 test files, 129 tests, two-device/two-Agent demo, brew test, public HTTPS, and SQLite quick_check.
 
 ## Architecture Decisions
 
@@ -16,7 +16,16 @@ One Status v0.1.1 is released with public Homebrew installation, Codex and Claud
 
 ## Completed
 
-- None
+- Release One Status v0.2.0
+- Status schema v2 and legacy migration
+- Memory candidate confirmation and provenance
+- Task State and local project path registration
+- Activity and Agent Permission Firewall
+- GitHub, Google Calendar, and Slack live OAuth
+- Multi-device Slack refresh reconciliation
+- GitHub Release and public Homebrew tap
+- Tencent Cloud release 20260809T033046Z
+- 129 tests and two-Agent demo
 
 ## Next
 
@@ -29,6 +38,6 @@ One Status v0.1.1 is released with public Homebrew installation, Codex and Claud
 ## Git State
 
 - Branch: main
-- Commit: b2d962952830e2e9eed71ab3c7cdf4930e4a061f
+- Commit: f365405f6bd51ec1eaecf2ce4504a2d611a1a1f8
 - Dirty: no
 - Tests: not run
