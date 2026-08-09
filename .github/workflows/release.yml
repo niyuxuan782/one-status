@@ -159,12 +159,14 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           body: |
-            This release adds a Gateway-first MCP experience, 14 controlled
-            Calendar, GitHub and Slack actions, per-action input schemas,
-            confirmed writes, and a single-command Handoff flow.
+            This release adds 14 Capability Packs, cross-Agent adapter outputs,
+            and 69 controlled actions across Google Workspace, GitHub, Slack,
+            Microsoft 365, Notion, Dropbox, Zoom, Canva, Asana, Trello,
+            Airtable, Linear, Figma and Box.
 
             The cross-platform Desktop Preview also includes the local GUI,
-            encrypted sync, OAuth Permission Vault and Agent adapters.
+            encrypted sync, OAuth Permission Vault, confirmed writes,
+            synchronized installation intent and Agent adapters.
 
             Preview desktop builds are not yet signed. Verify downloads with
             `SHA256SUMS.txt` before installation.

@@ -1,5 +1,5 @@
 import { createEmptyStatus, type StatusDocument } from "@one-status/protocol";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
   DashboardBackend,
   DashboardStatusSnapshot,
@@ -9,6 +9,7 @@ import { PermissionVault } from "./permission-vault.js";
 import { ToolConnectionExpiredError } from "./tool-gateway.js";
 
 describe("Permission Vault encrypted sync", () => {
+  afterEach(() => vi.useRealTimers());
   it("moves credentials and grants between device-local vaults as ciphertext", async () => {
     const backend = new MemoryBackend();
     const first = createVault(1);
@@ -152,6 +153,58 @@ describe("Permission Vault encrypted sync", () => {
     expect(second.getConnection("user-1", connection.id)?.status).toBe(
       "connected",
     );
+    first.close();
+    second.close();
+  });
+
+  it("keeps the cloud baseline authoritative over a stale future device clock", async () => {
+    const backend = new MemoryBackend();
+    const first = createVault(11);
+    const second = createVault(12);
+    const context = async () => ({
+      statusKey: new Uint8Array(32).fill(13),
+      userId: "user-1",
+    });
+    const firstSync = new PermissionSyncService(backend, first, context);
+    const secondSync = new PermissionSyncService(backend, second, context);
+    first.configureProvider("user-1", "slack", { clientId: "slack-client" });
+    const connection = first.upsertConnection({
+      accountId: "T1",
+      credential: { accessToken: "initial", refreshToken: "initial-refresh" },
+      expiresAt: "2026-08-10T00:00:00.000Z",
+      label: "Workspace",
+      provider: "slack",
+      scopes: ["channels:read"],
+      userId: "user-1",
+    });
+    await firstSync.run(() => undefined);
+    await secondSync.run(() => undefined);
+
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2030-01-01T00:00:00.000Z"));
+    second.updateCredential(
+      "user-1",
+      connection.id,
+      { accessToken: "stale-future", refreshToken: "stale-future-refresh" },
+      "2030-01-01T01:00:00.000Z",
+    );
+    vi.setSystemTime(new Date("2026-08-09T12:00:00.000Z"));
+    await firstSync.run(() => {
+      first.updateCredential(
+        "user-1",
+        connection.id,
+        { accessToken: "rotated", refreshToken: "rotated-refresh" },
+        "2026-08-10T12:00:00.000Z",
+      );
+    });
+
+    await secondSync.run(() => undefined);
+    expect(
+      second.getConnectionWithCredential("user-1", connection.id)?.credential,
+    ).toMatchObject({
+      accessToken: "rotated",
+      refreshToken: "rotated-refresh",
+    });
     first.close();
     second.close();
   });

@@ -1,12 +1,23 @@
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
+import {
+  getBuiltInCapabilityPack,
+  listBuiltInCapabilityPacks,
+} from "@one-status/capability-pack";
 import type {
   FastifyInstance,
   FastifyReply,
   FastifyRequest,
 } from "fastify";
-import { ONE_STATUS_VERSION } from "@one-status/protocol";
+import {
+  capabilityTargetSchema,
+  ONE_STATUS_VERSION,
+} from "@one-status/protocol";
 import { z } from "zod";
-import type { AuthenticatedSession } from "./database.js";
+import type {
+  AuthenticatedAgentSession,
+  AuthenticatedSession,
+  IssuedAgentCredential,
+} from "./database.js";
 import type { DashboardBackend } from "./dashboard-backend.js";
 import type { HandoffService } from "./handoff.js";
 import { GitHubCliCredentialImporter } from "./github-cli-import.js";
@@ -23,9 +34,17 @@ import {
   revokeOAuthCredential,
 } from "./oauth-providers.js";
 import type { OAuthProvider, PermissionVault } from "./permission-vault.js";
+import { providerExtensionById } from "./provider-extensions/index.js";
 import type { PermissionSyncService } from "./permission-sync.js";
-import type { ToolGateway } from "./tool-gateway.js";
+import {
+  ToolApprovalError,
+  type ToolGateway,
+} from "./tool-gateway.js";
 import type { LocalInventoryService } from "./local-inventory.js";
+import type {
+  LocalCapabilityManager,
+  LocalCapabilityTarget,
+} from "./local-capability-manager.js";
 import type { LocalOnboardingService } from "./onboarding.js";
 
 const dashboardPaths = new Set([
@@ -35,6 +54,7 @@ const dashboardPaths = new Set([
   "/handoffs",
   "/memory",
   "/environment",
+  "/capabilities",
   "/integrations",
   "/devices",
   "/activity",
@@ -42,8 +62,15 @@ const dashboardPaths = new Set([
 ]);
 
 export interface DashboardRuntime {
+  authenticateAgent(
+    authorization?: string,
+  ): AuthenticatedAgentSession | undefined;
   authenticateDevice(authorization?: string): AuthenticatedSession | undefined;
   backend: DashboardBackend;
+  capabilityManager?: Pick<
+    LocalCapabilityManager,
+    "install" | "prepareInstallation"
+  >;
   closeLocalState?: () => void;
   handoffs: Pick<
     HandoffService,
@@ -62,6 +89,15 @@ export interface DashboardRuntime {
   permissionVault: PermissionVault;
   permissionSync?: Pick<PermissionSyncService, "run">;
   publicBaseUrl?: string;
+  issueAgentCredential(
+    session: AuthenticatedSession,
+    agentId: string,
+  ): IssuedAgentCredential;
+  revokeAgentCredential(
+    userId: string,
+    deviceId: string,
+    credentialId: string,
+  ): boolean;
   toolGateway: ToolGateway;
 }
 
@@ -147,8 +183,12 @@ export function registerDashboardRoutes(
         const userId = snapshot.profile.userId;
         return {
           ...snapshot,
+          capabilityPacks: listBuiltInCapabilityPacks().map(
+            ({ manifest, digest }) => ({ manifest, digest }),
+          ),
           integrations: {
             auditEvents: runtime.permissionVault.listAuditEvents(userId),
+            approvals: runtime.toolGateway.listApprovals(userId),
             connections: runtime.permissionVault.listConnections(userId),
             grants: runtime.permissionVault.listGrants(userId),
             providers: Object.values(providerCatalog).map((provider) => {
@@ -173,6 +213,96 @@ export function registerDashboardRoutes(
     if (!authorizeDashboard(request, reply, dashboardSession)) return;
     return dashboardCall(reply, () => runtime.inventory.get());
   });
+
+  app.put(
+    "/v1/dashboard/capabilities/:packId",
+    async (request, reply) => {
+      if (!authorizeDashboardWrite(request, reply, dashboardSession, csrfToken)) {
+        return;
+      }
+      const { packId } = capabilityPackParameterSchema.parse(request.params);
+      const input = capabilityInstallationInputSchema.parse(request.body);
+      const manifest = getBuiltInCapabilityPack(packId);
+      if (!manifest) return reply.code(404).send({ error: "not_found" });
+      const entry = listBuiltInCapabilityPacks().find(
+        ({ manifest: candidate }) => candidate.name === packId,
+      );
+      if (!entry) return reply.code(404).send({ error: "not_found" });
+      return dashboardCall(reply, () =>
+        runtime.backend.mutateStatus((status) => {
+          const now = new Date().toISOString();
+          const previous = status.capabilities.installations[packId];
+          status.capabilities.installations[packId] = {
+            packId,
+            version: manifest.version,
+            manifestDigest: entry.digest,
+            source: { type: "builtin" },
+            targets: [...new Set(input.targets)],
+            enabled: input.enabled,
+            installedAt: previous?.installedAt ?? now,
+            updatedAt: now,
+          };
+        }),
+      );
+    },
+  );
+
+  app.delete(
+    "/v1/dashboard/capabilities/:packId",
+    async (request, reply) => {
+      if (!authorizeDashboardWrite(request, reply, dashboardSession, csrfToken)) {
+        return;
+      }
+      const { packId } = capabilityPackParameterSchema.parse(request.params);
+      return dashboardCall(reply, () =>
+        runtime.backend.mutateStatus((status) => {
+          delete status.capabilities.installations[packId];
+        }),
+      );
+    },
+  );
+
+  app.post(
+    "/v1/dashboard/capabilities/:packId/preview",
+    async (request, reply) => {
+      if (!authorizeDashboardWrite(request, reply, dashboardSession, csrfToken)) {
+        return;
+      }
+      if (!runtime.capabilityManager) {
+        return reply.code(501).send({ error: "capability_installer_unavailable" });
+      }
+      const { packId } = capabilityPackParameterSchema.parse(request.params);
+      const { target } = localCapabilityTargetInputSchema.parse(request.body);
+      return dashboardCall(reply, () =>
+        runtime.capabilityManager!.prepareInstallation({
+          packName: packId,
+          target: target as LocalCapabilityTarget,
+        }),
+      );
+    },
+  );
+
+  app.post(
+    "/v1/dashboard/capabilities/:packId/install",
+    async (request, reply) => {
+      if (!authorizeDashboardWrite(request, reply, dashboardSession, csrfToken)) {
+        return;
+      }
+      if (!runtime.capabilityManager) {
+        return reply.code(501).send({ error: "capability_installer_unavailable" });
+      }
+      const { packId } = capabilityPackParameterSchema.parse(request.params);
+      const input = localCapabilityInstallInputSchema.parse(request.body);
+      return dashboardCall(reply, () =>
+        runtime.capabilityManager!.install({
+          packName: packId,
+          target: input.target as LocalCapabilityTarget,
+          confirmed: true,
+          approvalId: input.approvalId,
+        }),
+      );
+    },
+  );
 
   app.post("/v1/dashboard/local-inventory/refresh", async (request, reply) => {
     if (!authorizeDashboardWrite(request, reply, dashboardSession, csrfToken)) {
@@ -570,6 +700,52 @@ export function registerDashboardRoutes(
   );
 
   app.post(
+    "/v1/dashboard/oauth/providers/:provider/import-token",
+    async (request, reply) => {
+      if (!authorizeDashboardWrite(request, reply, dashboardSession, csrfToken)) {
+        return;
+      }
+      return dashboardCall(reply, () =>
+        withPermissionVault(runtime, async () => {
+          const { provider: rawProvider } = providerParameterSchema.parse(
+            request.params,
+          );
+          const provider = parseOAuthProvider(rawProvider);
+          const extension = providerExtensionById.get(provider);
+          if (
+            providerCatalog[provider].authMode !== "token" ||
+            !extension?.tokenConnection
+          ) {
+            return reply.code(404).send({ error: "not_found" });
+          }
+          const { accessToken } = providerTokenInputSchema.parse(request.body);
+          const userId = await runtime.backend.userId();
+          const config = runtime.permissionVault.getProviderConfig(
+            userId,
+            provider,
+          );
+          if (!config) {
+            throw new Error("Configure the provider app before connecting.");
+          }
+          const verified = await extension.tokenConnection.verify({
+            accessToken,
+            config,
+          });
+          const connection = runtime.permissionVault.upsertConnection({
+            ...verified,
+            credential: { accessToken, tokenType: "Token" },
+            expiresAt: null,
+            provider,
+            source: "imported",
+            userId,
+          });
+          return { connected: true, connection };
+        }),
+      );
+    },
+  );
+
+  app.post(
     "/v1/dashboard/oauth/providers/:provider/start",
     async (request, reply) => {
       if (!authorizeDashboardWrite(request, reply, dashboardSession, csrfToken)) {
@@ -581,6 +757,9 @@ export function registerDashboardRoutes(
             request.params,
           );
           const provider = parseOAuthProvider(rawProvider);
+          if (providerCatalog[provider].authMode === "token") {
+            throw new Error("This provider uses a Token connection.");
+          }
           const userId = await runtime.backend.userId();
           const config = runtime.permissionVault.getProviderConfig(
             userId,
@@ -757,7 +936,7 @@ export function registerDashboardRoutes(
     }
     return dashboardCall(reply, () =>
       withPermissionVault(runtime, async () => {
-        const body = toolExecuteInputSchema.parse(request.body);
+        const body = dashboardToolExecuteInputSchema.parse(request.body);
         return {
           result: await runtime.toolGateway.execute({
             ...body,
@@ -768,37 +947,133 @@ export function registerDashboardRoutes(
     );
   });
 
-  app.get("/v1/tools", async (request, reply) => {
+  app.post(
+    "/v1/dashboard/tool-approvals/:id",
+    async (request, reply) => {
+      if (!authorizeDashboardWrite(request, reply, dashboardSession, csrfToken)) {
+        return;
+      }
+      return dashboardCall(reply, async () => {
+        const { id } = toolApprovalParameterSchema.parse(request.params);
+        const { decision } = toolApprovalDecisionSchema.parse(request.body);
+        return {
+          approval: runtime.toolGateway.decideApproval(
+            await runtime.backend.userId(),
+            id,
+            decision,
+          ),
+        };
+      });
+    },
+  );
+
+  app.post("/v1/tools/credentials", async (request, reply) => {
     if (!isTrustedDashboardHost(request)) return forbidden(reply);
-    const session = await authenticateToolRequest(
+    const session = await authenticateDeviceRequest(
       runtime,
       request.headers.authorization,
     );
     if (!session) return unauthorized(reply);
-    const { agentId } = agentQuerySchema.parse(request.query);
+    const { agentId } = agentCredentialInputSchema.parse(request.body);
+    return {
+      credential: runtime.issueAgentCredential(session, agentId),
+    };
+  });
+
+  app.delete(
+    "/v1/tools/credentials/:credentialId",
+    async (request, reply) => {
+      if (!isTrustedDashboardHost(request)) return forbidden(reply);
+      const session = await authenticateDeviceRequest(
+        runtime,
+        request.headers.authorization,
+      );
+      if (!session) return unauthorized(reply);
+      const { credentialId } = agentCredentialParameterSchema.parse(
+        request.params,
+      );
+      if (
+        !runtime.revokeAgentCredential(
+          session.userId,
+          session.deviceId,
+          credentialId,
+        )
+      ) {
+        return reply.code(404).send({
+          error: {
+            code: "agent_credential_not_found",
+            message: "Agent credential was not found.",
+          },
+        });
+      }
+      return { credentialId, revoked: true };
+    },
+  );
+
+  app.get("/v1/tools", async (request, reply) => {
+    if (!isTrustedDashboardHost(request)) return forbidden(reply);
+    const session = await authenticateAgentToolRequest(
+      runtime,
+      request.headers.authorization,
+      reply,
+    );
+    if (!session) return;
+    const { agentId: claimedAgentId } = agentQuerySchema.parse(request.query);
+    if (!matchesAgentIdentity(claimedAgentId, session.agentId)) {
+      return agentIdentityMismatch(reply);
+    }
     return withPermissionVault(runtime, () => ({
-      connections: runtime.toolGateway.list(session.userId, agentId),
+      connections: runtime.toolGateway.list(session.userId, session.agentId),
+    }));
+  });
+
+  app.post("/v1/tools/approval-requests", async (request, reply) => {
+    if (!isTrustedDashboardHost(request)) return forbidden(reply);
+    const session = await authenticateAgentToolRequest(
+      runtime,
+      request.headers.authorization,
+      reply,
+    );
+    if (!session) return;
+    const { agentId: claimedAgentId, ...body } =
+      agentToolApprovalRequestInputSchema.parse(request.body);
+    if (!matchesAgentIdentity(claimedAgentId, session.agentId)) {
+      return agentIdentityMismatch(reply);
+    }
+    return withPermissionVault(runtime, () => ({
+      approval: runtime.toolGateway.requestApproval({
+        ...body,
+        agentId: session.agentId,
+        userId: session.userId,
+      }),
+      dashboardUrl: `http://${request.headers.host}/integrations`,
     }));
   });
 
   app.post("/v1/tools/execute", async (request, reply) => {
     if (!isTrustedDashboardHost(request)) return forbidden(reply);
-    const session = await authenticateToolRequest(
+    const session = await authenticateAgentToolRequest(
       runtime,
       request.headers.authorization,
+      reply,
     );
-    if (!session) return unauthorized(reply);
-    const body = toolExecuteInputSchema.parse(request.body);
+    if (!session) return;
+    const { agentId: claimedAgentId, ...body } =
+      agentToolExecuteInputSchema.parse(request.body);
+    if (!matchesAgentIdentity(claimedAgentId, session.agentId)) {
+      return agentIdentityMismatch(reply);
+    }
     return withPermissionVault(runtime, async () => ({
       result: await runtime.toolGateway.execute({
         ...body,
+        agentId: session.agentId,
         userId: session.userId,
       }),
     }));
   });
 }
 
-async function authenticateToolRequest(
+async function authenticateDeviceRequest(
   runtime: DashboardRuntime,
   authorization?: string,
 ): Promise<AuthenticatedSession | undefined> {
@@ -806,6 +1081,29 @@ async function authenticateToolRequest(
     runtime.authenticateDevice(authorization) ??
     (await runtime.backend.authenticateDevice?.(authorization))
   );
+}
+
+async function authenticateAgentToolRequest(
+  runtime: DashboardRuntime,
+  authorization: string | undefined,
+  reply: FastifyReply,
+): Promise<AuthenticatedAgentSession | undefined> {
+  const agent = runtime.authenticateAgent(authorization);
+  if (agent) return agent;
+  const device = await authenticateDeviceRequest(runtime, authorization);
+  if (device) {
+    agentCredentialRequired(reply);
+    return undefined;
+  }
+  unauthorizedAgent(reply);
+  return undefined;
+}
+
+function matchesAgentIdentity(
+  claimedAgentId: string | undefined,
+  authenticatedAgentId: string,
+): boolean {
+  return claimedAgentId === undefined || claimedAgentId === authenticatedAgentId;
 }
 
 function withPermissionVault<T>(
@@ -944,6 +1242,7 @@ async function dashboardCall(
   try {
     return await operation();
   } catch (error) {
+    if (error instanceof ToolApprovalError) throw error;
     const message = error instanceof Error ? error.message : "Request failed.";
     const status = error instanceof z.ZodError ? 400 : 422;
     return reply.code(status).send({ error: { message } });
@@ -979,6 +1278,34 @@ function forbidden(reply: FastifyReply) {
 function unauthorized(reply: FastifyReply) {
   return reply.code(401).send({
     error: { code: "unauthorized", message: "A valid device session is required." },
+  });
+}
+
+function unauthorizedAgent(reply: FastifyReply) {
+  return reply.code(401).send({
+    error: {
+      code: "unauthorized",
+      message: "A valid One Status Agent credential is required.",
+    },
+  });
+}
+
+function agentCredentialRequired(reply: FastifyReply) {
+  return reply.code(401).send({
+    error: {
+      code: "agent_credential_required",
+      message:
+        "Device sessions cannot call Agent tools. Upgrade or restart the One Status MCP to obtain an Agent credential.",
+    },
+  });
+}
+
+function agentIdentityMismatch(reply: FastifyReply) {
+  return reply.code(403).send({
+    error: {
+      code: "agent_identity_mismatch",
+      message: "The claimed Agent identity does not match the credential.",
+    },
   });
 }
 
@@ -1092,6 +1419,9 @@ const providerConfigInputSchema = z
     clientSecret: z.string().max(1_000).optional(),
   })
   .strict();
+const providerTokenInputSchema = z
+  .object({ accessToken: z.string().min(1).max(32_000) })
+  .strict();
 const oauthCallbackSchema = z.object({
   code: z.string().max(10_000).optional(),
   error: z.string().max(200).optional(),
@@ -1104,13 +1434,58 @@ const grantParameterSchema = z.object({
 const grantInputSchema = z
   .object({ actions: z.array(z.string().min(1)).max(100) })
   .strict();
+const capabilityPackParameterSchema = z.object({
+  packId: z.string().min(1).max(120),
+});
+const capabilityInstallationInputSchema = z
+  .object({
+    targets: z.array(capabilityTargetSchema).min(1).max(7),
+    enabled: z.boolean().default(true),
+  })
+  .strict();
+const localCapabilityTargetInputSchema = z
+  .object({ target: z.enum(["codex", "claude-code", "markdown", "local-mcp"]) })
+  .strict();
+const localCapabilityInstallInputSchema = localCapabilityTargetInputSchema
+  .extend({
+    approvalId: z.string().regex(/^[a-f0-9]{64}$/),
+    confirmed: z.literal(true),
+  })
+  .strict();
 const toolExecuteInputSchema = z
   .object({
     action: z.string().min(1).max(160),
     agentId: z.string().min(1).max(120),
-    arguments: z.unknown().optional(),
-    confirmed: z.boolean().optional(),
+    approvalId: z.uuid().optional(),
+    arguments: z.record(z.string(), z.unknown()).default({}),
     connectionId: z.uuid(),
   })
   .strict();
-const agentQuerySchema = z.object({ agentId: z.string().min(1).max(120) });
+const dashboardToolExecuteInputSchema = toolExecuteInputSchema
+  .omit({ approvalId: true })
+  .extend({ confirmed: z.literal(true) })
+  .strict();
+const toolApprovalRequestInputSchema = toolExecuteInputSchema
+  .omit({ approvalId: true })
+  .strict();
+const agentToolExecuteInputSchema = toolExecuteInputSchema
+  .partial({ agentId: true })
+  .strict();
+const agentToolApprovalRequestInputSchema = toolApprovalRequestInputSchema
+  .partial({ agentId: true })
+  .strict();
+const toolApprovalParameterSchema = z.object({ id: z.uuid() });
+const toolApprovalDecisionSchema = z
+  .object({ decision: z.enum(["approve", "deny"]) })
+  .strict();
+const agentIdSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(120)
+  .regex(/^[a-zA-Z0-9._:-]+$/);
+const agentQuerySchema = z.object({ agentId: agentIdSchema.optional() }).strict();
+const agentCredentialInputSchema = z.object({ agentId: agentIdSchema }).strict();
+const agentCredentialParameterSchema = z
+  .object({ credentialId: z.uuid() })
+  .strict();

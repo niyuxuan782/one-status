@@ -8,6 +8,7 @@ One Status 采用 Open Core 模式。个人用户能够审计、运行和自托�
 
 - macOS、Windows、Linux Desktop App 与本机后台服务
 - CLI、MCP Server、SDK 和 Status Schema
+- Capability Pack schema、YAML/JSON parser、内置目录和 Adapter Engine
 - 客户端加密实现与本地 Permission Vault
 - 本机项目、Skills、MCP、Rules 和 Agent 配置扫描
 - Memory、Preferences、Task State 和 Handoff 工作流

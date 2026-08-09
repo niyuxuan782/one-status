@@ -20,8 +20,25 @@ import { z } from "zod";
 const nodeRequire = createRequire(import.meta.url);
 const FLOW_TTL_MS = 10 * 60 * 1_000;
 
-export const oauthProviders = ["google", "github", "slack"] as const;
+export const oauthProviders = [
+  "google",
+  "github",
+  "slack",
+  "microsoft",
+  "notion",
+  "dropbox",
+  "zoom",
+  "canva",
+  "asana",
+  "trello",
+  "airtable",
+  "linear",
+  "figma",
+  "box",
+] as const;
 export type OAuthProvider = (typeof oauthProviders)[number];
+
+const secretlessProviders = new Set<OAuthProvider>(["slack", "trello"]);
 
 export interface OAuthProviderConfig {
   clientId: string;
@@ -217,12 +234,12 @@ export class PermissionVault {
     const clientId = requiredSecretValue(input.clientId, "Client ID", 500);
     const current = this.getProviderConfig(userId, provider);
     const clientSecret =
-      provider === "slack"
+      secretlessProviders.has(provider)
         ? ""
         : input.clientSecret
           ? requiredSecretValue(input.clientSecret, "Client secret", 1_000)
           : current?.clientSecret;
-    if (provider !== "slack" && !clientSecret) {
+    if (!secretlessProviders.has(provider) && !clientSecret) {
       throw new Error("Client secret is required.");
     }
     const storedClientSecret = clientSecret ?? "";
@@ -717,7 +734,7 @@ export class PermissionVault {
 
       for (const entry of bundle.providers) {
         const clientSecret =
-          entry.provider === "slack"
+          secretlessProviders.has(entry.provider)
             ? ""
             : requiredSecretValue(
                 entry.config.clientSecret ?? "",

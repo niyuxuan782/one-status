@@ -37,6 +37,7 @@ describe("MCP runtime config", () => {
     const fromEnvironment = await loadMcpRuntimeConfig(
       {
         ONE_STATUS_URL: "https://status.example.test",
+        ONE_STATUS_AGENT_TOKEN: "osa1_environment-agent-token",
         ONE_STATUS_TOKEN: "environment-token",
         ONE_STATUS_STATUS_KEY: `os1_${"b".repeat(43)}`,
       },
@@ -44,6 +45,7 @@ describe("MCP runtime config", () => {
     );
     expect(fromEnvironment).toMatchObject({
       baseUrl: "https://status.example.test",
+      agentToken: "osa1_environment-agent-token",
       token: "environment-token",
       toolGatewayUrl: "http://127.0.0.1:8787",
     });
@@ -68,5 +70,14 @@ describe("MCP runtime config", () => {
         async () => profile,
       ),
     ).rejects.toThrow(/requires HTTPS/);
+  });
+
+  it("rejects a device token supplied as the Agent credential", async () => {
+    await expect(
+      loadMcpRuntimeConfig(
+        { ONE_STATUS_AGENT_TOKEN: "device-token" },
+        async () => profile,
+      ),
+    ).rejects.toThrow(/Agent credential/);
   });
 });

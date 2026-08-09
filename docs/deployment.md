@@ -54,7 +54,8 @@ MCP runtime 在内存中持有 Status Key。Sync API 继续只保存密文。
 | `ONE_STATUS_TOKEN` | 是 | 设备 session token |
 | `ONE_STATUS_STATUS_KEY` | 是 | `os1_` Status Key |
 | `ONE_STATUS_MCP_BEARER_TOKEN` | 非回环必填 | Agent 访问 HTTP MCP 的独立 bearer |
-| `ONE_STATUS_AGENT_ID` | 否 | 写入 context 时记录的 Agent ID |
+| `ONE_STATUS_AGENT_ID` | 否 | 用于申请受绑定凭据并记录 context 的 Agent ID |
+| `ONE_STATUS_AGENT_TOKEN` | 远程 Tool Gateway 必填 | 预签发的 `osa1_` Agent credential；回环 Gateway 会自动签发 |
 | `ONE_STATUS_MCP_HOST` | 否 | 默认 `127.0.0.1` |
 | `ONE_STATUS_MCP_PORT` | 否 | 默认 `3000` |
 | `ONE_STATUS_MCP_ENDPOINT` | 否 | 默认 `/mcp` |
@@ -62,7 +63,9 @@ MCP runtime 在内存中持有 Status Key。Sync API 继续只保存密文。
 | `ONE_STATUS_MCP_MAX_SESSIONS` | 否 | 默认 `100` |
 | `ONE_STATUS_MCP_IDLE_TIMEOUT_MS` | 否 | 默认 30 分钟 |
 
-`ONE_STATUS_TOKEN`、`ONE_STATUS_STATUS_KEY` 和 `ONE_STATUS_MCP_BEARER_TOKEN` 都支持对应的 `*_FILE` 变量，适合 Docker secrets 与 Kubernetes Secret volume。直接值与文件变量不能同时提供。Bearer 至少需要 32 字节，并且必须与设备 Token 不同。
+`ONE_STATUS_TOKEN`、`ONE_STATUS_STATUS_KEY`、`ONE_STATUS_AGENT_TOKEN` 和 `ONE_STATUS_MCP_BEARER_TOKEN` 都支持对应的 `*_FILE` 变量，适合 Docker secrets 与 Kubernetes Secret volume。直接值与文件变量不能同时提供。Bearer 至少需要 32 字节，并且必须与设备 Token 不同。
+
+回环 Tool Gateway 会用设备会话签发最长 24 小时的 `osa1_` Agent credential。之后 `/v1/tools`、审批和执行请求只携带 Agent credential，Gateway 从凭据读取 `userId`、`deviceId` 与 `agentId`。设备 Token 直接访问工具端点会收到 `agent_credential_required`。
 
 三个 One Status 凭据必须整组来自环境变量，或整组来自本地 profile。混合来源会被拒绝。
 
@@ -71,7 +74,7 @@ MCP runtime 在内存中持有 Status Key。Sync API 继续只保存密文。
 构建：
 
 ```bash
-docker build -t one-status:0.5.0 .
+docker build -t one-status:0.6.0 .
 ```
 
 运行：
@@ -87,7 +90,7 @@ docker run --rm -p 127.0.0.1:3000:3000 \
   -e ONE_STATUS_TOKEN \
   -e ONE_STATUS_STATUS_KEY \
   -e ONE_STATUS_MCP_BEARER_TOKEN \
-  one-status:0.5.0
+  one-status:0.6.0
 ```
 
 Compose：

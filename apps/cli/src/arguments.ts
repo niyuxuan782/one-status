@@ -1,12 +1,17 @@
 export interface ParsedArguments {
   command: string;
+  subcommand?: string;
   flags: Map<string, string>;
 }
 
-const BOOLEAN_FLAGS = new Set(["publish"]);
+const BOOLEAN_FLAGS = new Set(["confirm", "publish"]);
 
 export function parseArguments(arguments_: string[]): ParsedArguments {
-  const [command = "", ...rest] = arguments_;
+  const [command = "", ...remaining] = arguments_;
+  const rest = [...remaining];
+  const subcommand = rest[0] && !rest[0].startsWith("--")
+    ? rest.shift()
+    : undefined;
   const flags = new Map<string, string>();
   for (let index = 0; index < rest.length; index += 1) {
     const flag = rest[index];
@@ -25,7 +30,7 @@ export function parseArguments(arguments_: string[]): ParsedArguments {
     flags.set(name, value);
     index += 1;
   }
-  return { command, flags };
+  return { command, ...(subcommand ? { subcommand } : {}), flags };
 }
 
 export function booleanFlag(flags: Map<string, string>, name: string): boolean {

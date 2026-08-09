@@ -92,6 +92,7 @@ describe("One Status MCP", () => {
       "status_search_memory",
       "status_get_project",
       "status_get_context",
+      "capabilities_get",
       "status_update_context",
     ]);
     expect(client.getInstructions()).toContain(
@@ -111,12 +112,32 @@ describe("One Status MCP", () => {
       },
     });
 
+    const capabilities = await client.callTool({
+      name: "capabilities_get",
+      arguments: {},
+    });
+    expect(JSON.stringify(capabilities.structuredContent)).toContain(
+      "google-workspace",
+    );
+    expect(JSON.stringify(capabilities.structuredContent)).not.toContain(
+      "calendar.events.list",
+    );
+
+    const capabilityTools = await client.callTool({
+      name: "capabilities_get",
+      arguments: { includeTools: true },
+    });
+    expect(JSON.stringify(capabilityTools.structuredContent)).toContain(
+      "calendar.events.list",
+    );
+
     await client.close();
     await server.close();
   });
 
   it("exposes approved OAuth actions without exposing credentials", async () => {
     let executedInput: unknown;
+    let approvalInput: unknown;
     const server = createMcpServer(new MemoryVault(), "codex", {
       async list() {
         return { connections: [{ id: "connection-1" }] };
@@ -124,6 +145,16 @@ describe("One Status MCP", () => {
       async execute(input) {
         executedInput = input;
         return { action: input.action, ok: true };
+      },
+      async requestApproval(input) {
+        approvalInput = input;
+        return {
+          approval: {
+            id: "8aac7c59-f780-4ebb-a72e-b3c9ecbbf999",
+            status: "pending",
+          },
+          dashboardUrl: "http://127.0.0.1:8787/integrations",
+        };
       },
     });
     const client = new Client({ name: "tool-gateway-test", version: "1.0.0" });
@@ -134,6 +165,10 @@ describe("One Status MCP", () => {
     const tools = await client.listTools();
     expect(tools.tools.map((tool) => tool.name)).toContain("tools_list");
     expect(tools.tools.map((tool) => tool.name)).toContain("tools_execute");
+    expect(tools.tools.map((tool) => tool.name)).toContain(
+      "tools_request_approval",
+    );
+    expect(tools.tools.map((tool) => tool.name)).toContain("capabilities_get");
     expect(client.getInstructions()).toContain(
       "call tools_list first and prefer the One Status Gateway",
     );
@@ -143,19 +178,17 @@ describe("One Status MCP", () => {
 
     const listTool = tools.tools.find((tool) => tool.name === "tools_list");
     expect(listTool?.description).toContain(
-      "Call this first for Calendar, Slack, GitHub",
+      "Call this first for email, calendar, files, collaboration",
     );
     expect(listTool?.description).toContain("inputSchema");
     expect(listTool?.description).toContain("never returns provider credentials");
     const executeTool = tools.tools.find((tool) => tool.name === "tools_execute");
     expect(executeTool?.inputSchema).toMatchObject({
       properties: {
-        confirmed: {
-          default: false,
-          type: "boolean",
-        },
+        approvalId: { format: "uuid", type: "string" },
       },
     });
+    expect(executeTool?.inputSchema.properties).not.toHaveProperty("confirmed");
 
     const listResult = await client.callTool({
       name: "tools_list",
@@ -164,20 +197,36 @@ describe("One Status MCP", () => {
     expect(listResult.structuredContent).toEqual({
       connections: [{ id: "connection-1" }],
     });
+    const approvalResult = await client.callTool({
+      name: "tools_request_approval",
+      arguments: {
+        connectionId: "2cc16694-140d-4575-8189-3283163c15c7",
+        action: "github.issues.create",
+        arguments: { title: "Approved once" },
+      },
+    });
+    expect(JSON.stringify(approvalResult)).toContain(
+      "8aac7c59-f780-4ebb-a72e-b3c9ecbbf999",
+    );
+    expect(approvalInput).toEqual({
+      action: "github.issues.create",
+      arguments: { title: "Approved once" },
+      connectionId: "2cc16694-140d-4575-8189-3283163c15c7",
+    });
     const executeResult = await client.callTool({
       name: "tools_execute",
       arguments: {
         connectionId: "2cc16694-140d-4575-8189-3283163c15c7",
         action: "calendar.events.list",
         arguments: {},
-        confirmed: true,
+        approvalId: "8aac7c59-f780-4ebb-a72e-b3c9ecbbf999",
       },
     });
     expect(JSON.stringify(executeResult)).toContain("calendar.events.list");
     expect(executedInput).toEqual({
       action: "calendar.events.list",
       arguments: {},
-      confirmed: true,
+      approvalId: "8aac7c59-f780-4ebb-a72e-b3c9ecbbf999",
       connectionId: "2cc16694-140d-4575-8189-3283163c15c7",
     });
 

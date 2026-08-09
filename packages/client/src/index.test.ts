@@ -239,7 +239,7 @@ describe("synced status client", () => {
       .createVault(key)
       .read();
     expect(recovered.version).toBe(1);
-    expect(recovered.status).toMatchObject({ schemaVersion: 2 });
+    expect(recovered.status).toMatchObject({ schemaVersion: 3 });
   });
 
   it("deduplicates an explicitly retried append mutation", async () => {

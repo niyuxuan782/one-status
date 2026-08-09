@@ -15,6 +15,8 @@ const scryptAsync = promisify(scrypt);
 const nodeRequire = createRequire(import.meta.url);
 const PASSWORD_HASH_BYTES = 64;
 const SESSION_DAYS = 30;
+const AGENT_CREDENTIAL_HOURS = 24;
+const AGENT_CREDENTIAL_PREFIX = "osa1_";
 const MUTATION_RECEIPT_DAYS = 30;
 const MAX_MUTATION_RECEIPTS_PER_USER = 10_000;
 const DEVICE_ONLINE_WINDOW_MS = 90_000;
@@ -31,6 +33,14 @@ interface UserRow {
 interface SessionRow {
   user_id: string;
   device_id: string;
+  expires_at: string;
+}
+
+interface AgentCredentialRow {
+  credential_id: string;
+  user_id: string;
+  device_id: string;
+  agent_id: string;
   expires_at: string;
 }
 
@@ -66,6 +76,21 @@ export class VersionConflictError extends Error {
 export interface AuthenticatedSession {
   userId: string;
   deviceId: string;
+  expiresAt?: string;
+}
+
+export interface AuthenticatedAgentSession extends AuthenticatedSession {
+  agentId: string;
+  credentialId: string;
+  authentication: "agent";
+}
+
+export interface IssuedAgentCredential {
+  agentId: string;
+  credentialId: string;
+  deviceId: string;
+  expiresAt: string;
+  token: string;
 }
 
 export class OneStatusDatabase {
@@ -108,6 +133,24 @@ export class OneStatusDatabase {
         expires_at TEXT NOT NULL,
         created_at TEXT NOT NULL
       );
+
+      CREATE TABLE IF NOT EXISTS agent_credentials (
+        credential_id TEXT PRIMARY KEY,
+        token_hash TEXT NOT NULL UNIQUE,
+        user_id TEXT NOT NULL,
+        device_id TEXT NOT NULL,
+        agent_id TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        revoked_at TEXT,
+        created_at TEXT NOT NULL,
+        last_used_at TEXT
+      );
+
+      CREATE INDEX IF NOT EXISTS agent_credentials_identity
+        ON agent_credentials(user_id, device_id, agent_id);
+
+      CREATE INDEX IF NOT EXISTS agent_credentials_expiry
+        ON agent_credentials(expires_at);
 
       CREATE TABLE IF NOT EXISTS status_vaults (
         user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
@@ -249,7 +292,127 @@ export class OneStatusDatabase {
 
     this.#touchDevice(session.user_id, session.device_id, now, false);
 
-    return { userId: session.user_id, deviceId: session.device_id };
+    return {
+      userId: session.user_id,
+      deviceId: session.device_id,
+      expiresAt: session.expires_at,
+    };
+  }
+
+  issueAgentCredential(
+    session: AuthenticatedSession,
+    agentId: string,
+    options: { now?: Date; ttlMs?: number } = {},
+  ): IssuedAgentCredential {
+    const normalizedAgentId = normalizeAgentId(agentId);
+    const now = options.now ?? new Date();
+    const nowIso = now.toISOString();
+    const ttlMs =
+      options.ttlMs ?? AGENT_CREDENTIAL_HOURS * 60 * 60 * 1_000;
+    if (!Number.isSafeInteger(ttlMs) || ttlMs <= 0) {
+      throw new Error("Agent credential lifetime must be a positive integer.");
+    }
+    const sessionExpiry = session.expiresAt
+      ? Date.parse(session.expiresAt)
+      : Number.POSITIVE_INFINITY;
+    if (Number.isNaN(sessionExpiry) || sessionExpiry <= now.getTime()) {
+      throw new Error("The device session has expired.");
+    }
+    const expiresAt = new Date(
+      Math.min(now.getTime() + ttlMs, sessionExpiry),
+    ).toISOString();
+    const credentialId = randomUUID();
+    const token = `${AGENT_CREDENTIAL_PREFIX}${randomBytes(32).toString("base64url")}`;
+
+    this.#database.exec("BEGIN IMMEDIATE");
+    try {
+      this.#database
+        .prepare("DELETE FROM agent_credentials WHERE expires_at <= ?")
+        .run(nowIso);
+      this.#database
+        .prepare(
+          `INSERT INTO agent_credentials
+             (credential_id, token_hash, user_id, device_id, agent_id,
+              expires_at, revoked_at, created_at, last_used_at)
+           VALUES (?, ?, ?, ?, ?, ?, NULL, ?, NULL)`,
+        )
+        .run(
+          credentialId,
+          hashToken(token),
+          session.userId,
+          session.deviceId,
+          normalizedAgentId,
+          expiresAt,
+          nowIso,
+        );
+      this.#database.exec("COMMIT");
+    } catch (error) {
+      this.#database.exec("ROLLBACK");
+      throw error;
+    }
+
+    return {
+      agentId: normalizedAgentId,
+      credentialId,
+      deviceId: session.deviceId,
+      expiresAt,
+      token,
+    };
+  }
+
+  authenticateAgent(
+    token: string,
+    now = new Date(),
+  ): AuthenticatedAgentSession | null {
+    if (!token.startsWith(AGENT_CREDENTIAL_PREFIX)) return null;
+    const nowIso = now.toISOString();
+    const credential = this.#database
+      .prepare(
+        `SELECT credential_id, user_id, device_id, agent_id, expires_at
+           FROM agent_credentials
+          WHERE token_hash = ?
+            AND revoked_at IS NULL
+            AND expires_at > ?`,
+      )
+      .get(hashToken(token), nowIso) as unknown as
+      | AgentCredentialRow
+      | undefined;
+    if (!credential) return null;
+
+    this.#database
+      .prepare(
+        `UPDATE agent_credentials
+            SET last_used_at = ?
+          WHERE credential_id = ?`,
+      )
+      .run(nowIso, credential.credential_id);
+    this.#touchDevice(credential.user_id, credential.device_id, nowIso, false);
+    return {
+      authentication: "agent",
+      agentId: credential.agent_id,
+      credentialId: credential.credential_id,
+      deviceId: credential.device_id,
+      expiresAt: credential.expires_at,
+      userId: credential.user_id,
+    };
+  }
+
+  revokeAgentCredential(
+    userId: string,
+    deviceId: string,
+    credentialId: string,
+  ): boolean {
+    const result = this.#database
+      .prepare(
+        `UPDATE agent_credentials
+            SET revoked_at = ?
+          WHERE credential_id = ?
+            AND user_id = ?
+            AND device_id = ?
+            AND revoked_at IS NULL`,
+      )
+      .run(new Date().toISOString(), credentialId, userId, deviceId);
+    return Number(result.changes) > 0;
   }
 
   heartbeat(userId: string, deviceId: string): {
@@ -263,17 +426,52 @@ export class OneStatusDatabase {
   }
 
   revokeSession(token: string): boolean {
-    const result = this.#database
-      .prepare("DELETE FROM sessions WHERE token_hash = ?")
-      .run(hashToken(token));
-    return Number(result.changes) > 0;
+    const tokenHash = hashToken(token);
+    const session = this.#database
+      .prepare("SELECT user_id, device_id, expires_at FROM sessions WHERE token_hash = ?")
+      .get(tokenHash) as unknown as SessionRow | undefined;
+    if (!session) return false;
+    const now = new Date().toISOString();
+    this.#database.exec("BEGIN IMMEDIATE");
+    try {
+      this.#database
+        .prepare("DELETE FROM sessions WHERE token_hash = ?")
+        .run(tokenHash);
+      this.#database
+        .prepare(
+          `UPDATE agent_credentials
+              SET revoked_at = ?
+            WHERE user_id = ? AND device_id = ? AND revoked_at IS NULL`,
+        )
+        .run(now, session.user_id, session.device_id);
+      this.#database.exec("COMMIT");
+      return true;
+    } catch (error) {
+      this.#database.exec("ROLLBACK");
+      throw error;
+    }
   }
 
   revokeDevice(userId: string, deviceId: string): boolean {
-    const result = this.#database
-      .prepare("DELETE FROM devices WHERE user_id = ? AND id = ?")
-      .run(userId, deviceId);
-    return Number(result.changes) > 0;
+    const now = new Date().toISOString();
+    this.#database.exec("BEGIN IMMEDIATE");
+    try {
+      this.#database
+        .prepare(
+          `UPDATE agent_credentials
+              SET revoked_at = ?
+            WHERE user_id = ? AND device_id = ? AND revoked_at IS NULL`,
+        )
+        .run(now, userId, deviceId);
+      const result = this.#database
+        .prepare("DELETE FROM devices WHERE user_id = ? AND id = ?")
+        .run(userId, deviceId);
+      this.#database.exec("COMMIT");
+      return Number(result.changes) > 0;
+    } catch (error) {
+      this.#database.exec("ROLLBACK");
+      throw error;
+    }
   }
 
   getStatus(userId: string): StatusSnapshot {
@@ -486,4 +684,16 @@ async function derivePasswordHash(
 
 function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("base64url");
+}
+
+function normalizeAgentId(value: string): string {
+  const normalized = value.trim();
+  if (
+    normalized.length < 1 ||
+    normalized.length > 120 ||
+    !/^[a-zA-Z0-9._:-]+$/.test(normalized)
+  ) {
+    throw new Error("Agent ID is invalid.");
+  }
+  return normalized;
 }

@@ -3,6 +3,7 @@ import type {
   DecryptedStatusSnapshot,
   SyncedStatusVault,
 } from "@one-status/client";
+import { listBuiltInCapabilityPacks } from "@one-status/capability-pack";
 import {
   ONE_STATUS_VERSION,
   type StatusDocument,
@@ -33,9 +34,10 @@ export function createMcpServer(
         "When the user asks to read, load, restore, continue, or show their One Status context, " +
         "call status_get_context before inspecting repository files or using shell commands. " +
         "Use the focused status tools for profile, memory, project, and context requests. " +
-        "For every request involving Calendar, Slack, GitHub, or another connected service, call tools_list first and prefer the One Status Gateway over direct provider APIs, shell CLIs, or asking the user for a token. " +
+        "For every request involving email, calendar, files, collaboration, project management, design, or another connected service, call tools_list first and prefer the One Status Gateway over direct provider APIs, shell CLIs, or asking the user for a token. " +
+        "Use capabilities_get to discover installed Capability Packs and the built-in cross-Agent capability catalog. " +
         "Only call a connection and action returned by the latest tools_list result, and construct arguments from that action's inputSchema; then use tools_execute so provider credentials remain inside One Status. " +
-        "Read-only actions may run immediately. Before an action marked requiresConfirmation, explain the concrete external change and obtain the user's explicit confirmation. " +
+        "Read-only actions may run immediately. For an action marked requiresConfirmation, call tools_request_approval and ask the user to approve the exact request in the One Status Dashboard before calling tools_execute with the returned approvalId. " +
         "When no eligible action is returned, tell the user which service or action must be connected, granted, or reauthorized in One Status instead of requesting provider credentials.",
     },
   );
@@ -55,6 +57,7 @@ export function createMcpServer(
             "workspace",
             "permissions",
             "tools",
+            "capabilities",
             "tasks",
           ])
           .default("all"),
@@ -216,9 +219,80 @@ export function createMcpServer(
         openTasks: Object.values(snapshot.status.tasks).filter(
           (task) => task.status !== "done",
         ),
+        capabilityInstallations: Object.values(
+          snapshot.status.capabilities.installations,
+        ).filter((installation) => installation.enabled),
         sessionMemory: snapshot.status.memory.filter(
           (entry) => entry.state === "confirmed" && entry.scope === "session",
         ),
+      });
+    },
+  );
+
+  server.registerTool(
+    "capabilities_get",
+    {
+      title: "Get installed One Status Capability Packs",
+      description:
+        "Read synchronized Capability Pack installation intent and a compact built-in catalog. Set includeTools only when exact pack action IDs are needed; use tools_list for actions currently available to this Agent. This does not expose OAuth credentials or modify local Agent files.",
+      inputSchema: {
+        target: z
+          .enum([
+            "chatgpt",
+            "codex",
+            "claude-code",
+            "cursor",
+            "ide",
+            "markdown",
+            "sdk",
+          ])
+          .optional(),
+        includeDisabled: z.boolean().default(false),
+        includeCatalog: z.boolean().default(true),
+        includeTools: z.boolean().default(false),
+      },
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async ({ target, includeDisabled, includeCatalog, includeTools }) => {
+      const snapshot = await vault.read();
+      const installations = Object.values(
+        snapshot.status.capabilities.installations,
+      ).filter(
+        (installation) =>
+          (includeDisabled || installation.enabled) &&
+          (!target || installation.targets.includes(target)),
+      );
+      const catalog = includeCatalog
+        ? listBuiltInCapabilityPacks().map(({ manifest, digest }) => ({
+            name: manifest.name,
+            version: manifest.version,
+            displayName: manifest.displayName,
+            actionCount: manifest.tools.length,
+            writeActionCount: manifest.tools.filter(
+              (tool) => tool.readOnly === false,
+            ).length,
+            ...(includeTools
+              ? {
+                  tools: manifest.tools.map((tool) => ({
+                    id: tool.id,
+                    readOnly: tool.readOnly ?? null,
+                    requiresConfirmation: tool.requiresConfirmation ?? null,
+                  })),
+                }
+              : {}),
+            authorizationProvider: manifest.authorization?.provider ?? null,
+            digest,
+          }))
+        : undefined;
+      return toolResult({
+        version: snapshot.version,
+        installations,
+        ...(catalog ? { catalog } : {}),
       });
     },
   );
@@ -253,7 +327,7 @@ export function createMcpServer(
       {
         title: "List approved One Status tools",
         description:
-          "Call this first for Calendar, Slack, GitHub, and other third-party requests. " +
+          "Call this first for email, calendar, files, collaboration, project management, design, and other third-party requests. " +
           "Returns only connections and actions approved for this Agent, including inputSchema, read-only, and confirmation metadata; it never returns provider credentials.",
         inputSchema: {},
         annotations: {
@@ -267,31 +341,54 @@ export function createMcpServer(
     );
 
     server.registerTool(
+      "tools_request_approval",
+      {
+        title: "Request approval for a One Status write action",
+        description:
+          "Create a short-lived Dashboard approval request bound to this Agent, connection, action, and exact arguments. Use only for actions marked requiresConfirmation by tools_list. This tool cannot approve its own request.",
+        inputSchema: {
+          connectionId: z.uuid(),
+          action: z.string().min(1),
+          arguments: z.record(z.string(), z.unknown()).default({}),
+        },
+        annotations: {
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false,
+        },
+      },
+      async ({ connectionId, action, arguments: arguments_ }) =>
+        toolResult({
+          approval: await toolGateway.requestApproval({
+            connectionId,
+            action,
+            arguments: arguments_,
+          }),
+        }),
+    );
+
+    server.registerTool(
       "tools_execute",
       {
         title: "Execute an approved One Status action",
         description:
           "Execute one connection/action pair from the latest tools_list result through the One Status Gateway. " +
-          "OAuth credentials remain inside One Status. Obtain explicit user confirmation before actions marked requiresConfirmation.",
+          "OAuth credentials remain inside One Status. Actions marked requiresConfirmation require a current approvalId returned by tools_request_approval after Dashboard approval.",
         inputSchema: {
           connectionId: z.uuid(),
           action: z.string().min(1),
           arguments: z.record(z.string(), z.unknown()).default({}),
-          confirmed: z
-            .boolean()
-            .default(false)
-            .describe(
-              "Set true only after the user explicitly confirms an action marked requiresConfirmation.",
-            ),
+          approvalId: z.uuid().optional(),
         },
       },
-      async ({ connectionId, action, arguments: arguments_, confirmed }) =>
+      async ({ connectionId, action, arguments: arguments_, approvalId }) =>
         toolResult({
           result: await toolGateway.execute({
             connectionId,
             action,
             arguments: arguments_,
-            confirmed,
+            approvalId,
           }),
         }),
     );

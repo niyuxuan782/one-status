@@ -28,7 +28,9 @@ export interface DashboardStatusSnapshot {
 export interface DashboardBackend {
   authenticateDevice?(
     authorization?: string,
-  ): Promise<{ deviceId: string; userId: string } | undefined>;
+  ): Promise<
+    { deviceId: string; expiresAt?: string; userId: string } | undefined
+  >;
   getSnapshot(): Promise<DashboardStatusSnapshot>;
   mutateStatus(
     mutator: (status: StatusDocument) => void,
@@ -45,7 +47,9 @@ export class LocalDashboardBackend implements DashboardBackend {
 
   async authenticateDevice(
     authorization?: string,
-  ): Promise<{ deviceId: string; userId: string } | undefined> {
+  ): Promise<
+    { deviceId: string; expiresAt?: string; userId: string } | undefined
+  > {
     const token = authorization?.match(/^Bearer (\S+)$/)?.[1];
     if (!token) return undefined;
     try {
@@ -60,7 +64,11 @@ export class LocalDashboardBackend implements DashboardBackend {
       ) {
         return undefined;
       }
-      return { deviceId: profile.deviceId, userId: profile.userId };
+      return {
+        deviceId: profile.deviceId,
+        expiresAt: profile.tokenExpiresAt,
+        userId: profile.userId,
+      };
     } catch {
       return undefined;
     }

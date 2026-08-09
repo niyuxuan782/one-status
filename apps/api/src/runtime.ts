@@ -8,6 +8,7 @@ import { LocalDashboardBackend } from "./dashboard-backend.js";
 import { PermissionVaultGitHubCredentialProvider } from "./github-git-credentials.js";
 import { HandoffService } from "./handoff.js";
 import { LocalInventoryService } from "./local-inventory.js";
+import { LocalCapabilityManager } from "./local-capability-manager.js";
 import { LocalWorkspaceStore } from "./local-workspace.js";
 import { LocalOnboardingService } from "./onboarding.js";
 import { PermissionVault } from "./permission-vault.js";
@@ -54,6 +55,7 @@ export async function startApiServer(
       ? {
           dashboard: {
             backend,
+            capabilityManager: new LocalCapabilityManager(),
             closeLocalState: () => workspaceStore.close(),
             handoffs: new HandoffService(backend, workspaceStore, {
               githubCredentialProvider:

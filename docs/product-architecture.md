@@ -1,8 +1,8 @@
-# One Status 产品架构 v0.2
+# One Status 产品架构 v0.3
 
 ## 产品定义
 
-> One Status 是桌面优先的 AI Environment Sync 与 Handoff 系统。它自动发现用户的项目、记忆、Skills、工具和权限，通过加密状态服务与 GitHub，让用户在不同设备和 Agent 之间继续工作。
+> One Status 是面向多 Agent 的通用能力包、身份授权和状态同步层。它将 MCP、Skills、Markdown、Plugins 与原生扩展统一成一次定义、多端适配、一次授权、处处可用的 Agent 能力。
 
 第一阶段体验目标：
 
@@ -15,6 +15,7 @@ flowchart TD
     Desktop["One Status Desktop"] --> Local["Local Background Service"]
     Local --> Inventory["Read-only Local Inventory"]
     Local --> Adapters["Codex / Claude Code Adapters"]
+    Local --> Packs["Capability Pack Compiler"]
     Local <--> Cloud["Encrypted One Status Cloud"]
     Local <--> GitHub["GitHub Repositories"]
     Cloud --> Presence["Device Presence / Request Routing"]
@@ -22,9 +23,27 @@ flowchart TD
 
 桌面应用负责确认和操作，本机后台服务负责扫描、同步、Adapter 与 Handoff。云端保存加密状态和最少量路由元数据。GitHub保存代码、项目文档和用户确认发布的 Handoff 文件。
 
+## Capability Pack
+
+Capability Pack 是 One Status 的统一能力单位。一份严格 YAML 或 JSON manifest 描述 Tools、Skills、Instructions、Memory scopes、Authorization、Dependencies、UI、Events、Hooks 和目标 Adapters。Manifest 经过规范化后生成稳定 `sha256:` 摘要，写操作必须声明确认要求，文件路径禁止绝对路径、目录穿越和符号链接替换。
+
+```text
+Capability Pack manifest
+  -> schema and semantic validation
+  -> deterministic Adapter compilation
+  -> dry-run install preview
+  -> explicit approval
+  -> atomic local write and platform registration
+  -> encrypted installation intent sync
+```
+
+当前 Adapter Engine 支持 Codex Plugin + Skill + MCP + `AGENTS.md`、Claude Skill + MCP + `CLAUDE.md`、Cursor Rules + MCP、Markdown Context 和 Local MCP。编译产物带稳定 `planId`、逐文件 SHA-256、旧摘要前置条件和审计元数据，Provider Token 不进入 manifest 或输出文件。
+
+Status schema v3 同步包 ID、版本、manifest digest、目标平台、启用状态和时间戳。绝对路径、临时文件和平台缓存由各设备自行管理。
+
 ## Universal Tool Gateway
 
-Codex、Claude Code 及使用第三方模型 API 的 Agent 只需要连接 One Status MCP。遇到 Calendar、Slack、GitHub 等任务时，MCP instructions 要求 Agent 先读取 `tools_list`，再通过 `tools_execute` 调用获准 action。One Status 在本机完成 Token 使用、刷新、scope 校验和审计，模型上下文只接收规范化后的业务结果。
+Codex、Claude Code 及使用第三方模型 API 的 Agent 只需要连接 One Status MCP。Agent 可以通过 `capabilities_get` 读取能力目录和安装状态；遇到邮件、日历、文件、协作、项目管理或设计任务时，MCP instructions 要求 Agent 先读取 `tools_list`，再通过 `tools_execute` 调用获准 action。One Status 在本机完成 Token 使用、刷新、scope 校验和审计，模型上下文只接收规范化后的业务结果。
 
 ```text
 Agent request
@@ -46,7 +65,8 @@ Agent request
 | Memory、Preferences、项目摘要、Task State | One Status E2EE | 否 |
 | Status ciphertext、revision、mutation receipt | One Status Cloud | 仅密文与同步元数据 |
 | 设备在线时间 | One Status Cloud | 是 |
-| Skills、Rules、MCP Manifest | 本机；确认后可同步元数据或 GitHub 引用 | 默认否 |
+| Capability Pack manifest、版本、摘要和安装意图 | One Status E2EE；实际输出留在设备 | 否 |
+| Skills、Rules、MCP Manifest | 本机；确认后由 Adapter 生成 | 默认否 |
 | OAuth Token、Provider Secret | 本机 Permission Vault；二次加密 bundle 随 Status 同步 | 否 |
 | 项目代码、大文件、`HANDOFF.md` | GitHub | 受 GitHub 仓库权限控制 |
 | 本机绝对路径 | 每台设备本地映射 | 否 |
@@ -131,8 +151,9 @@ Git、测试和 Secret 结果由程序采集。Agent 只负责生成目标、决
 | Projects | 已有便携项目；本机 checkout 可在 Handoff 页面关联 |
 | Handoff | 已有本机映射、Secret 预览、显式 commit/push、精确 commit clone/update、Agent 启动和本机活动记录 |
 | Agents 与工具 | 已有只读 Agent、MCP、Skills、Plugins、Rules Inventory |
+| Capability Packs | 已有内置目录、目标平台选择、E2EE 安装意图和 Adapter 编译预览 |
 | Memory | 已有来源、候选确认、编辑、删除与 Agent 默认过滤 |
-| Connections | Google、GitHub、Slack 已完成真实授权与 Codex/Claude Code 调用验收 |
+| Connections | 14 个 Provider 与 69 个固定 actions；Google Workspace、GitHub、Slack 已完成真实调用验收，新增 Provider 等待各自 OAuth App 凭据验收 |
 | Devices | 已有稳定 installation ID、活动时间、在线状态与撤销 |
 | Activity | 已有本机 Handoff 与脱敏工具授权审计时间线；同步事件待加入 |
 | Security | 已有加密状态、Permission Vault、设备、Agent grants 视图；密钥轮换待加入 |

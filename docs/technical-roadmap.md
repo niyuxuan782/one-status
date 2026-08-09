@@ -139,25 +139,55 @@ PUT /v1/status
 - [x] 本地加密 Permission Vault 与图形界面
 - [x] Permission Vault 二次加密跨设备同步
 - [x] OAuth Authorization Code、PKCE、state 防重放和 Token refresh
-- [x] Google、GitHub、Slack Provider adapter
+- [x] 14 个 Provider adapter 与统一扩展注册表
 - [x] Google Calendar OAuth
 - [x] GitHub 真实凭据接入（本机 `gh` 导入）
 - [x] Slack OAuth
 - [x] Service Permission → Agent Permission → Action Permission
-- [ ] Agent 加密身份与短时调用凭证
-- [x] `tools_list` 与 `tools_execute`
+- [x] 24 小时 Agent 调用凭证、哈希落库、身份绑定与撤销
+- [ ] 设备签名与 Agent 加密身份
+- [x] `tools_list`、`tools_request_approval` 与 `tools_execute`
 - [x] Gateway 优先的 MCP instructions 与缺失授权引导
 - [x] Action 风险元数据（`readOnly`、`requiresConfirmation`）
 - [x] Calendar 日历列表、单事件与忙闲查询
+- [x] Gmail 邮件列表、元数据读取与受确认发送
+- [x] Google Drive 文件元数据与 Google Docs 正文读取
 - [x] GitHub Issue、Pull Request 与仓库内容读取
 - [x] Slack 消息历史、搜索与受确认发送
 - [x] 调用审计与显式拒绝记录
 
-基础实现覆盖三方真实 OAuth endpoint、14 个固定 action、Agent 级授权、scope 过滤、Token 刷新和脱敏审计。Google Calendar、GitHub 与 Slack 已完成真实账号、两种 Agent grant、跨 Vault 恢复和 Provider API 调用。GitHub 首版可导入本机 `gh` 会话，生产权限模型将迁移到 GitHub App installation token。
+基础实现覆盖 14 个 Provider、69 个固定 action、Agent 级授权、scope 过滤、Token 刷新和脱敏审计。Google Workspace 已覆盖 Calendar、Gmail、Drive 与 Docs；Microsoft 365 覆盖 Outlook、Teams、OneDrive 与 SharePoint；内容、项目管理和设计服务通过独立 Provider Extension 接入。GitHub 首版可导入本机 `gh` 会话，Trello 通过 API key 与 user Token 连接。
 
-Agent instructions 将 Calendar、Slack、GitHub 和后续服务统一导向 One Status Gateway。Agent 先调用 `tools_list` 获取当前允许的能力，再调用 `tools_execute`；Provider Token 不进入模型上下文。读取 action 可以直接运行，外部写入 action 需要风险提示和用户明确确认。缺少连接、scope 或 grant 时，Agent 引导用户回到 One Status 完成对应设置。
+Agent instructions 将 Calendar、Slack、GitHub 和后续服务统一导向 One Status Gateway。Agent 先调用 `tools_list` 获取当前允许的能力；读取 action 可以直接调用 `tools_execute`，外部写入 action 先调用 `tools_request_approval`，待用户在 Dashboard 批准后再携带 `approvalId` 执行。Provider Token 不进入模型上下文。缺少连接、scope 或 grant 时，Agent 引导用户回到 One Status 完成对应设置。
 
 Slack adapter 已切换到 user-token public client PKCE：`user_scope`、S256 challenge、`authed_user` token、无 Client Secret refresh、单次 refresh token 轮换和 `auth.revoke` 均有协议级测试。可导入 `docs/slack-app-manifest.yaml` 创建对应 Slack App。
+
+### M2.5：Capability Pack 与 Provider 扩展
+
+- [x] 平台无关 Capability Pack manifest
+- [x] 严格 YAML/JSON、SemVer、引用完整性和稳定 digest
+- [x] Codex、Claude Code、Cursor、Markdown 与 Local MCP 编译
+- [x] dry-run、逐文件摘要、原子写入意图和 symlink 防护
+- [x] Capability Pack 安装意图进入 E2EE Status schema v3
+- [x] Google Workspace Pack：Calendar、Gmail、Drive、Docs
+- [x] GitHub Workflow Pack
+- [x] Slack Workspace Pack
+- [ ] ChatGPT Apps SDK 发布与 Remote MCP 平台安装验收
+- [x] Microsoft Graph Pack：Outlook、Teams、OneDrive、SharePoint
+- [x] Notion Pack
+- [x] Dropbox Pack
+- [x] Zoom Pack
+- [x] Canva Pack
+- [x] Asana Pack
+- [x] Trello Pack
+- [x] Airtable Pack
+- [x] Linear Pack
+- [x] Figma Pack
+- [x] Box Pack
+- [x] Pack 与 Provider action/scope/风险元数据一致性测试
+- [ ] 新增 Provider OAuth App 创建、审核与真实账号验收
+
+内置目录只收录具备固定 endpoint、严格输入 schema、响应裁剪、写入确认和协议测试的 actions。新增 Provider 在用户配置 OAuth App、完成 scope 审核和真实账号验收后，才会通过连接与 Agent grant 出现在 `tools_list`。
 
 ### M3：产品体验
 

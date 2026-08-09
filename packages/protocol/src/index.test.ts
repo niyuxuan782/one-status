@@ -9,16 +9,18 @@ import {
 describe("status protocol", () => {
   it("creates a future-ready empty status document", () => {
     expect(statusDocumentSchema.parse(createEmptyStatus())).toMatchObject({
-      schemaVersion: 2,
+      schemaVersion: 3,
       memory: [],
       projects: {},
       permissions: { grants: [] },
+      capabilities: { installations: {} },
     });
   });
 
-  it("migrates schema v1 memory into confirmed schema v2 memory", () => {
+  it("migrates schema v1 memory into confirmed schema v3 memory", () => {
+    const { capabilities: _capabilities, ...emptyV1 } = createEmptyStatus();
     const legacy = {
-      ...createEmptyStatus(),
+      ...emptyV1,
       schemaVersion: 1,
       memory: [
         {
@@ -33,12 +35,26 @@ describe("status protocol", () => {
     };
 
     expect(parseStatusDocument(legacy)).toMatchObject({
-      schemaVersion: 2,
+      schemaVersion: 3,
+      capabilities: { installations: {} },
       memory: [{ id: "legacy-memory", state: "confirmed" }],
     });
   });
 
-  it("requires schema v2 writers to choose a memory state", () => {
+  it("migrates schema v2 documents without capability installation state", () => {
+    const { capabilities: _capabilities, ...emptyV2 } = createEmptyStatus();
+    const previous = {
+      ...emptyV2,
+      schemaVersion: 2,
+    };
+
+    expect(parseStatusDocument(previous)).toMatchObject({
+      schemaVersion: 3,
+      capabilities: { installations: {} },
+    });
+  });
+
+  it("requires schema v3 writers to choose a memory state", () => {
     expect(() =>
       statusDocumentSchema.parse({
         ...createEmptyStatus(),
@@ -54,6 +70,58 @@ describe("status protocol", () => {
         ],
       }),
     ).toThrow(/state/);
+  });
+
+  it("validates portable capability installation intent", () => {
+    const status = createEmptyStatus();
+    status.capabilities.installations["github-workflow"] = {
+      packId: "github-workflow",
+      version: "1.0.0",
+      manifestDigest: `sha256:${"a".repeat(64)}`,
+      source: { type: "builtin" },
+      targets: ["codex", "claude-code"],
+      enabled: true,
+      installedAt: "2026-08-09T10:00:00.000Z",
+      updatedAt: "2026-08-09T10:00:00.000Z",
+    };
+
+    expect(statusDocumentSchema.parse(status).capabilities.installations)
+      .toHaveProperty("github-workflow");
+  });
+
+  it("rejects mismatched installation keys and duplicate targets", () => {
+    const status = createEmptyStatus();
+    status.capabilities.installations["different-pack"] = {
+      packId: "github-workflow",
+      version: "1.0.0",
+      manifestDigest: `sha256:${"0".repeat(64)}`,
+      source: { type: "builtin" },
+      targets: ["codex", "codex"],
+      enabled: true,
+      installedAt: "2026-08-09T00:00:00.000Z",
+      updatedAt: "2026-08-09T00:00:00.000Z",
+    } as never;
+
+    expect(() => statusDocumentSchema.parse(status)).toThrow(
+      /targets must be unique|key must match packId/,
+    );
+  });
+
+  it("accepts DNS-style Capability Pack IDs in installation state", () => {
+    const status = createEmptyStatus();
+    status.capabilities.installations["com.example.github"] = {
+      packId: "com.example.github",
+      version: "1.0.0",
+      manifestDigest: `sha256:${"1".repeat(64)}`,
+      source: { type: "url", reference: "https://example.test/pack.yaml" },
+      targets: ["codex"],
+      enabled: true,
+      installedAt: "2026-08-09T00:00:00.000Z",
+      updatedAt: "2026-08-09T00:00:00.000Z",
+    };
+
+    expect(statusDocumentSchema.parse(status).capabilities.installations)
+      .toHaveProperty("com.example.github");
   });
 
   it("requires a project id for project memory", () => {

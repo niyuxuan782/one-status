@@ -76,7 +76,7 @@
           </div>
           <p class="release-line">
             <span class="status-dot"></span>
-            <span id="release-label">v0.5.0</span>
+            <span id="release-label">v0.6.0</span>
             <span>Apache-2.0</span>
             <span>macOS · Windows · Linux</span>
           </p>
@@ -85,35 +85,35 @@
       </section>
 
       <section class="signal-band" aria-label="当前能力">
-        <div><strong>2</strong><span>Agent Adapters</span></div>
+        <div><strong>14</strong><span>Capability Packs</span></div>
         <div><strong>3</strong><span>OAuth Connections</span></div>
-        <div><strong>14</strong><span>Gateway Actions</span></div>
+        <div><strong>69</strong><span>Gateway Actions</span></div>
         <div><strong>E2EE</strong><span>Portable Status</span></div>
       </section>
 
       <section class="product-section" aria-labelledby="gateway-title">
         <div class="section-heading">
-          <p class="eyebrow dark"><span></span> ONE GATEWAY · MANY SERVICES</p>
-          <h2 id="gateway-title">Agent 只连接 One Status</h2>
+          <p class="eyebrow dark"><span></span> ONE CAPABILITY · MANY AGENTS</p>
+          <h2 id="gateway-title">能力定义一次，多端安装</h2>
           <p>
-            Calendar、Slack 与 GitHub 的授权集中在本机 Permission Vault。Codex、Claude Code 和第三方模型通过同一组受控 MCP actions 调用服务。
+            Capability Pack 将 Tools、Skills、Instructions、Memory 和权限统一描述，并为 Codex、Claude Code、Cursor、Markdown 与本地 MCP 生成兼容形态；ChatGPT 当前同步安装意图。
           </p>
         </div>
         <div class="workflow" aria-label="One Status Gateway 工作流">
           <article>
             <span class="step-number">01</span>
-            <h3>发现允许的能力</h3>
-            <p>Agent 先调用 tools_list，只看到当前账号、Agent grant 与 OAuth scope 共同允许的 actions。</p>
+            <h3>定义统一能力</h3>
+            <p>严格 manifest 描述 workflows、tools、memory scopes、授权范围和目标 adapters，并生成稳定摘要。</p>
           </article>
           <article>
             <span class="step-number">02</span>
-            <h3>在 Gateway 内调用</h3>
-            <p>One Status 刷新并使用 Provider Token，模型只接收经过 schema 校验和裁剪的业务结果。</p>
+            <h3>编译目标形态</h3>
+            <p>One Status 生成 Plugin、Skill、MCP、Rules 或 Markdown，安装前展示逐文件变更和权限范围。</p>
           </article>
           <article>
             <span class="step-number">03</span>
-            <h3>控制每一次写入</h3>
-            <p>读取操作可以直接运行；发 Slack 消息、创建 GitHub Issue 等写入需要明确确认并记录审计。</p>
+            <h3>共享一次授权</h3>
+            <p>Agent 通过 Gateway 调用 69 个受控 actions；Token 留在 Vault，外部写入继续要求明确确认。</p>
           </article>
         </div>
       </section>
@@ -140,7 +140,7 @@
           <article>
             <span class="step-number">03</span>
             <h3>继续任何 Agent</h3>
-            <p>Codex 与 Claude Code 从同一份 Status 恢复上下文，并通过受控权限调用 GitHub、Calendar 和 Slack。</p>
+          <p>Codex 与 Claude Code 从同一份 Status 恢复上下文，并可通过受控权限接入 14 个邮件、文件、协作、项目管理和设计服务。</p>
           </article>
         </div>
       </section>

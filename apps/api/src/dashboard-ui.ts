@@ -15,6 +15,7 @@ import {
   Link2,
   Menu,
   MonitorSmartphone,
+  PackageOpen,
   Plus,
   RefreshCw,
   Save,
@@ -30,6 +31,7 @@ import {
 const iconMap = {
   activity: renderIcon(Activity),
   brain: renderIcon(Brain),
+  capabilities: renderIcon(PackageOpen),
   calendar: renderIcon(CalendarDays),
   check: renderIcon(Check),
   chevron: renderIcon(ChevronRight),
@@ -77,6 +79,7 @@ export function renderDashboardPage(csrfToken: string): string {
         ${navLink("/projects", "projects", "项目")}
         ${navLink("/handoffs", "cloud", "Handoff")}
         ${navLink("/environment", "settings", "Agents 与工具")}
+        ${navLink("/capabilities", "capabilities", "能力包")}
         ${navLink("/memory", "brain", "记忆")}
         ${navLink("/integrations", "integrations", "连接与权限")}
         ${navLink("/devices", "devices", "设备")}
@@ -115,61 +118,61 @@ export function renderDashboardPage(csrfToken: string): string {
 export const dashboardCss = String.raw`
 :root {
   color-scheme: light;
-  color: #26221b;
-  background: #f3efe6;
+  color: #1f2622;
+  background: #edf2ef;
   font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-synthesis: none;
-  --paper: #f3efe6;
-  --surface: #fbf9f3;
-  --surface-2: #f6f2e9;
-  --surface-subtle: #f0ebdd;
-  --ink: #26221b;
-  --muted: #77705f;
-  --faint: #9b937f;
-  --line: #ddd5c4;
-  --line-strong: #c9bfa9;
-  --accent: #c15f3c;
-  --accent-bright: #a94b2b;
-  --accent-soft: #f3e0d5;
+  --paper: #edf2ef;
+  --surface: #fcfdfc;
+  --surface-2: #f4f7f5;
+  --surface-subtle: #e7eeea;
+  --ink: #1f2622;
+  --muted: #66716b;
+  --faint: #87938c;
+  --line: #ccd6d0;
+  --line-strong: #b7c4bc;
+  --accent: #b6533e;
+  --accent-bright: #934331;
+  --accent-soft: #f7e1db;
   --ok: #4a7c59;
   --blue: #58719e;
   --amber: #a9761f;
   --red: #b3402e;
   --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, "Times New Roman", serif;
-  --shadow-card: 2px 3px 0 rgba(38, 34, 27, .05);
-  --shadow-lift: 4px 6px 0 rgba(38, 34, 27, .09);
+  --shadow-card: 2px 3px 0 rgba(31, 38, 34, .05);
+  --shadow-lift: 4px 6px 0 rgba(31, 38, 34, .09);
   --wobble: 255px 15px 225px 15px / 15px 225px 15px 255px;
   --wobble-sm: 12px 5px 14px 6px / 6px 13px 5px 14px;
   --wave: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='120'%20height='8'%20viewBox='0%200%20120%208'%3E%3Cpath%20d='M2%205c15-4%2026%204%2040-1s29%203%2043-2%2024%203%2033%201'%20fill='none'%20stroke='%23c15f3c'%20stroke-width='2'%20stroke-linecap='round'%20opacity='.65'/%3E%3C/svg%3E");
   --grain: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='140'%20height='140'%3E%3Cfilter%20id='n'%3E%3CfeTurbulence%20type='fractalNoise'%20baseFrequency='0.9'%20numOctaves='2'%20stitchTiles='stitch'/%3E%3C/filter%3E%3Crect%20width='140'%20height='140'%20filter='url(%23n)'%20opacity='0.55'/%3E%3C/svg%3E");
 }
 * { box-sizing: border-box; }
-body { margin: 0; min-width: 320px; min-height: 100vh; background: radial-gradient(1100px 380px at 72% -120px, rgba(193,95,60,.07), transparent 70%), radial-gradient(900px 320px at -10% 108%, rgba(74,124,89,.06), transparent 70%), var(--paper); }
+body { margin: 0; min-width: 320px; min-height: 100vh; background: var(--paper); }
 body::before { content: ""; position: fixed; inset: 0; z-index: 999; pointer-events: none; opacity: .05; background: var(--grain) repeat; }
 button, input, textarea, select { font: inherit; letter-spacing: 0; }
 button { cursor: pointer; }
 a { color: inherit; }
 .app-shell { display: grid; grid-template-columns: 224px minmax(0, 1fr); min-height: 100vh; }
-.sidebar { position: fixed; inset: 0 auto 0 0; width: 224px; display: flex; flex-direction: column; padding: 18px 14px; background: linear-gradient(180deg, #ede6d6 0%, #eae2d0 100%); border-right: 1px solid var(--line-strong); color: var(--ink); z-index: 30; }
+.sidebar { position: fixed; inset: 0 auto 0 0; width: 224px; display: flex; flex-direction: column; padding: 18px 14px; background: #e4ebe7; border-right: 1px solid var(--line-strong); color: var(--ink); z-index: 30; }
 .brand { display: flex; align-items: center; gap: 10px; padding: 0 8px 18px; font-family: var(--serif); font-size: 17px; font-weight: 700; }
 .brand-mark { display: grid; place-items: center; width: 30px; height: 30px; }
 .brand-mark svg { width: 100%; height: 100%; border-radius: 7px 4px 8px 5px / 5px 8px 4px 7px; box-shadow: 2px 2px 0 rgba(38,34,27,.12); transition: transform .2s ease; }
 .brand:hover .brand-mark svg { transform: rotate(-6deg); }
 .nav { display: grid; gap: 3px; }
-.nav-link { position: relative; display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 0 10px; border-radius: 9px; color: #6d6553; text-decoration: none; font-size: 14px; font-weight: 550; transition: color .15s ease, background-color .15s ease; }
+.nav-link { position: relative; display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 0 10px; border-radius: 9px; color: #56625b; text-decoration: none; font-size: 14px; font-weight: 550; transition: color .15s ease, background-color .15s ease; }
 .nav-link::after { content: ""; position: absolute; left: 0; top: 24%; bottom: 24%; width: 3px; border-radius: 3px 1px 3px 1px; background: var(--accent); transform: scaleY(0); transition: transform .18s ease; }
 .nav-link svg { width: 17px; height: 17px; transition: transform .18s ease; }
 .nav-link:hover { color: var(--ink); background: rgba(193,95,60,.08); }
 .nav-link:hover svg { transform: rotate(-8deg); }
 .nav-link.active { color: var(--accent-bright); background: var(--accent-soft); }
 .nav-link.active::after { transform: scaleY(1); }
-.sidebar-footer { margin-top: auto; display: flex; align-items: center; gap: 9px; padding: 12px 9px; border-top: 1px solid var(--line); color: #57503f; }
+.sidebar-footer { margin-top: auto; display: flex; align-items: center; gap: 9px; padding: 12px 9px; border-top: 1px solid var(--line); color: #48534d; }
 .sidebar-footer div { display: grid; gap: 2px; }
 .sidebar-footer strong { font-size: 12px; }
 .sidebar-footer span:not(.health-dot) { color: var(--faint); font-size: 11px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .health-dot { width: 8px; height: 8px; border-radius: 50% 42% 55% 45%; background: var(--ok); animation: ping 2.4s cubic-bezier(0, 0, .2, 1) infinite; }
 .workspace { grid-column: 2; min-width: 0; }
-.topbar { position: sticky; top: 0; z-index: 20; display: flex; align-items: center; justify-content: space-between; min-height: 76px; padding: 12px clamp(20px, 4vw, 48px); background: rgba(243,239,230,.86); border-bottom: 1px solid var(--line); backdrop-filter: blur(10px); }
+.topbar { position: sticky; top: 0; z-index: 20; display: flex; align-items: center; justify-content: space-between; min-height: 76px; padding: 12px clamp(20px, 4vw, 48px); background: rgba(237,242,239,.9); border-bottom: 1px solid var(--line); backdrop-filter: blur(10px); }
 .topbar h1 { margin: 1px 0 0; font-family: var(--serif); font-size: 25px; line-height: 1.15; font-weight: 700; font-style: italic; }
 .eyebrow { margin: 0; color: var(--accent); font-size: 10px; font-weight: 750; letter-spacing: .18em; }
 .eyebrow::before { content: "✳ "; }
@@ -178,7 +181,7 @@ a { color: inherit; }
 .sync-state span { width: 8px; height: 8px; border-radius: 50% 42% 55% 45%; background: var(--ok); animation: ping 2.4s cubic-bezier(0, 0, .2, 1) infinite; }
 .sync-state.syncing span { background: var(--amber); animation-duration: 1s; }
 .sync-state.error span { background: var(--red); animation: none; }
-.icon-button { display: inline-grid; place-items: center; width: 34px; height: 34px; padding: 0; border: 1px solid var(--line-strong); border-radius: 9px; color: #57503f; background: var(--surface); transition: transform .15s ease, border-color .15s ease, color .15s ease, box-shadow .15s ease; }
+.icon-button { display: inline-grid; place-items: center; width: 34px; height: 34px; padding: 0; border: 1px solid var(--line-strong); border-radius: 9px; color: #48534d; background: var(--surface); transition: transform .15s ease, border-color .15s ease, color .15s ease, box-shadow .15s ease; }
 .icon-button:hover { color: var(--accent-bright); border-color: var(--accent); transform: rotate(-4deg); box-shadow: 2px 3px 0 rgba(38,34,27,.1); }
 .icon-button svg { width: 16px; height: 16px; transition: transform .35s ease; }
 #refresh:hover svg { transform: rotate(120deg); }
@@ -190,7 +193,7 @@ a { color: inherit; }
 .section-header { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-bottom: 20px; }
 .section-header h2 { margin: 0; padding-bottom: 9px; background: var(--wave) left bottom / auto 8px repeat-x; font-family: var(--serif); font-size: 21px; font-weight: 700; }
 .section-header p { margin: 5px 0 0; color: var(--muted); font-size: 13px; }
-.button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 37px; padding: 0 15px; border: 1.5px solid var(--accent-bright); border-radius: var(--wobble); color: #fff8f2; background: var(--accent); font-size: 13px; font-weight: 650; text-decoration: none; box-shadow: 2px 3px 0 rgba(38,34,27,.16); transition: transform .15s ease, box-shadow .15s ease, background-color .15s ease; }
+.button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 37px; padding: 0 15px; border: 1.5px solid var(--accent-bright); border-radius: var(--wobble); color: #fff; background: var(--accent); font-size: 13px; font-weight: 650; text-decoration: none; box-shadow: 2px 3px 0 rgba(31,38,34,.16); transition: transform .15s ease, box-shadow .15s ease, background-color .15s ease; }
 .button:hover { background: var(--accent-bright); transform: translate(-1px, -2px) rotate(-.4deg); box-shadow: 4px 5px 0 rgba(38,34,27,.16); }
 .button:active { transform: translate(1px, 1px); box-shadow: 1px 1px 0 rgba(38,34,27,.16); }
 .button.secondary { color: var(--ink); background: var(--surface); border-color: var(--line-strong); box-shadow: 2px 3px 0 rgba(38,34,27,.08); }
@@ -212,7 +215,7 @@ a { color: inherit; }
 .notebook { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); padding: 0; margin-bottom: 24px; }
 .notebook-page { padding: 20px 22px; min-width: 0; }
 .notebook-page + .notebook-page { border-left: 1px solid var(--line); }
-.context-quote { margin: 0; font-family: var(--serif); font-size: 17px; font-style: italic; line-height: 1.8; color: #3f3a2e; }
+.context-quote { margin: 0; font-family: var(--serif); font-size: 17px; font-style: italic; line-height: 1.8; color: #354039; }
 .context-quote::before { content: "“ "; color: var(--accent); }
 .context-quote::after { content: " ”"; color: var(--accent); }
 .spotlight-name { margin: 0; font-family: var(--serif); font-size: 26px; font-weight: 700; }
@@ -222,9 +225,9 @@ a { color: inherit; }
 .panel-title { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
 .panel-title h3 { margin: 0; font-family: var(--serif); font-size: 16px; font-weight: 700; }
 .panel-title span { color: var(--faint); font-size: 11px; letter-spacing: .06em; }
-.context-text { margin: 0; color: #4a4436; font-size: 14px; line-height: 1.7; white-space: pre-wrap; }
+.context-text { margin: 0; color: #48534d; font-size: 14px; line-height: 1.7; white-space: pre-wrap; }
 .project-spotlight { display: grid; gap: 14px; }
-.project-spotlight::before { content: ""; position: absolute; top: -9px; left: 50%; width: 74px; height: 16px; transform: translateX(-50%) rotate(-2deg); background: rgba(214,196,157,.5); border: 1px solid rgba(38,34,27,.07); box-shadow: 0 1px 2px rgba(38,34,27,.08); }
+.project-spotlight::before { content: ""; position: absolute; top: -9px; left: 50%; width: 74px; height: 16px; transform: translateX(-50%) rotate(-2deg); background: rgba(142,218,185,.32); border: 1px solid rgba(31,38,34,.07); box-shadow: 0 1px 2px rgba(31,38,34,.08); }
 .project-spotlight h3 { margin: 0; font-family: var(--serif); font-size: 22px; font-weight: 700; }
 .project-spotlight p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.6; }
 .tag-list { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -239,9 +242,9 @@ a { color: inherit; }
 .link-row:hover svg { transform: translateX(3px) rotate(-6deg); color: var(--accent); }
 .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
 .field { display: grid; gap: 6px; }
-.field.full { grid-column: 1 / -1; }
-.field label { color: #57503f; font-size: 12px; font-weight: 650; }
-.field input, .field textarea, .field select { width: 100%; border: 1px solid var(--line-strong); border-radius: 8px; color: var(--ink); background: #fffdf8; outline: none; transition: border-color .12s ease, box-shadow .12s ease; }
+.form-grid > .full { grid-column: 1 / -1; }
+.field label { color: #48534d; font-size: 12px; font-weight: 650; }
+.field input, .field textarea, .field select { width: 100%; border: 1px solid var(--line-strong); border-radius: 8px; color: var(--ink); background: #fff; outline: none; transition: border-color .12s ease, box-shadow .12s ease; }
 .field input, .field select { height: 38px; padding: 0 10px; }
 .field textarea { min-height: 112px; padding: 10px; line-height: 1.5; resize: vertical; }
 .field input:focus, .field textarea:focus, .field select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(193,95,60,.15); }
@@ -251,7 +254,7 @@ a { color: inherit; }
 .preference-row, .memory-row { display: grid; grid-template-columns: 200px minmax(0, 1fr) auto; align-items: center; gap: 18px; padding: 12px 0; border-bottom: 1px solid var(--line); }
 .preference-row strong, .memory-row strong { font-size: 12px; }
 .preference-row > div:last-child { display: flex; gap: 6px; }
-.preference-row code { overflow-wrap: anywhere; color: #57503f; background: var(--surface-subtle); border: 1px solid var(--line); border-radius: 6px; padding: 3px 9px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+.preference-row code { overflow-wrap: anywhere; color: #48534d; background: var(--surface-subtle); border: 1px solid var(--line); border-radius: 6px; padding: 3px 9px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
 .memory-row { grid-template-columns: 100px minmax(0, 1fr) auto; }
 .memory-row p { margin: 0 0 7px; font-size: 13px; line-height: 1.5; white-space: pre-wrap; }
 .memory-row small { display: block; margin-top: 8px; color: var(--muted); font-size: 10px; }
@@ -262,25 +265,49 @@ a { color: inherit; }
 .card-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .item-card { position: relative; min-width: 0; padding: 18px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); box-shadow: var(--shadow-card); animation: rise .45s cubic-bezier(.2, .7, .3, 1) backwards; transition: transform .16s ease, box-shadow .16s ease, border-color .16s ease; }
 .item-card:hover { transform: translateY(-2px); box-shadow: var(--shadow-lift); }
-.item-card.active { border-color: var(--accent); background: #fdf8f0; }
+.item-card.active { border-color: var(--accent); background: #f8fbf9; }
 .item-card.spotlight { grid-column: 1 / -1; }
 .item-card.spotlight .card-head h3 { font-size: 22px; }
 .item-card.spotlight .card-body { min-height: 0; font-size: 14px; }
 .card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .card-head h3 { margin: 0; font-family: var(--serif); font-size: 16px; font-weight: 700; }
 .card-head p { margin: 4px 0 0; color: var(--faint); font-size: 11px; }
-.card-body { min-height: 66px; margin: 14px 0; color: #57503f; font-size: 13px; line-height: 1.6; }
+.card-body { min-height: 66px; margin: 14px 0; color: #48534d; font-size: 13px; line-height: 1.6; }
 .card-actions { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding-top: 13px; border-top: 1px solid var(--line); }
 .provider-buttons { display: flex; align-items: center; gap: 8px; }
 .provider-card { position: relative; overflow: hidden; }
 .provider-card.provider-google { --provider-accent: #4285f4; }
 .provider-card.provider-github { --provider-accent: #24292f; }
 .provider-card.provider-slack { --provider-accent: #36c5f0; }
+.provider-card.provider-microsoft { --provider-accent: #00a4ef; }
+.provider-card.provider-notion { --provider-accent: #191919; }
+.provider-card.provider-dropbox { --provider-accent: #0061ff; }
+.provider-card.provider-zoom { --provider-accent: #2d8cff; }
+.provider-card.provider-canva { --provider-accent: #00a4aa; }
+.provider-card.provider-asana { --provider-accent: #d84f5f; }
+.provider-card.provider-trello { --provider-accent: #0c66e4; }
+.provider-card.provider-airtable { --provider-accent: #087ea4; }
+.provider-card.provider-linear { --provider-accent: #5e6ad2; }
+.provider-card.provider-figma { --provider-accent: #8f4ed8; }
+.provider-card.provider-box { --provider-accent: #0061d5; }
 .provider-line { position: absolute; inset: 0 auto 0 0; width: 3px; background: var(--provider-accent); }
 .provider-heading { display: flex; gap: 11px; align-items: center; }
 .provider-scopes { margin-top: 10px; }
 .provider-icon { display: grid; place-items: center; width: 38px; height: 38px; border-radius: 6px; color: #fff; background: var(--provider-accent); }
 .provider-icon svg { width: 19px; height: 19px; }
+.capability-card { display: flex; min-height: 250px; flex-direction: column; }
+.capability-card .card-body { flex: 1; }
+.capability-heading { display: flex; align-items: center; gap: 11px; min-width: 0; }
+.capability-heading .provider-icon { background: #315f50; }
+.capability-meta { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 12px; }
+.capability-targets { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 12px; }
+.capability-target { display: flex; min-height: 44px; align-items: center; gap: 9px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-subtle); }
+.capability-target input { width: 16px; height: 16px; flex: none; }
+.capability-target span { min-width: 0; }
+.capability-target strong, .capability-target small { display: block; }
+.capability-target small { margin-top: 2px; color: var(--muted); }
+.approval-section + .approval-section { margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--line); }
+.approval-section > p { overflow-wrap: anywhere; }
 .connection { margin-top: 14px; padding-top: 13px; border-top: 1px solid var(--line); }
 .connection-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .connection-head > div { min-width: 0; }
@@ -335,7 +362,7 @@ tr:last-child td { border-bottom: 0; }
 .task-in_progress { color: #46618f; background: #e5ebf4; }
 .task-blocked { color: #8f3527; background: #f7e3de; }
 .task-done { color: #3f6a4c; background: #e4efe6; }
-.modal-backdrop { position: fixed; inset: 0; z-index: 80; display: grid; place-items: center; padding: 20px; background: rgba(64,58,45,.4); backdrop-filter: blur(3px); }
+.modal-backdrop { position: fixed; inset: 0; z-index: 80; display: grid; place-items: center; padding: 20px; background: rgba(31,38,34,.42); backdrop-filter: blur(3px); }
 .modal-backdrop[hidden] { display: none; }
 .modal { width: min(560px, 100%); max-height: calc(100vh - 40px); overflow: auto; border: 1px solid var(--line-strong); border-radius: 14px; background: var(--surface); box-shadow: 6px 8px 0 rgba(38,34,27,.08); animation: rise .25s cubic-bezier(.2, .7, .3, 1); }
 .modal.wide { width: min(860px, 100%); }
@@ -380,10 +407,10 @@ tr:last-child td { border-bottom: 0; }
 @keyframes rise { from { opacity: 0; transform: translateY(8px) rotate(-.5deg); } to { opacity: 1; transform: translateY(0) rotate(0deg); } }
 @keyframes ping { 0% { box-shadow: 0 0 0 0 currentColor; } 75%, 100% { box-shadow: 0 0 0 7px transparent; } }
 ::selection { background: rgba(193, 95, 60, .28); }
-* { scrollbar-width: thin; scrollbar-color: #c9bfa9 transparent; }
+* { scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { border: 3px solid transparent; border-radius: 8px; background: #c9bfa9; background-clip: content-box; }
+::-webkit-scrollbar-thumb { border: 3px solid transparent; border-radius: 8px; background: var(--line-strong); background-clip: content-box; }
 a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
@@ -428,6 +455,7 @@ a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outlin
   .provider-card .card-actions, .grant-row { align-items: stretch; flex-direction: column; }
   .provider-buttons { width: 100%; flex-direction: column; }
   .provider-card .card-actions .button, .grant-row .button { width: 100%; }
+  .capability-targets { grid-template-columns: 1fr; }
   .connection-head { align-items: flex-start; }
   .permission-toolbar { align-items: flex-start; flex-direction: column; }
   .form-actions { display: grid; grid-template-columns: 1fr 1fr; }
@@ -461,6 +489,7 @@ function dashboardClient(): void {
   let memoryFilter = "all";
   let onboarding: any;
   let onboardingMode: "login" | "register" = "register";
+  let pendingCapabilityInstall: any;
   let toastTimer: number | undefined;
 
   gatewayAddress.textContent = location.host;
@@ -471,6 +500,7 @@ function dashboardClient(): void {
     "/projects": { label: "项目", render: renderProjects },
     "/handoffs": { label: "Handoff", render: renderHandoffs },
     "/environment": { label: "Agents 与工具", render: renderEnvironment },
+    "/capabilities": { label: "能力包", render: renderCapabilities },
     "/memory": { label: "记忆", render: renderMemory },
     "/integrations": { label: "连接与权限", render: renderIntegrations },
     "/devices": { label: "设备", render: renderDevices },
@@ -597,6 +627,19 @@ function dashboardClient(): void {
         openContinueModal(target.dataset.id!, target.dataset.agent as "codex" | "claude-code");
         return;
       }
+      if (action === "configure-capability") {
+        return openCapabilityModal(target.dataset.pack!);
+      }
+      if (action === "remove-capability") {
+        if (confirm("移除这个能力包的跨设备安装记录？已生成的本机文件会保留，便于恢复或手动删除。")) {
+          await api(`/v1/dashboard/capabilities/${encodeURIComponent(target.dataset.pack || "")}`, {
+            method: "DELETE",
+          });
+          await load(false);
+          toast("能力包安装记录已移除");
+        }
+        return;
+      }
       if (action === "configure-provider") return openProviderModal(target.dataset.provider!);
       if (action === "copy-callback") {
         await copyToClipboard(target.dataset.value || "");
@@ -614,6 +657,12 @@ function dashboardClient(): void {
         return;
       }
       if (action === "connect-provider") {
+        const provider = snapshot.integrations.providers.find(
+          (entry: any) => entry.id === target.dataset.provider,
+        );
+        if (provider?.authMode === "token") {
+          return openTokenConnectionModal(provider.id);
+        }
         return connectProvider(target.dataset.provider!, target as HTMLButtonElement);
       }
       if (action === "import-github-cli") {
@@ -648,6 +697,18 @@ function dashboardClient(): void {
       }
       if (action === "edit-grant") {
         return openGrantModal(target.dataset.id!, target.dataset.agent!);
+      }
+      if (action === "approve-tool" || action === "deny-tool") {
+        await api(
+          `/v1/dashboard/tool-approvals/${encodeURIComponent(target.dataset.id || "")}`,
+          {
+            method: "POST",
+            body: { decision: action === "approve-tool" ? "approve" : "deny" },
+          },
+        );
+        await load(false);
+        toast(action === "approve-tool" ? "本次工具调用已批准" : "工具调用已拒绝");
+        return;
       }
       if (action === "revoke-device") {
         if (confirm("撤销该设备及其所有会话？")) {
@@ -858,6 +919,57 @@ function dashboardClient(): void {
         closeModal();
         toast(`${agentLabel(agentId)} 已打开 commit ${result.commit.slice(0, 12)}`);
       }
+      if (form.dataset.form === "capability") {
+        const packId = stringValue(data, "packId");
+        const targets = data.getAll("targets").map(String);
+        const enabled = data.get("enabled") === "on";
+        if (targets.length === 0) {
+          throw new Error("至少选择一个目标 Agent。");
+        }
+        const localTargets = enabled
+          ? targets.filter((target) => ["codex", "claude-code", "markdown"].includes(target))
+          : [];
+        if (localTargets.length > 0) {
+          const plans = await Promise.all(
+            localTargets.map((target) =>
+              api(`/v1/dashboard/capabilities/${encodeURIComponent(packId)}/preview`, {
+                method: "POST",
+                body: { target },
+              }),
+            ),
+          );
+          pendingCapabilityInstall = { packId, targets, enabled, plans };
+          openCapabilityApprovalModal();
+          return;
+        }
+        await saveCapabilityIntent(packId, targets, enabled);
+        closeModal();
+        toast("能力包目标已保存并同步");
+      }
+      if (form.dataset.form === "capability-apply") {
+        if (!pendingCapabilityInstall) throw new Error("安装预览已失效。");
+        if (data.get("confirmInstall") !== "on") {
+          throw new Error("请先确认安装文件和平台注册命令。");
+        }
+        for (const plan of pendingCapabilityInstall.plans) {
+          await api(`/v1/dashboard/capabilities/${encodeURIComponent(pendingCapabilityInstall.packId)}/install`, {
+            method: "POST",
+            body: {
+              target: plan.target,
+              approvalId: plan.approvalId,
+              confirmed: true,
+            },
+          });
+        }
+        await saveCapabilityIntent(
+          pendingCapabilityInstall.packId,
+          pendingCapabilityInstall.targets,
+          pendingCapabilityInstall.enabled,
+        );
+        pendingCapabilityInstall = undefined;
+        closeModal();
+        toast("能力包已安装并同步");
+      }
       if (form.dataset.form === "provider") {
         const provider = stringValue(data, "provider");
         await api(`/v1/dashboard/oauth/providers/${provider}/config`, {
@@ -869,6 +981,15 @@ function dashboardClient(): void {
         });
         closeModal();
         toast("OAuth App 配置已保存");
+      }
+      if (form.dataset.form === "provider-token") {
+        const provider = stringValue(data, "provider");
+        await api(`/v1/dashboard/oauth/providers/${provider}/import-token`, {
+          method: "POST",
+          body: { accessToken: stringValue(data, "accessToken") },
+        });
+        closeModal();
+        toast("服务账号已连接");
       }
       if (form.dataset.form === "grant") {
         const connectionId = stringValue(data, "connectionId");
@@ -1111,6 +1232,35 @@ function dashboardClient(): void {
       ${inventory.warnings.length ? `<section class="panel"><div class="panel-title"><h3>扫描提示</h3><span>${inventory.warnings.length}</span></div>${inventory.warnings.map((warning: string) => `<p>${escapeHtml(warning)}</p>`).join("")}</section>` : ""}`;
   }
 
+  function renderCapabilities(): string {
+    const catalog = snapshot.capabilityPacks || [];
+    const installations = snapshot.status.capabilities?.installations || {};
+    const installed = Object.values(installations).filter((entry: any) => entry.enabled);
+    const targetCount = new Set(installed.flatMap((entry: any) => entry.targets || [])).size;
+    return `
+      ${sectionHeader("能力包", `${catalog.length} 个内置能力包 · ${installed.length} 个已启用`)}
+      <div class="metrics">
+        ${metric("capabilities", "能力包", catalog.length, `${installed.length} 个已启用`)}
+        ${metric("integrations", "Gateway Actions", catalog.reduce((total: number, entry: any) => total + entry.manifest.tools.length, 0), "统一权限入口")}
+        ${metric("devices", "目标平台", targetCount, "跨设备同步安装意图")}
+        ${metric("shield", "授权主体", snapshot.integrations.connections.length, "One Status Permission Vault")}
+      </div>
+      <div class="card-grid">${catalog.map((entry: any) => {
+        const pack = entry.manifest;
+        const installation = installations[pack.name];
+        const writeCount = pack.tools.filter((tool: any) => tool.readOnly === false).length;
+        const provider = pack.authorization?.provider;
+        const connected = provider
+          ? snapshot.integrations.connections.some((connection: any) => connection.provider === provider)
+          : true;
+        return `<article class="item-card capability-card">
+          <div class="card-head"><div class="capability-heading"><span class="provider-icon">${icon("capabilities")}</span><div><h3>${escapeHtml(pack.displayName)}</h3><p>${installation?.enabled ? `已启用 · ${installation.targets.length} 个目标` : "尚未启用"}</p></div></div><span class="connection-status ${connected ? "connected" : "expired"}">${connected ? "授权就绪" : "需要连接"}</span></div>
+          <div class="card-body"><p>${escapeHtml(pack.description)}</p><div class="capability-meta"><span class="tag">v${escapeHtml(pack.version)}</span><span class="tag">${pack.tools.length} actions</span><span class="tag">${writeCount} 写入确认</span><span class="tag">${escapeHtml(providerLabel(provider || ""))}</span></div>${installation ? `<div class="tag-list mt-12">${installation.targets.map((target: string) => `<span class="scope">${escapeHtml(capabilityTargetLabel(target))}</span>`).join("")}</div>` : ""}</div>
+          <div class="card-actions"><small>${installation ? `摘要 ${escapeHtml(entry.digest.slice(0, 19))}…` : `${pack.adapters.length} 种适配目标`}</small><div class="provider-buttons">${installation ? `<button class="button secondary" data-action="remove-capability" data-pack="${escapeHtml(pack.name)}" type="button">移除</button>` : ""}<button class="button" data-action="configure-capability" data-pack="${escapeHtml(pack.name)}" type="button">${icon("settings")}${installation ? "配置目标" : "选择目标"}</button></div></div>
+        </article>`;
+      }).join("")}</div>`;
+  }
+
   function renderMemory(): string {
     const candidates = snapshot.status.memory.filter((entry: any) => entry.state === "candidate");
     const memories = snapshot.status.memory.filter((entry: any) =>
@@ -1128,18 +1278,29 @@ function dashboardClient(): void {
 
   function renderIntegrations(): string {
     const integrations = snapshot.integrations;
+    const approvals = integrations.approvals || [];
+    const approvalPanel = approvals.length
+      ? `<section class="panel"><div class="panel-title"><h3>待审批调用</h3><span>${approvals.length} 项 · 10 分钟内有效</span></div><div class="memory-list">${approvals.map((approval: any) => {
+          const connection = integrations.connections.find(
+            (entry: any) => entry.id === approval.connectionId,
+          );
+          return `<div class="memory-row"><div><span class="scope">${escapeHtml(agentLabel(approval.agentId))}</span></div><div><p><strong>${escapeHtml(approval.action)}</strong> · ${escapeHtml(connection?.label || approval.connectionId)}</p><pre class="handoff-markdown">${escapeHtml(JSON.stringify(approval.arguments, null, 2))}</pre><small>过期于 ${formatDate(approval.expiresAt)} · 参数变化后需要重新审批</small></div><div class="row-actions"><button class="button" data-action="approve-tool" data-id="${escapeHtml(approval.id)}" type="button">${icon("check")}批准一次</button><button class="button secondary" data-action="deny-tool" data-id="${escapeHtml(approval.id)}" type="button">拒绝</button></div></div>`;
+        }).join("")}</div></section>`
+      : "";
     return `
       ${sectionHeader("连接与权限", `${integrations.connections.length} 个连接 · ${integrations.grants.length} 条 Agent 授权`)}
+      ${approvalPanel}
       <div class="card-grid">${integrations.providers.map((provider: any) => {
         const connections = integrations.connections.filter((connection: any) => connection.provider === provider.id);
+        const tokenMode = provider.authMode === "token";
         const cliImport = provider.id === "github"
           ? `<button class="button secondary" data-action="import-github-cli" type="button">${icon("terminal")}从 gh 导入</button>`
           : "";
         return `<article class="item-card provider-card provider-${provider.id}"><span class="provider-line"></span>
-          <div class="card-head"><div class="provider-heading"><span class="provider-icon">${providerIcon(provider.id)}</span><div><h3>${escapeHtml(provider.label)}</h3><p>${connections.length ? `${connections.length} 个账号已连接` : provider.configured ? "OAuth App 已配置" : provider.id === "github" ? "可配置 OAuth App 或导入 gh" : "需要配置 OAuth App"}</p></div></div><button class="icon-button" data-action="configure-provider" data-provider="${provider.id}" type="button" title="配置">${icon("settings")}</button></div>
+          <div class="card-head"><div class="provider-heading"><span class="provider-icon">${providerIcon(provider.id)}</span><div><h3>${escapeHtml(provider.label)}</h3><p>${connections.length ? `${connections.length} 个账号已连接` : provider.configured ? tokenMode ? "API Key 已配置" : "OAuth App 已配置" : provider.id === "github" ? "可配置 OAuth App 或导入 gh" : tokenMode ? "需要配置 API Key" : "需要配置 OAuth App"}</p></div></div><button class="icon-button" data-action="configure-provider" data-provider="${provider.id}" type="button" title="配置">${icon("settings")}</button></div>
           <div class="card-body">${escapeHtml(provider.description)}<div class="tag-list provider-scopes">${provider.scopes.map((scope: string) => `<span class="tag">${escapeHtml(shortScope(scope))}</span>`).join("")}</div></div>
           ${connections.map((connection: any) => renderConnection(connection, provider)).join("")}
-          <div class="card-actions"><small>${connections.length ? connections.length + " 个账号" : provider.configured ? "可以开始账号授权" : provider.id === "github" ? "gh 登录可直接导入" : "先完成 App 配置"}</small><div class="provider-buttons">${cliImport}<button class="button ${provider.configured ? "" : "secondary"}" data-action="connect-provider" data-provider="${provider.id}" type="button" ${provider.configured ? "" : "disabled"}>${icon("key")}${connections.length ? "连接其他账号" : "连接账号"}</button></div></div>
+          <div class="card-actions"><small>${connections.length ? connections.length + " 个账号" : provider.configured ? tokenMode ? "可以导入用户 Token" : "可以开始账号授权" : provider.id === "github" ? "gh 登录可直接导入" : tokenMode ? "先保存 API Key" : "先完成 App 配置"}</small><div class="provider-buttons">${cliImport}<button class="button ${provider.configured ? "" : "secondary"}" data-action="connect-provider" data-provider="${provider.id}" type="button" ${provider.configured ? "" : "disabled"}>${icon("key")}${tokenMode ? "导入 Token" : connections.length ? "连接其他账号" : "连接账号"}</button></div></div>
         </article>`;
       }).join("")}</div>`;
   }
@@ -1147,7 +1308,7 @@ function dashboardClient(): void {
   function renderConnection(connection: any, provider: any): string {
     const agents = ["codex", "claude-code"];
     const status = connectionDisplayStatus(connection);
-    const source = connection.source === "imported" ? " · GitHub CLI 导入" : "";
+    const source = connection.source === "imported" ? " · 本机凭据导入" : "";
     return `<div class="connection"><div class="connection-head"><div><strong>${escapeHtml(connection.label)}</strong><small>更新于 ${formatDate(connection.updatedAt)}${source}</small></div><span class="connection-status ${status.key}">${status.label}</span></div><div class="connection-scopes"><small>账号授权范围</small><div class="tag-list">${connection.scopes.map((scope: string) => `<span class="tag">${escapeHtml(shortScope(scope))}</span>`).join("") || '<span class="tag">未返回 scope</span>'}</div></div>${agents.map((agent) => {
       const grant = snapshot.integrations.grants.find((entry: any) => entry.connectionId === connection.id && entry.agentId === agent);
       const count = grant?.actions.length || 0;
@@ -1215,7 +1376,7 @@ function dashboardClient(): void {
           <div class="link-row"><div><strong>设备会话</strong><small>到期时间 ${formatDate(snapshot.profile.tokenExpiresAt)}</small></div><span class="current-device">当前设备</span></div>
         </section>
         <section class="panel">
-          <div class="panel-title"><h3>安全边界</h3><span>${configuredProviders.length}/3 PROVIDERS</span></div>
+          <div class="panel-title"><h3>安全边界</h3><span>${configuredProviders.length}/${snapshot.integrations.providers.length} PROVIDERS</span></div>
           <div class="link-row"><div><strong>恢复密钥</strong><small>不会进入 Dashboard response 或云端明文</small></div>${icon("key")}</div>
           <div class="link-row"><div><strong>OAuth Token</strong><small>Agent 只能调用已授权动作</small></div>${icon("shield")}</div>
           <div class="link-row"><div><strong>本机绝对路径</strong><small>保存在设备本地 workspace 数据库</small></div>${icon("database")}</div>
@@ -1342,6 +1503,57 @@ function dashboardClient(): void {
     openModal(memory ? "编辑记忆" : "添加记忆", `<form data-form="memory"><input type="hidden" name="id" value="${escapeHtml(memory?.id || "")}"><div class="form-grid"><div class="field"><label>范围</label><select name="scope">${["user", "project", "session"].map((scope) => `<option value="${scope}" ${scope === (memory?.scope || "user") ? "selected" : ""}>${scopeLabel(scope)}</option>`).join("")}</select></div><div class="field"><label>项目</label><select name="projectId"><option value="">无</option>${Object.values(snapshot.status.projects).map((project: any) => `<option value="${escapeHtml(project.id)}" ${project.id === memory?.projectId ? "selected" : ""}>${escapeHtml(project.name)}</option>`).join("")}</select></div>${textareaField("内容", "content", memory?.content || "")}${field("标签", "tags", memory?.tags?.join(", ") || "", "text", "full")}${memory ? `<div class="field full"><label>来源</label><code class="handoff-path">${escapeHtml(memoryOriginLabel(memory))}</code><small>编辑会保留原始来源和创建时间。</small></div>` : ""}</div>${modalActions()}</form>`);
   }
 
+  function openCapabilityModal(packId: string): void {
+    const entry = (snapshot.capabilityPacks || []).find(
+      (candidate: any) => candidate.manifest.name === packId,
+    );
+    if (!entry) throw new Error("能力包不存在。");
+    const pack = entry.manifest;
+    const installation = snapshot.status.capabilities?.installations?.[packId];
+    const selected = new Set(installation?.targets || []);
+    const targets = [
+      { id: "chatgpt", adapter: "chatgpt-plugin", label: "ChatGPT", detail: "安装意图 · 平台输出开发中" },
+      { id: "codex", adapter: "codex-plugin", label: "Codex", detail: "Plugin + Skill + MCP" },
+      { id: "claude-code", adapter: "claude-skill", label: "Claude Code", detail: "Skill + MCP" },
+      { id: "cursor", adapter: "cursor-rules", label: "Cursor", detail: "Rules + MCP manifest" },
+      { id: "markdown", adapter: "markdown", label: "Markdown", detail: "Context 文件" },
+      { id: "sdk", adapter: "one-status-sdk", label: "One Status SDK", detail: "安装意图 · SDK 接入目标" },
+    ].filter((target) => pack.adapters.includes(target.adapter));
+    const targetRows = targets.map((target) => `<label class="capability-target"><input type="checkbox" name="targets" value="${target.id}" ${selected.has(target.id) ? "checked" : ""}><span><strong>${target.label}</strong><small>${target.detail}</small></span></label>`).join("");
+    const writeActions = pack.tools.filter((tool: any) => tool.readOnly === false);
+    openModal(
+      pack.displayName,
+      `<form data-form="capability"><input type="hidden" name="packId" value="${escapeHtml(packId)}"><div class="form-grid"><div class="field full"><label>目标平台</label><div class="capability-targets">${targetRows}</div></div><label class="check-row full"><input type="checkbox" name="enabled" ${installation?.enabled === false ? "" : "checked"}><span><strong>启用能力包</strong><small>同步全部目标的安装意图；Codex、Claude Code 与 Markdown 会先展示本机写入预览</small></span></label><div class="field full"><label>Gateway Actions</label><div class="tag-list">${pack.tools.map((tool: any) => `<span class="tag">${escapeHtml(tool.id)}${tool.readOnly === false ? " · 确认" : ""}</span>`).join("")}</div><small>${writeActions.length} 个写操作需要明确确认；Provider Token 留在 Permission Vault。</small></div></div>${modalActions("保存目标")}</form>`,
+    );
+  }
+
+  function openCapabilityApprovalModal(): void {
+    if (!pendingCapabilityInstall) throw new Error("安装预览已失效。");
+    const sections = pendingCapabilityInstall.plans.map((plan: any) => {
+      const changed = plan.preview.files.filter(
+        (file: any) => file.disposition !== "unchanged",
+      );
+      const rows = changed.map((file: any) => `<tr><td><code>${escapeHtml(file.relativePath)}</code></td><td>${file.disposition === "create" ? "新建" : file.disposition === "update" ? "更新" : "阻止"}</td></tr>`).concat((plan.removals || []).map((file: any) => `<tr><td><code>${escapeHtml(file.relativePath)}</code></td><td>清理旧文件</td></tr>`)).join("");
+      const commands = plan.commands.map((command: any) => `<code>${escapeHtml([command.command, ...command.args].join(" "))}</code>`).join("<br>");
+      return `<section class="approval-section"><div class="panel-title"><h3>${escapeHtml(capabilityTargetLabel(plan.target))}</h3><span>${plan.preview.creates} 新建 · ${plan.preview.updates} 更新 · ${(plan.removals || []).length} 清理</span></div><p><code>${escapeHtml(plan.root)}</code></p>${rows ? `<div class="table-wrap"><table><thead><tr><th>文件</th><th>变化</th></tr></thead><tbody>${rows}</tbody></table></div>` : '<p class="oauth-help">本机文件已经与当前编译结果一致。</p>'}${commands ? `<div class="field full mt-12"><label>平台注册命令</label>${commands}</div>` : ""}</section>`;
+    }).join("");
+    openModal(
+      "确认安装能力包",
+      `<form data-form="capability-apply">${sections}<label class="check-row mt-12"><input type="checkbox" name="confirmInstall"><span><strong>确认写入以上文件并执行列出的注册命令</strong><small>安装器会重新验证摘要和路径，变化后会中止。</small></span></label>${modalActions("确认安装")}</form>`,
+    );
+  }
+
+  async function saveCapabilityIntent(
+    packId: string,
+    targets: string[],
+    enabled: boolean,
+  ): Promise<void> {
+    await api(`/v1/dashboard/capabilities/${encodeURIComponent(packId)}`, {
+      method: "PUT",
+      body: { targets, enabled },
+    });
+  }
+
   function openProviderModal(providerId: string): void {
     const provider = snapshot.integrations.providers.find((entry: any) => entry.id === providerId);
     const secretAttributes = provider.configured
@@ -1349,11 +1561,20 @@ function dashboardClient(): void {
       : 'required autocomplete="new-password" placeholder="首次配置必须填写"';
     const secretField = provider.requiresSecret
       ? `<div class="field full"><label for="clientSecret">Client Secret</label><input id="clientSecret" name="clientSecret" type="password" ${secretAttributes}><small>${provider.configured ? "Secret 已加密保存。留空提交时继续使用现有值。" : "Secret 只写入本机 Permission Vault，页面不会再次显示。"}</small></div>`
-      : '<p class="oauth-help full">该服务使用 PKCE public client，只需填写 Client ID，无需 Client Secret。</p>';
-    const pkceHint = provider.requiresPkce
+      : `<p class="oauth-help full">${provider.authMode === "token" ? "该服务使用 API key 与用户 Token；API key 在这里保存，用户 Token 在连接时单独导入。" : "该服务使用 PKCE public client，只需填写 Client ID，无需 Client Secret。"}</p>`;
+    const pkceHint = provider.authMode === "token"
+      ? "Token 连接会先调用 Provider API 验证账号，再加密写入 Permission Vault。"
+      : provider.requiresPkce
       ? "授权时启用 PKCE，授权码只能由发起流程的本机兑换。"
       : "授权码由本机 Permission Vault 中的 Client Secret 兑换。";
-    openModal(`配置 ${provider.label}`, `<form data-form="provider"><input type="hidden" name="provider" value="${escapeHtml(provider.id)}"><div class="form-grid">${field("Client ID", "clientId", provider.clientId || "", "text", "full", 'required autocomplete="off"')}${secretField}<div class="field full"><label>OAuth Callback URL</label><div class="callback"><code>${escapeHtml(provider.callbackUrl)}</code><button class="icon-button" data-action="copy-callback" data-value="${escapeHtml(provider.callbackUrl)}" type="button" title="复制 Callback URL" aria-label="复制 Callback URL">${icon("copy")}</button></div><small>${escapeHtml(providerCallbackInstruction(provider.id))}</small></div><p class="oauth-help full">${escapeHtml(pkceHint)} 保存 App 配置后，再从连接页发起账号授权；每个 Agent 的可调用操作需要单独勾选。</p></div>${modalActions()}</form>`);
+    const callbackField = provider.authMode === "token" ? "" : `<div class="field full"><label>OAuth Callback URL</label><div class="callback"><code>${escapeHtml(provider.callbackUrl)}</code><button class="icon-button" data-action="copy-callback" data-value="${escapeHtml(provider.callbackUrl)}" type="button" title="复制 Callback URL" aria-label="复制 Callback URL">${icon("copy")}</button></div><small>${escapeHtml(providerCallbackInstruction(provider.id))}</small></div>`;
+    const clientIdLabel = provider.authMode === "token" ? "API Key" : "Client ID";
+    openModal(`配置 ${provider.label}`, `<form data-form="provider"><input type="hidden" name="provider" value="${escapeHtml(provider.id)}"><div class="form-grid">${field(clientIdLabel, "clientId", provider.clientId || "", "text", "full", 'required autocomplete="off"')}${secretField}${callbackField}<p class="oauth-help full">${escapeHtml(pkceHint)} 保存配置后，每个 Agent 的可调用操作仍需单独勾选。</p></div>${modalActions()}</form>`);
+  }
+
+  function openTokenConnectionModal(providerId: string): void {
+    const provider = snapshot.integrations.providers.find((entry: any) => entry.id === providerId);
+    openModal(`连接 ${provider.label}`, `<form data-form="provider-token"><input type="hidden" name="provider" value="${escapeHtml(provider.id)}"><div class="form-grid"><div class="field full"><label for="accessToken">${escapeHtml(provider.id === "trello" ? "Trello user Token" : "Access Token")}</label><input id="accessToken" name="accessToken" type="password" required autocomplete="new-password"><small>Token 只进入本机加密 Permission Vault，验证完成后不会返回页面。</small></div><p class="oauth-help full">One Status 会读取当前服务账号确认 Token 有效；导入后由 Agent Permission Firewall 控制每项 action。</p></div>${modalActions("验证并连接")}</form>`);
   }
 
   function openGrantModal(connectionId: string, agentId: string): void {
@@ -1497,21 +1718,27 @@ function dashboardClient(): void {
   }
   function icon(name: string): string { return icons[name] || ""; }
   function providerIcon(provider: string): string {
-    return icon(provider === "google" ? "calendar" : provider === "github" ? "github" : "slack");
+    return icon(provider === "google" ? "calendar" : provider === "github" ? "github" : provider === "slack" ? "slack" : "integrations");
   }
   function providerLabel(provider: string): string {
-    if (provider === "google") return "Google Calendar";
-    if (provider === "github") return "GitHub";
-    if (provider === "slack") return "Slack";
-    return "OAuth";
+    return snapshot.integrations.providers.find((entry: any) => entry.id === provider)?.label || (provider ? provider : "无需授权");
   }
   function providerCallbackInstruction(provider: string): string {
     if (provider === "google") return "填入 Google Cloud Console 的 Authorized redirect URIs。";
     if (provider === "github") return "填入 GitHub OAuth App 的 Authorization callback URL。";
-    return "填入 Slack App → OAuth & Permissions → Redirect URLs。";
+    if (provider === "slack") return "填入 Slack App → OAuth & Permissions → Redirect URLs。";
+    return "填入该 Provider Developer Console 的 OAuth redirect URL。";
   }
   function agentLabel(agentId: string): string {
     return agentId === "claude-code" ? "Claude Code" : agentId === "codex" ? "Codex" : agentId;
+  }
+  function capabilityTargetLabel(target: string): string {
+    if (target === "chatgpt") return "ChatGPT";
+    if (target === "claude-code") return "Claude Code";
+    if (target === "cursor") return "Cursor";
+    if (target === "markdown") return "Markdown";
+    if (target === "sdk") return "SDK";
+    return target === "codex" ? "Codex" : target;
   }
   function connectionDisplayStatus(connection: any): { key: string; label: string } {
     const status = connection.status;

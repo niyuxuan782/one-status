@@ -5,6 +5,7 @@ import {
 } from "@one-status/local-config";
 
 export interface McpRuntimeConfig {
+  agentToken?: string;
   baseUrl: string;
   token: string;
   exportedKey: string;
@@ -20,6 +21,10 @@ export async function loadMcpRuntimeConfig(
   loadProfile: () => Promise<LocalProfile> = loadLocalProfile,
 ): Promise<McpRuntimeConfig> {
   const token = await readSecretEnvironment("ONE_STATUS_TOKEN", environment);
+  const agentToken = await readSecretEnvironment(
+    "ONE_STATUS_AGENT_TOKEN",
+    environment,
+  );
   const exportedKey = await readSecretEnvironment(
     "ONE_STATUS_STATUS_KEY",
     environment,
@@ -44,7 +49,11 @@ export async function loadMcpRuntimeConfig(
   }
 
   const baseUrl = environment.ONE_STATUS_URL ?? profile!.baseUrl;
+  if (agentToken && !agentToken.startsWith("osa1_")) {
+    throw new Error("ONE_STATUS_AGENT_TOKEN must be a One Status Agent credential.");
+  }
   return {
+    ...(agentToken ? { agentToken } : {}),
     baseUrl,
     token: token ?? profile!.token,
     exportedKey: exportedKey ?? profile!.statusKey,

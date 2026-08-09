@@ -1,10 +1,11 @@
 {
   "name": "@one-status/api",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "private": true,
   "type": "module",
   "exports": {
     ".": "./src/app.ts",
+    "./local-capability-manager": "./src/local-capability-manager.ts",
     "./runtime": "./src/runtime.ts"
   },
   "scripts": {
@@ -12,6 +13,8 @@
     "start": "tsx src/server.ts"
   },
   "dependencies": {
+    "@one-status/adapter-engine": "workspace:*",
+    "@one-status/capability-pack": "workspace:*",
     "@one-status/client": "workspace:*",
     "@one-status/crypto": "workspace:*",
     "@one-status/local-config": "workspace:*",

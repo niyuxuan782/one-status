@@ -1,0 +1,12 @@
+{
+  "name": "@one-status/adapter-engine",
+  "version": "0.6.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@one-status/capability-pack": "workspace:*"
+  }
+}

@@ -35,4 +35,20 @@ describe("CLI arguments", () => {
       "--publish must be true or false.",
     );
   });
+
+  it("parses a capability subcommand before strict flags", () => {
+    const parsed = parseArguments([
+      "capability",
+      "preview",
+      "--pack",
+      "google-workspace",
+      "--target",
+      "codex",
+    ]);
+    expect(parsed).toMatchObject({
+      command: "capability",
+      subcommand: "preview",
+    });
+    expect(parsed.flags.get("pack")).toBe("google-workspace");
+  });
 });

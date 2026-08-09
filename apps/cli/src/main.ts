@@ -22,6 +22,7 @@ import {
 } from "@one-status/local-config";
 import {
   ONE_STATUS_VERSION,
+  type CapabilityTarget,
   type MemoryScope,
   type StatusDocument,
 } from "@one-status/protocol";
@@ -82,6 +83,9 @@ async function main(): Promise<void> {
       break;
     case "handoff":
       await handoff(arguments_.flags);
+      break;
+    case "capability":
+      await capability(arguments_.subcommand ?? "list", arguments_.flags);
       break;
     case "version":
     case "--version":
@@ -231,6 +235,176 @@ async function setContext(flags: Map<string, string>): Promise<void> {
   console.log(`Context saved at status version ${result.version}.`);
 }
 
+async function capability(
+  operation: string,
+  flags: Map<string, string>,
+): Promise<void> {
+  if (operation === "list") {
+    const { listBuiltInCapabilityPacks } = await import(
+      "@one-status/capability-pack"
+    );
+    console.log(
+      JSON.stringify(
+        listBuiltInCapabilityPacks().map(({ manifest, digest }) => ({
+          name: manifest.name,
+          displayName: manifest.displayName,
+          version: manifest.version,
+          actions: manifest.tools.length,
+          adapters: manifest.adapters,
+          authorizationProvider: manifest.authorization?.provider ?? null,
+          digest,
+        })),
+        null,
+        2,
+      ),
+    );
+    return;
+  }
+  if (operation !== "preview" && operation !== "install") {
+    throw new Error("Capability command must be list, preview, or install.");
+  }
+
+  const packName = requiredFlag(flags, "pack");
+  const target = requiredFlag(flags, "target");
+  const { LocalCapabilityManager, localCapabilityTargets } = await import(
+    "@one-status/api/local-capability-manager"
+  );
+  if (!(localCapabilityTargets as readonly string[]).includes(target)) {
+    throw new Error(
+      `--target must be one of: ${localCapabilityTargets.join(", ")}.`,
+    );
+  }
+  const typedTarget = target as (typeof localCapabilityTargets)[number];
+  const manager = new LocalCapabilityManager();
+
+  if (operation === "preview") {
+    const plan = await manager.prepareInstallation({
+      packName,
+      target: typedTarget,
+    });
+    console.log(
+      JSON.stringify(
+        capabilityInstallSummary(plan),
+        null,
+        2,
+      ),
+    );
+    return;
+  }
+
+  if (!booleanFlag(flags, "confirm")) {
+    throw new Error("--confirm is required to install a Capability Pack.");
+  }
+  const approvalId = requiredFlag(flags, "approval");
+  const result = await manager.install({
+    packName,
+    target: typedTarget,
+    confirmed: true,
+    approvalId,
+  });
+  const statusSync = await syncCapabilityInstallationIntent(
+    packName,
+    typedTarget,
+  );
+  console.log(
+    JSON.stringify(
+      {
+        ...capabilityInstallSummary(result),
+        applied: result.applied,
+        statusSync,
+      },
+      null,
+      2,
+    ),
+  );
+}
+
+async function syncCapabilityInstallationIntent(
+  packName: string,
+  target: "codex" | "claude-code" | "markdown" | "local-mcp",
+): Promise<
+  | { synced: true; statusVersion: number }
+  | { synced: false; reason: "status_sync_failed" }
+> {
+  const { listBuiltInCapabilityPacks } = await import(
+    "@one-status/capability-pack"
+  );
+  const entry = listBuiltInCapabilityPacks().find(
+    ({ manifest }) => manifest.name === packName,
+  );
+  if (!entry) throw new Error(`Unknown built-in Capability Pack: ${packName}`);
+  const statusTarget: CapabilityTarget =
+    target === "local-mcp" ? "ide" : target;
+  try {
+    const { vault } = await openVault();
+    const now = new Date().toISOString();
+    const result = await vault.mutate((status) => {
+      const previous = status.capabilities.installations[packName];
+      status.capabilities.installations[packName] = {
+        packId: packName,
+        version: entry.manifest.version,
+        manifestDigest: entry.digest,
+        source: { type: "builtin" },
+        targets: [...new Set([...(previous?.targets ?? []), statusTarget])],
+        enabled: true,
+        installedAt: previous?.installedAt ?? now,
+        updatedAt: now,
+      };
+    });
+    return { synced: true, statusVersion: result.version };
+  } catch {
+    return { synced: false, reason: "status_sync_failed" };
+  }
+}
+
+function capabilityInstallSummary(plan: {
+  approvalId: string;
+  commands: Array<{ command: string; args: string[] }>;
+  pack: { name: string; version: string };
+  preview: {
+    blocked: number;
+    creates: number;
+    installable: boolean;
+    unchanged: number;
+    updates: number;
+    files: Array<{
+      disposition: string;
+      relativePath: string;
+      targetSha256: string;
+    }>;
+  };
+  removals: Array<{
+    currentSha256: string;
+    relativePath: string;
+  }>;
+  root: string;
+  target: string;
+}) {
+  return {
+    pack: plan.pack,
+    target: plan.target,
+    root: plan.root,
+    approvalId: plan.approvalId,
+    preview: {
+      installable: plan.preview.installable,
+      creates: plan.preview.creates,
+      updates: plan.preview.updates,
+      unchanged: plan.preview.unchanged,
+      blocked: plan.preview.blocked,
+      files: plan.preview.files.map((file) => ({
+        relativePath: file.relativePath,
+        disposition: file.disposition,
+        targetSha256: file.targetSha256,
+      })),
+    },
+    removals: plan.removals,
+    commands: plan.commands.map((command) => ({
+      command: command.command,
+      args: command.args,
+    })),
+  };
+}
+
 async function doctor(): Promise<void> {
   const { profile, vault } = await openVault();
   const health = await fetch(`${profile.baseUrl}/health`);
@@ -302,6 +476,13 @@ async function logout(): Promise<void> {
 }
 
 async function runMcp(flags: Map<string, string>): Promise<void> {
+  const agentId = flags.get("agent");
+  if (agentId) {
+    if (!/^[a-zA-Z0-9._:-]{1,120}$/.test(agentId)) {
+      throw new Error("--agent contains an invalid Agent ID.");
+    }
+    process.env.ONE_STATUS_AGENT_ID = agentId;
+  }
   const transport = flags.get("transport") ?? "stdio";
   if (transport === "stdio") {
     const { startStdioMcp } = await import("@one-status/mcp/stdio");
@@ -643,11 +824,14 @@ Usage:
   one-status use-server --url <https-url>
   one-status revoke-device --id <device-id>
   one-status logout
-  one-status mcp --transport stdio
-  one-status mcp --transport http [--host <host>] [--port <port>] [--endpoint </mcp>]
+  one-status mcp --transport stdio [--agent <agent-id>]
+  one-status mcp --transport http [--agent <agent-id>] [--host <host>] [--port <port>] [--endpoint </mcp>]
   one-status server [--host <host>] [--port <port>] [--db <path>] [--workspace-db <path>] [--public-url <url>] [--trust-proxy true]
   one-status app
   one-status handoff --project <id> --agent claude-code|codex [--publish]
+  one-status capability list
+  one-status capability preview --pack <name> --target codex|claude-code|markdown|local-mcp
+  one-status capability install --pack <name> --target <target> --approval <sha256> --confirm
   one-status version
 
 Environment:
@@ -659,6 +843,9 @@ Environment:
   ONE_STATUS_STATUS_KEY  Recovery key for a new device
   ONE_STATUS_STATUS_KEY_FILE  File containing the recovery key
   ONE_STATUS_TOOL_GATEWAY_URL  Local or HTTPS Permission Vault API base URL
+  ONE_STATUS_AGENT_ID    Identity bound into the short-lived Gateway credential
+  ONE_STATUS_AGENT_TOKEN Optional pre-issued Agent credential (osa1_...)
+  ONE_STATUS_AGENT_TOKEN_FILE  File containing a pre-issued Agent credential
   ONE_STATUS_MCP_BEARER_TOKEN  Required for non-loopback HTTP MCP
   ONE_STATUS_MCP_BEARER_TOKEN_FILE  File containing the HTTP MCP bearer
   ONE_STATUS_PERMISSION_DB  Permission Vault SQLite path

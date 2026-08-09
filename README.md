@@ -2,7 +2,7 @@
 
 **One user. One status. Every AI. Private by design.**
 
-One Status 是桌面优先的 AI Environment Sync 与 Handoff 系统。它发现本机项目、记忆、Skills、工具和权限，通过加密状态云与 GitHub，让用户跨设备、跨 Agent 继续工作。
+One Status 是面向多 Agent 的通用能力包、身份授权和状态同步层。它把工具、Skills、Instructions、Memory 与权限定义为平台无关的 Capability Pack，并通过 Adapter Engine 逐步适配 Codex、Claude Code、Cursor、ChatGPT 和普通 Agent。
 
 完整产品边界见 [产品架构](docs/product-architecture.md)，开源与托管边界见 [Open Core](docs/open-core.md)。
 
@@ -11,6 +11,8 @@ One Status 是桌面优先的 AI Environment Sync 与 Handoff 系统。它发现
 - 账号注册、登录与设备会话
 - 注册事务内原子创建首个加密 Status vault
 - 覆盖 Identity、Preferences、Memory、Projects、Workspace、Permissions、Tools、Tasks 的 Status Schema
+- Capability Pack 严格 YAML/JSON 协议、稳定摘要和 E2EE 安装状态
+- Codex Plugin、Claude Skill、Cursor Rules、Markdown 与 Local MCP Adapter Engine
 - 客户端 AES-256-GCM 加密，AAD 绑定同步 revision，服务端仅保存密文 envelope
 - 带版本条件写入、`mutationId` 幂等和冲突重试的双向同步
 - 非回环 API 强制 HTTPS，客户端请求默认 10 秒超时
@@ -21,7 +23,7 @@ One Status 是桌面优先的 AI Environment Sync 与 Handoff 系统。它发现
 - 两台设备、两个独立 MCP 进程之间的状态交接 Demo
 - 本地图形工作台、独立加密 Permission Vault 和 Agent 权限配置
 - 图形化首次注册、恢复密钥生成和新设备登录
-- Google Calendar、GitHub、Slack OAuth adapter 与首批只读动作
+- 14 个 Provider、14 个 Capability Packs 与 69 个固定 actions
 - Permission Vault 二次加密同步，设备间恢复后使用本机密钥重新落盘
 - MCP `tools_list`、`tools_execute` 统一工具入口
 - 稳定 installation ID、设备 heartbeat 与在线状态
@@ -36,7 +38,7 @@ One Status 是桌面优先的 AI Environment Sync 与 Handoff 系统。它发现
 - Electron 桌面应用与 macOS、Windows、Linux 原生安装包
 - 官网、一键安装器、Homebrew Cask 和跨平台 Release 校验和
 
-Google Calendar、GitHub 和 Slack 均已完成真实账号授权、Codex/Claude Code grant 与 Provider API 调用验收。Slack 使用 Workspace App、PKCE 和 Token Rotation；GitHub 首版支持安全导入本机 `gh` OAuth 会话。腾讯云同步服务已在 `https://os.furesta.top` 启用公网 HTTPS。
+Google Workspace、GitHub 和 Slack 已完成真实账号授权、Codex/Claude Code grant 与 Provider API 调用验收。v0.6.0 新增 Microsoft 365、Notion、Dropbox、Zoom、Canva、Asana、Trello、Airtable、Linear、Figma 和 Box 的 OAuth/凭据协议、固定 action schema、响应裁剪与 Capability Pack；这些新增连接仍需配置各 Provider OAuth App 并逐个完成真实账号验收。完整配置矩阵见 [Provider 集成](docs/provider-integrations.md)。腾讯云同步服务已在 `https://os.furesta.top` 启用公网 HTTPS。
 
 ## 60 秒 Demo
 
@@ -182,13 +184,13 @@ http://127.0.0.1:8787/
 
 `Agents 与工具` 页面读取本机 Codex、Claude Code 配置并生成只读清单。MCP Secret 值、URL query、Skill 正文和 Rule 正文不会进入清单；扫描结果不会自动上传。
 
-OAuth App 在 `连接与权限` 页面配置。界面会显示 Google、GitHub、Slack 各自需要登记的 Callback URL。授权完成后可分别为 `codex` 和 `claude-code` 开放具体只读动作。
+OAuth App 在 `连接与权限` 页面配置。界面会为 13 个 OAuth2 Provider 显示各自需要登记的 Callback URL；Trello 使用 API key 与 user Token 连接。授权完成后可分别为 `codex` 和 `claude-code` 开放具体 action。
 
 GitHub 还提供本机快速导入：点击 `从 gh 导入` 后，One Status 调用已登录的 GitHub CLI 获取当前 OAuth 会话，向 GitHub `/user` 验证账号和 scope，再加密写入 Permission Vault。该凭据归 GitHub CLI 管理；从 One Status 断开时只删除 Vault 副本，不影响 `gh` 登录。导入流程不会把 Token 放入命令参数、页面响应或 Activity。
 
 GitHub OAuth App 会申请 `repo`，用于用户在 Handoff 页面明确确认后的私有仓库 push/clone。该 Provider scope 不会自动开放给 Agent；Agent 仍只能调用权限页面勾选的资料与仓库读取动作。规模化版本会迁移到可按仓库安装的 GitHub App token。
 
-Slack 使用 user-token public client PKCE，只填写 Client ID。可直接导入 [Slack App manifest](docs/slack-app-manifest.yaml)，完整配置和验收步骤见 [Slack OAuth 配置](docs/slack-oauth.md)。Google 和 GitHub 当前使用 confidential client，需要 Client ID 与 Client Secret。
+Slack 使用 user-token public client PKCE，只填写 Client ID。可直接导入 [Slack App manifest](docs/slack-app-manifest.yaml)，完整配置和验收步骤见 [Slack OAuth 配置](docs/slack-oauth.md)。其余 OAuth2 Provider 的 Client 类型、scope、审核要求和断开语义见 [Provider 集成](docs/provider-integrations.md)。
 
 `Handoff` 页面将便携项目映射到当前设备上的 Git 仓库根目录。程序采集 branch、commit、dirty state 和变更文件，扫描 Git 变更与待生成内容，然后显示 `HANDOFF.md` 预览。Secret 扫描通过并获得显式确认后，写入：
 
@@ -236,8 +238,7 @@ Codex：
 
 ```bash
 codex mcp add one-status \
-  --env ONE_STATUS_AGENT_ID=codex \
-  -- one-status mcp --transport stdio
+  -- one-status mcp --transport stdio --agent codex
 ```
 
 Codex Desktop 可在 `Settings > MCP servers` 查看服务状态，也可以在输入框键入 `/mcp`。终端检查命令为 `codex mcp list` 和 `codex mcp get one-status`。
@@ -254,21 +255,49 @@ Claude Code：
 
 ```bash
 claude mcp add --scope user one-status \
-  -e ONE_STATUS_AGENT_ID=claude-code \
-  -- one-status mcp --transport stdio
+  -- one-status mcp --transport stdio --agent claude-code
 ```
 
-连接成功后，One Status 会向 Agent 提供 Gateway 优先策略。涉及 Calendar、Slack、GitHub 等第三方服务时，Agent 应先调用 `tools_list`，再用返回的 `connectionId` 与 `action` 调用 `tools_execute`。模型供应商、API Key 类型和 Agent 自带集成不会改变这条链路；Provider Token 始终留在本机 Permission Vault。
+连接成功后，One Status 会向 Agent 提供 Gateway 优先策略。涉及邮件、日历、文件、协作、项目管理或设计服务时，Agent 应先调用 `tools_list`，再用返回的 `connectionId` 与 `action` 调用 `tools_execute`。模型供应商、API Key 类型和 Agent 自带集成不会改变这条链路；Provider Token 始终留在本机 Permission Vault。
+
+MCP 会在回环 Gateway 上自动把设备会话换成绑定当前 Agent 的短期凭据。工具请求不发送 `agentId` query/body，也不会把设备 Token 当作工具调用凭据。远程 Tool Gateway 需要通过 `ONE_STATUS_AGENT_TOKEN` 或 `ONE_STATUS_AGENT_TOKEN_FILE` 提供预签发凭据。
 
 当前 Gateway action：
 
 | Service | Read actions | Confirmed write actions |
 | --- | --- | --- |
 | Google Calendar | `calendar.calendars.list`、`calendar.events.list`、`calendar.events.get`、`calendar.freebusy.query` | 后续加入日程写入 |
+| Gmail | `gmail.messages.list`、`gmail.messages.get` | `gmail.messages.send` |
+| Google Drive / Docs | `drive.files.list`、`drive.files.get`、`docs.documents.get` | — |
 | GitHub | `github.viewer.get`、`github.repositories.list`、`github.issues.list`、`github.pull_requests.list`、`github.contents.get` | `github.issues.create` |
 | Slack | `slack.channels.list`、`slack.conversations.history`、`slack.search.messages` | `slack.messages.post` |
+| Microsoft 365 | `outlook.messages.list/get`、`outlook.calendar.events.list`、`teams.chats.list`、`teams.chat_messages.list`、`onedrive.children.list`、`sharepoint.site_files.list` | `outlook.messages.send` |
+| Notion | `notion.search`、`notion.pages.get`、`notion.blocks.children.list` | `notion.pages.create` |
+| Dropbox | `dropbox.files.list`、`dropbox.files.metadata.get`、`dropbox.files.search` | `dropbox.files.upload` |
+| Zoom | `zoom.meetings.list`、`zoom.meetings.get` | `zoom.meetings.create` |
+| Canva | `canva.profile.get`、`canva.designs.list/get`、`canva.design_pages.list`、`canva.folder_items.list` | — |
+| Asana | `asana.workspaces.list`、`asana.tasks.list/get` | `asana.tasks.create` |
+| Trello | `trello.boards.list`、`trello.lists.list`、`trello.cards.list` | `trello.cards.create` |
+| Airtable | `airtable.bases.list`、`airtable.tables.list`、`airtable.records.list` | `airtable.records.create` |
+| Linear | `linear.teams.list`、`linear.issues.list/get` | `linear.issues.create` |
+| Figma | `figma.project_files.list`、`figma.file_metadata.get`、`figma.file_nodes.get`、`figma.comments.list` | `figma.comments.create` |
+| Box | `box.folders.items.list`、`box.files.get`、`box.search` | `box.folders.create` |
 
-`tools_list` 只显示当前连接已授予 scope 且用户已为该 Agent 勾选的 action，并为每项能力返回与执行校验同源的 `inputSchema`。标记为 `requiresConfirmation` 的操作需要用户明确确认后才能执行；无可用 action 时，Agent 会引导用户前往 One Status 的 `连接与权限` 页面连接、授权或重新连接服务。
+`tools_list` 只显示当前连接已授予 scope 且用户已为该 Agent 勾选的 action，并为每项能力返回与执行校验同源的 `inputSchema`。对于标记为 `requiresConfirmation` 的操作，Agent 先调用 `tools_request_approval`，用户在 One Status Dashboard 核对并批准精确请求，随后 Agent 携带返回的 `approvalId` 调用 `tools_execute`。无可用 action 时，Agent 会引导用户前往 One Status 的 `连接与权限` 页面连接、授权或重新连接服务。
+
+Capability Pack 可以从桌面 App 的“能力包”页面选择目标平台，也可以通过 CLI 查看并安装。CLI 安装先返回文件预览和 `approvalId`，确认阶段会重新验证文件摘要和路径：
+
+```bash
+one-status capability list
+one-status capability preview --pack google-workspace --target codex
+one-status capability install \
+  --pack google-workspace \
+  --target codex \
+  --approval <approvalId> \
+  --confirm
+```
+
+Codex 输出会进入 One Status 管理的本地 Marketplace 并调用 `codex plugin add`；Claude Code 只安装生成的 Skill；Markdown 与 Local MCP 输出进入 One Status 受管目录。Cursor manifest 编译已经可用，平台安装仍需完成确认流程；ChatGPT 当前同步安装意图，Apps SDK 输出和 Remote MCP 平台安装仍在路线图中。
 
 MCP 当前提供：
 
@@ -279,8 +308,10 @@ MCP 当前提供：
 - `status_search_memory`
 - `status_get_project`
 - `status_get_context`
+- `capabilities_get`
 - `status_update_context`
 - `tools_list`
+- `tools_request_approval`
 - `tools_execute`
 
 开发环境可用两个独立 Agent MCP 进程执行真实 OAuth 冒烟测试：

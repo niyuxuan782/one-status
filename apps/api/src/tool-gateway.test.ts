@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProviderFetch } from "./oauth-providers.js";
+import { providerCatalog } from "./oauth-providers.js";
 import { PermissionVault } from "./permission-vault.js";
 import {
+  ToolApprovalError,
   ToolConnectionExpiredError,
   ToolGateway,
   ToolPermissionDeniedError,
@@ -35,6 +37,47 @@ describe("Tool Gateway OAuth boundaries", () => {
       gateway.execute({
         action: "slack.channels.list",
         agentId: "codex",
+        connectionId: connection.id,
+        userId: "user-1",
+      }),
+    ).rejects.toBeInstanceOf(ToolPermissionDeniedError);
+    expect(fetch_).not.toHaveBeenCalled();
+  });
+
+  it("filters Google Workspace grants by each action's OAuth scope", async () => {
+    const vault = createVault(vaults);
+    const connection = vault.upsertConnection({
+      accountId: "google-user",
+      credential: { accessToken: "google-access" },
+      label: "ryan@example.test",
+      provider: "google",
+      scopes: ["https://www.googleapis.com/auth/gmail.readonly"],
+      userId: "user-1",
+    });
+    vault.setGrant("user-1", connection.id, "codex", [
+      "gmail.messages.list",
+      "gmail.messages.send",
+      "drive.files.list",
+      "docs.documents.get",
+    ]);
+    const fetch_ = vi.fn<ProviderFetch>();
+    const gateway = new ToolGateway(vault, { fetch: fetch_ });
+
+    expect(gateway.list("user-1", "codex")[0]?.actions.map((action) => action.id))
+      .toEqual(["gmail.messages.list"]);
+    await expect(
+      gateway.execute({
+        action: "drive.files.list",
+        agentId: "codex",
+        connectionId: connection.id,
+        userId: "user-1",
+      }),
+    ).rejects.toBeInstanceOf(ToolPermissionDeniedError);
+    await expect(
+      gateway.execute({
+        action: "gmail.messages.send",
+        agentId: "codex",
+        confirmed: true,
         connectionId: connection.id,
         userId: "user-1",
       }),
@@ -80,7 +123,7 @@ describe("Tool Gateway OAuth boundaries", () => {
     ]);
   });
 
-  it("blocks an unconfirmed write before the provider call and audits the denial", async () => {
+  it("requires a bound one-time approval and replays successful write results", async () => {
     const vault = createVault(vaults);
     const connection = vault.upsertConnection({
       accountId: "42",
@@ -126,7 +169,7 @@ describe("Tool Gateway OAuth boundaries", () => {
     };
 
     await expect(gateway.execute(input)).rejects.toBeInstanceOf(
-      ToolPermissionDeniedError,
+      ToolApprovalError,
     );
     expect(fetch_).not.toHaveBeenCalled();
     expect(vault.listAuditEvents("user-1")).toEqual([
@@ -141,16 +184,38 @@ describe("Tool Gateway OAuth boundaries", () => {
 
     await expect(
       gateway.execute({ ...input, confirmed: false }),
-    ).rejects.toBeInstanceOf(ToolPermissionDeniedError);
+    ).rejects.toBeInstanceOf(ToolApprovalError);
     expect(fetch_).not.toHaveBeenCalled();
 
+    const approval = gateway.requestApproval(input);
+    expect(gateway.listApprovals("user-1")).toEqual([
+      expect.objectContaining({ id: approval.id, status: "pending" }),
+    ]);
     await expect(
-      gateway.execute({ ...input, confirmed: true }),
-    ).resolves.toMatchObject({
+      gateway.execute({ ...input, approvalId: approval.id }),
+    ).rejects.toBeInstanceOf(ToolApprovalError);
+    gateway.decideApproval("user-1", approval.id, "approve");
+    const firstResult = await gateway.execute({
+      ...input,
+      approvalId: approval.id,
+    });
+    expect(firstResult).toMatchObject({
       number: 7,
       title: "Confirm tool writes",
     });
+    await expect(
+      gateway.execute({ ...input, approvalId: approval.id }),
+    ).resolves.toEqual(firstResult);
     expect(fetch_).toHaveBeenCalledTimes(1);
+    expect(gateway.listApprovals("user-1")).toEqual([]);
+
+    await expect(
+      gateway.execute({
+        ...input,
+        approvalId: approval.id,
+        arguments: { ...input.arguments, title: "Changed after approval" },
+      }),
+    ).rejects.toBeInstanceOf(ToolApprovalError);
     expect(vault.listAuditEvents("user-1")).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -165,6 +230,156 @@ describe("Tool Gateway OAuth boundaries", () => {
         }),
       ]),
     );
+  });
+
+  it("rejects an approved write for another user, agent, connection, or action", async () => {
+    const fixture = createIssueApprovalFixture(vaults);
+    const { connection, fetch_, gateway, input, vault } = fixture;
+    vault.setGrant("user-1", connection.id, "claude-code", [
+      "github.issues.create",
+    ]);
+    const secondConnection = vault.upsertConnection({
+      accountId: "84",
+      credential: { accessToken: "second-github-access" },
+      label: "second-account",
+      provider: "github",
+      scopes: ["repo"],
+      userId: "user-1",
+    });
+    vault.setGrant("user-1", secondConnection.id, "codex", [
+      "github.issues.create",
+    ]);
+    const approval = gateway.requestApproval(input);
+    gateway.decideApproval("user-1", approval.id, "approve");
+
+    await expect(
+      gateway.execute({
+        ...input,
+        approvalId: approval.id,
+        userId: "user-2",
+      }),
+    ).rejects.toBeInstanceOf(ToolPermissionDeniedError);
+    await expect(
+      gateway.execute({
+        ...input,
+        agentId: "claude-code",
+        approvalId: approval.id,
+      }),
+    ).rejects.toBeInstanceOf(ToolApprovalError);
+    await expect(
+      gateway.execute({
+        ...input,
+        approvalId: approval.id,
+        connectionId: secondConnection.id,
+      }),
+    ).rejects.toBeInstanceOf(ToolApprovalError);
+
+    const createAction = providerCatalog.github.actions.find(
+      (action) => action.id === "github.issues.create",
+    )!;
+    const secondWriteAction = {
+      ...createAction,
+      id: "github.issues.update-for-approval-test",
+    };
+    providerCatalog.github.actions.push(secondWriteAction);
+    try {
+      vault.setGrant("user-1", connection.id, "codex", [
+        "github.issues.create",
+        secondWriteAction.id,
+      ]);
+      await expect(
+        gateway.execute({
+          ...input,
+          action: secondWriteAction.id,
+          approvalId: approval.id,
+        }),
+      ).rejects.toBeInstanceOf(ToolApprovalError);
+    } finally {
+      providerCatalog.github.actions.pop();
+    }
+    expect(fetch_).not.toHaveBeenCalled();
+  });
+
+  it("keeps a denied approval terminal", async () => {
+    const { fetch_, gateway, input } = createIssueApprovalFixture(vaults);
+    const approval = gateway.requestApproval(input);
+
+    expect(gateway.decideApproval("user-1", approval.id, "deny")).toMatchObject({
+      id: approval.id,
+      status: "denied",
+    });
+    await expect(
+      gateway.execute({ ...input, approvalId: approval.id }),
+    ).rejects.toBeInstanceOf(ToolApprovalError);
+    expect(() =>
+      gateway.decideApproval("user-1", approval.id, "approve"),
+    ).toThrow(ToolApprovalError);
+    expect(() =>
+      gateway.decideApproval("user-1", approval.id, "deny"),
+    ).toThrow(ToolApprovalError);
+    expect(fetch_).not.toHaveBeenCalled();
+  });
+
+  it("removes an expired approval from list, decision, and execution", async () => {
+    let now = Date.parse("2026-08-09T10:00:00.000Z");
+    const { fetch_, gateway, input } = createIssueApprovalFixture(vaults, {
+      now: () => now,
+    });
+    const approval = gateway.requestApproval(input);
+    gateway.decideApproval("user-1", approval.id, "approve");
+
+    now += 10 * 60_000 + 1;
+    expect(gateway.listApprovals("user-1")).toEqual([]);
+    expect(() =>
+      gateway.decideApproval("user-1", approval.id, "approve"),
+    ).toThrow(ToolApprovalError);
+    await expect(
+      gateway.execute({ ...input, approvalId: approval.id }),
+    ).rejects.toBeInstanceOf(ToolApprovalError);
+    expect(fetch_).not.toHaveBeenCalled();
+  });
+
+  it("canonicalizes argument key order and rejects nested value changes", async () => {
+    const { fetch_, gateway, input } = createAirtableApprovalFixture(vaults);
+    const approval = gateway.requestApproval(input);
+    gateway.decideApproval("user-1", approval.id, "approve");
+
+    await expect(
+      gateway.execute({
+        ...input,
+        approvalId: approval.id,
+        arguments: {
+          fields: {
+            Details: {
+              options: { priority: 2, notify: true },
+              labels: ["security", "oauth"],
+            },
+            Title: "Approval canonicalization",
+          },
+          tableId: input.arguments.tableId,
+          baseId: input.arguments.baseId,
+        },
+      }),
+    ).resolves.toMatchObject({ id: "rec-1" });
+    expect(fetch_).toHaveBeenCalledTimes(1);
+
+    await expect(
+      gateway.execute({
+        ...input,
+        approvalId: approval.id,
+        arguments: {
+          ...input.arguments,
+          fields: {
+            ...input.arguments.fields,
+            Details: {
+              ...input.arguments.fields.Details,
+              options: { notify: false, priority: 2 },
+            },
+          },
+        },
+      }),
+    ).rejects.toBeInstanceOf(ToolApprovalError);
+    expect(fetch_).toHaveBeenCalledTimes(1);
   });
 
   it("serializes concurrent Slack refreshes and stores both rotated tokens", async () => {
@@ -416,6 +631,90 @@ function createVault(vaults: PermissionVault[]): PermissionVault {
   });
   vaults.push(vault);
   return vault;
+}
+
+function createIssueApprovalFixture(
+  vaults: PermissionVault[],
+  options: { now?: () => number } = {},
+) {
+  const vault = createVault(vaults);
+  const connection = vault.upsertConnection({
+    accountId: "42",
+    credential: { accessToken: "github-access" },
+    label: "ryan",
+    provider: "github",
+    scopes: ["repo"],
+    userId: "user-1",
+  });
+  vault.setGrant("user-1", connection.id, "codex", [
+    "github.issues.create",
+  ]);
+  const fetch_ = vi.fn<ProviderFetch>(async () =>
+    json({
+      assignees: [],
+      created_at: "2026-08-09T08:00:00Z",
+      html_url: "https://github.com/one-status/core/issues/7",
+      labels: [],
+      number: 7,
+      state: "open",
+      title: "Confirm tool writes",
+      updated_at: "2026-08-09T08:00:00Z",
+    }),
+  );
+  const gateway = new ToolGateway(vault, { fetch: fetch_, ...options });
+  const input = {
+    action: "github.issues.create",
+    agentId: "codex",
+    arguments: {
+      owner: "one-status",
+      repo: "core",
+      title: "Confirm tool writes",
+    },
+    connectionId: connection.id,
+    userId: "user-1",
+  };
+  return { connection, fetch_, gateway, input, vault };
+}
+
+function createAirtableApprovalFixture(vaults: PermissionVault[]) {
+  const vault = createVault(vaults);
+  const connection = vault.upsertConnection({
+    accountId: "airtable-user",
+    credential: { accessToken: "airtable-access" },
+    label: "ryan@example.test",
+    provider: "airtable",
+    scopes: ["data.records:write"],
+    userId: "user-1",
+  });
+  vault.setGrant("user-1", connection.id, "codex", [
+    "airtable.records.create",
+  ]);
+  const fetch_ = vi.fn<ProviderFetch>(async () =>
+    json({
+      createdTime: "2026-08-09T08:00:00Z",
+      fields: { Title: "Approval canonicalization" },
+      id: "rec-1",
+    }),
+  );
+  const gateway = new ToolGateway(vault, { fetch: fetch_ });
+  const input = {
+    action: "airtable.records.create",
+    agentId: "codex",
+    arguments: {
+      baseId: "app-1",
+      fields: {
+        Details: {
+          labels: ["security", "oauth"],
+          options: { notify: true, priority: 2 },
+        },
+        Title: "Approval canonicalization",
+      },
+      tableId: "table-1",
+    },
+    connectionId: connection.id,
+    userId: "user-1",
+  };
+  return { fetch_, gateway, input };
 }
 
 function requestUrl(input: string | URL | Request): string {

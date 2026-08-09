@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { access, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { FastifyInstance } from "fastify";
@@ -13,13 +13,17 @@ import type {
 } from "./dashboard-backend.js";
 import { LocalDashboardBackend } from "./dashboard-backend.js";
 import { PermissionVault } from "./permission-vault.js";
-import { ProviderRequestError } from "./oauth-providers.js";
+import {
+  ProviderRequestError,
+  type ProviderFetch,
+} from "./oauth-providers.js";
 import {
   ToolConnectionExpiredError,
   ToolGateway,
   ToolPermissionDeniedError,
 } from "./tool-gateway.js";
 import type { HandoffPreview, HandoffService } from "./handoff.js";
+import { LocalCapabilityManager } from "./local-capability-manager.js";
 
 describe("local dashboard", () => {
   let app: FastifyInstance;
@@ -44,10 +48,18 @@ describe("local dashboard", () => {
         throw new Error("GitHub CLI importer was not configured for this test.");
       },
     };
+    const capabilityManager = new LocalCapabilityManager({
+      codexMarketplaceRoot: join(directory, "codex-marketplace"),
+      claudeSkillsRoot: join(directory, "claude-skills"),
+      exportRoot: join(directory, "capability-exports"),
+      homeDir: directory,
+      environment: {},
+    });
     app = createApp({
       dbPath: join(directory, "sync.sqlite"),
       dashboard: {
         backend,
+        capabilityManager,
         githubCliImporter,
         handoffs,
         inventory: {
@@ -94,10 +106,31 @@ describe("local dashboard", () => {
       headers: { cookie, host: "127.0.0.1:8787" },
     });
     expect(snapshot.statusCode).toBe(200);
-    expect(snapshot.json()).toMatchObject({
+    const snapshotBody = snapshot.json();
+    expect(snapshotBody).toMatchObject({
       version: 1,
       integrations: { connections: [], grants: [] },
     });
+    expect(
+      snapshotBody.capabilityPacks.map(
+        (entry: { manifest: { name: string } }) => entry.manifest.name,
+      ),
+    ).toEqual([
+      "google-workspace",
+      "github-workflow",
+      "slack-workspace",
+      "microsoft-365",
+      "notion-workspace",
+      "dropbox-files",
+      "zoom-meetings",
+      "canva-design",
+      "asana-work-management",
+      "trello-boards",
+      "airtable-bases",
+      "linear-issues",
+      "figma-design",
+      "box-files",
+    ]);
     const onboarding = await app.inject({
       method: "GET",
       url: "/v1/dashboard/onboarding",
@@ -145,6 +178,84 @@ describe("local dashboard", () => {
     });
     expect(updated.statusCode).toBe(200);
     expect(backend.status.identity.displayName).toBe("Ryan");
+
+    const capability = await app.inject({
+      method: "PUT",
+      url: "/v1/dashboard/capabilities/google-workspace",
+      headers: {
+        cookie,
+        host: "127.0.0.1:8787",
+        origin: "http://127.0.0.1:8787",
+        "x-one-status-csrf": csrf!,
+      },
+      payload: { targets: ["codex", "claude-code"], enabled: true },
+    });
+    expect(capability.statusCode).toBe(200);
+    expect(
+      backend.status.capabilities.installations["google-workspace"],
+    ).toMatchObject({
+      version: "1.0.0",
+      targets: ["codex", "claude-code"],
+      manifestDigest: expect.stringMatching(/^sha256:[a-f0-9]{64}$/),
+    });
+
+    const capabilityPreview = await app.inject({
+      method: "POST",
+      url: "/v1/dashboard/capabilities/google-workspace/preview",
+      headers: {
+        cookie,
+        host: "127.0.0.1:8787",
+        origin: "http://127.0.0.1:8787",
+        "x-one-status-csrf": csrf!,
+      },
+      payload: { target: "markdown" },
+    });
+    expect(capabilityPreview.statusCode).toBe(200);
+    const previewBody = capabilityPreview.json();
+    expect(previewBody).toMatchObject({
+      target: "markdown",
+      preview: { installable: true },
+    });
+    const installedCapability = await app.inject({
+      method: "POST",
+      url: "/v1/dashboard/capabilities/google-workspace/install",
+      headers: {
+        cookie,
+        host: "127.0.0.1:8787",
+        origin: "http://127.0.0.1:8787",
+        "x-one-status-csrf": csrf!,
+      },
+      payload: {
+        target: "markdown",
+        approvalId: previewBody.approvalId,
+        confirmed: true,
+      },
+    });
+    expect(installedCapability.statusCode).toBe(200);
+    expect(installedCapability.json()).toMatchObject({ applied: true });
+    await expect(
+      access(
+        join(
+          directory,
+          "capability-exports/markdown/google-workspace/google-workspace.md",
+        ),
+      ),
+    ).resolves.toBeUndefined();
+
+    const removedCapability = await app.inject({
+      method: "DELETE",
+      url: "/v1/dashboard/capabilities/google-workspace",
+      headers: {
+        cookie,
+        host: "127.0.0.1:8787",
+        origin: "http://127.0.0.1:8787",
+        "x-one-status-csrf": csrf!,
+      },
+    });
+    expect(removedCapability.statusCode).toBe(200);
+    expect(
+      backend.status.capabilities.installations["google-workspace"],
+    ).toBeUndefined();
   });
 
   it("rejects DNS rebinding hosts", async () => {
@@ -381,6 +492,96 @@ describe("local dashboard", () => {
       requiresPkce: true,
       requiresSecret: false,
     });
+  });
+
+  it("imports a Trello user Token through the encrypted local Vault", async () => {
+    const page = await app.inject({
+      method: "GET",
+      url: "/integrations",
+      headers: { accept: "text/html", host: "127.0.0.1:8787" },
+    });
+    const setCookie = page.headers["set-cookie"]!;
+    const cookie = (Array.isArray(setCookie) ? setCookie[0]! : setCookie).split(
+      ";",
+    )[0]!;
+    const csrf = page.body.match(/name="one-status-csrf" content="([^"]+)"/)?.[1];
+    const headers = {
+      cookie,
+      host: "127.0.0.1:8787",
+      origin: "http://127.0.0.1:8787",
+      "x-one-status-csrf": csrf!,
+    };
+
+    const configured = await app.inject({
+      method: "PUT",
+      url: "/v1/dashboard/oauth/providers/trello/config",
+      headers,
+      payload: { clientId: "trello-api-key" },
+    });
+    expect(configured.statusCode).toBe(200);
+
+    const oauthStart = await app.inject({
+      method: "POST",
+      url: "/v1/dashboard/oauth/providers/trello/start",
+      headers,
+      payload: {},
+    });
+    expect(oauthStart.statusCode).toBe(422);
+
+    let trelloRequest = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        trelloRequest += 1;
+        const authorization = new Headers(init?.headers).get("authorization");
+        expect(authorization).toContain('oauth_consumer_key="trello-api-key"');
+        expect(authorization).toContain('oauth_token="trello-user-token"');
+        if (trelloRequest === 2) {
+          expect(String(input)).toContain(
+            "https://api.trello.com/1/tokens/trello-user-token",
+          );
+          return new Response(
+            JSON.stringify({
+              permissions: [{ read: true, write: false }],
+            }),
+            { headers: { "content-type": "application/json" } },
+          );
+        }
+        expect(String(input)).toBe(
+          "https://api.trello.com/1/members/me?fields=id,username,fullName",
+        );
+        return new Response(
+          JSON.stringify({
+            fullName: "Ryan",
+            id: "trello-user-1",
+            username: "ryan",
+          }),
+          { headers: { "content-type": "application/json" } },
+        );
+      }),
+    );
+
+    const imported = await app.inject({
+      method: "POST",
+      url: "/v1/dashboard/oauth/providers/trello/import-token",
+      headers,
+      payload: { accessToken: "trello-user-token" },
+    });
+    expect(imported.statusCode).toBe(200);
+    expect(imported.body).not.toContain("trello-user-token");
+    expect(imported.json().connection).toMatchObject({
+      accountId: "trello-user-1",
+      label: "ryan",
+      provider: "trello",
+      scopes: ["read"],
+      source: "imported",
+    });
+    expect(
+      permissionVault.getConnectionWithCredential(
+        "user-1",
+        imported.json().connection.id,
+      )?.credential.accessToken,
+    ).toBe("trello-user-token");
   });
 
   it("returns fixed OAuth callback errors without reflecting provider details", async () => {
@@ -644,7 +845,7 @@ describe("local dashboard", () => {
     expect(permissionVault.listGrants("user-1")).toEqual([]);
   });
 
-  it("accepts the current remote profile bearer with an empty local sync DB", async () => {
+  it("issues an Agent credential from the remote profile with an empty local sync DB", async () => {
     await app.close();
     permissionVault = new PermissionVault({
       path: ":memory:",
@@ -691,11 +892,16 @@ describe("local dashboard", () => {
     });
     await app.ready();
 
+    const credential = await issueAgentCredential(
+      app,
+      remoteProfile.token,
+      "codex",
+    );
     const authorized = await app.inject({
       method: "GET",
-      url: "/v1/tools?agentId=codex",
+      url: "/v1/tools",
       headers: {
-        authorization: `Bearer ${remoteProfile.token}`,
+        authorization: `Bearer ${credential.token}`,
         host: "127.0.0.1:8787",
       },
     });
@@ -721,6 +927,32 @@ describe("local dashboard", () => {
     });
     expect(authorized.body).not.toContain("encrypted-in-vault");
 
+    const deviceBearer = await app.inject({
+      method: "GET",
+      url: "/v1/tools",
+      headers: {
+        authorization: `Bearer ${remoteProfile.token}`,
+        host: "127.0.0.1:8787",
+      },
+    });
+    expect(deviceBearer.statusCode).toBe(401);
+    expect(deviceBearer.json()).toMatchObject({
+      error: { code: "agent_credential_required" },
+    });
+
+    const spoofedIdentity = await app.inject({
+      method: "GET",
+      url: "/v1/tools?agentId=claude-code",
+      headers: {
+        authorization: `Bearer ${credential.token}`,
+        host: "127.0.0.1:8787",
+      },
+    });
+    expect(spoofedIdentity.statusCode).toBe(403);
+    expect(spoofedIdentity.json()).toMatchObject({
+      error: { code: "agent_identity_mismatch" },
+    });
+
     const wrongBearer = await app.inject({
       method: "GET",
       url: "/v1/tools?agentId=codex",
@@ -733,9 +965,9 @@ describe("local dashboard", () => {
 
     const publicHost = await app.inject({
       method: "GET",
-      url: "/v1/tools?agentId=codex",
+      url: "/v1/tools",
       headers: {
-        authorization: `Bearer ${remoteProfile.token}`,
+        authorization: `Bearer ${credential.token}`,
         host: "os.example.test",
       },
     });
@@ -743,14 +975,35 @@ describe("local dashboard", () => {
 
     remoteProfile.tokenExpiresAt = new Date(Date.now() - 1_000).toISOString();
     const expired = await app.inject({
-      method: "GET",
-      url: "/v1/tools?agentId=codex",
+      method: "POST",
+      url: "/v1/tools/credentials",
+      headers: {
+        authorization: `Bearer ${remoteProfile.token}`,
+        host: "127.0.0.1:8787",
+      },
+      payload: { agentId: "claude-code" },
+    });
+    expect(expired.statusCode).toBe(401);
+
+    remoteProfile.tokenExpiresAt = new Date(Date.now() + 60_000).toISOString();
+    const revoked = await app.inject({
+      method: "DELETE",
+      url: `/v1/tools/credentials/${credential.credentialId}`,
       headers: {
         authorization: `Bearer ${remoteProfile.token}`,
         host: "127.0.0.1:8787",
       },
     });
-    expect(expired.statusCode).toBe(401);
+    expect(revoked.statusCode).toBe(200);
+    const revokedBearer = await app.inject({
+      method: "GET",
+      url: "/v1/tools",
+      headers: {
+        authorization: `Bearer ${credential.token}`,
+        host: "127.0.0.1:8787",
+      },
+    });
+    expect(revokedBearer.statusCode).toBe(401);
   });
 
   it("keeps local sync database sessions valid for Tool Gateway routes", async () => {
@@ -780,23 +1033,33 @@ describe("local dashboard", () => {
     permissionVault.setGrant(session.userId, connection.id, "codex", [
       "github.viewer.get",
     ]);
+    permissionVault.setGrant(session.userId, connection.id, "claude-code", [
+      "github.repositories.list",
+    ]);
 
+    const credential = await issueAgentCredential(app, session.token, "codex");
     const response = await app.inject({
       method: "GET",
-      url: "/v1/tools?agentId=codex",
+      url: "/v1/tools",
       headers: {
-        authorization: `Bearer ${session.token}`,
+        authorization: `Bearer ${credential.token}`,
         host: "127.0.0.1:8787",
       },
     });
 
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({
-      connections: [{ connection: { id: connection.id } }],
+      connections: [
+        {
+          actions: [{ id: "github.viewer.get" }],
+          connection: { id: connection.id },
+        },
+      ],
     });
+    expect(response.body).not.toContain("github.repositories.list");
   });
 
-  it("validates and forwards explicit Tool Gateway confirmation", async () => {
+  it("validates and forwards a one-time Tool Gateway approval ID", async () => {
     const registration = await app.inject({
       method: "POST",
       url: "/v1/auth/register",
@@ -813,18 +1076,18 @@ describe("local dashboard", () => {
     });
     expect(registration.statusCode).toBe(201);
     const session = registration.json<{ token: string; userId: string }>();
+    const credential = await issueAgentCredential(app, session.token, "codex");
     const execute = vi
       .spyOn(ToolGateway.prototype, "execute")
       .mockResolvedValue({ number: 7 });
     const payload = {
       action: "github.issues.create",
-      agentId: "codex",
+      approvalId: "8aac7c59-f780-4ebb-a72e-b3c9ecbbf999",
       arguments: {
         owner: "one-status",
         repo: "core",
         title: "Confirm tool writes",
       },
-      confirmed: true,
       connectionId: "2cc16694-140d-4575-8189-3283163c15c7",
     };
 
@@ -833,7 +1096,7 @@ describe("local dashboard", () => {
         method: "POST",
         url: "/v1/tools/execute",
         headers: {
-          authorization: `Bearer ${session.token}`,
+          authorization: `Bearer ${credential.token}`,
           host: "127.0.0.1:8787",
         },
         payload,
@@ -842,6 +1105,7 @@ describe("local dashboard", () => {
       expect(response.json()).toEqual({ result: { number: 7 } });
       expect(execute).toHaveBeenCalledWith({
         ...payload,
+        agentId: "codex",
         userId: session.userId,
       });
 
@@ -849,12 +1113,27 @@ describe("local dashboard", () => {
         method: "POST",
         url: "/v1/tools/execute",
         headers: {
-          authorization: `Bearer ${session.token}`,
+          authorization: `Bearer ${credential.token}`,
           host: "127.0.0.1:8787",
         },
-        payload: { ...payload, confirmed: "yes" },
+        payload: { ...payload, confirmed: true },
       });
       expect(invalid.statusCode).toBe(400);
+      expect(execute).toHaveBeenCalledTimes(1);
+
+      const spoofed = await app.inject({
+        method: "POST",
+        url: "/v1/tools/execute",
+        headers: {
+          authorization: `Bearer ${credential.token}`,
+          host: "127.0.0.1:8787",
+        },
+        payload: { ...payload, agentId: "claude-code" },
+      });
+      expect(spoofed.statusCode).toBe(403);
+      expect(spoofed.json()).toMatchObject({
+        error: { code: "agent_identity_mismatch" },
+      });
       expect(execute).toHaveBeenCalledTimes(1);
 
       execute.mockRejectedValueOnce(new ToolPermissionDeniedError());
@@ -862,10 +1141,10 @@ describe("local dashboard", () => {
         method: "POST",
         url: "/v1/tools/execute",
         headers: {
-          authorization: `Bearer ${session.token}`,
+          authorization: `Bearer ${credential.token}`,
           host: "127.0.0.1:8787",
         },
-        payload: { ...payload, confirmed: false },
+        payload,
       });
       expect(denied.statusCode).toBe(403);
       expect(denied.json()).toMatchObject({
@@ -877,7 +1156,7 @@ describe("local dashboard", () => {
         method: "POST",
         url: "/v1/tools/execute",
         headers: {
-          authorization: `Bearer ${session.token}`,
+          authorization: `Bearer ${credential.token}`,
           host: "127.0.0.1:8787",
         },
         payload,
@@ -901,7 +1180,7 @@ describe("local dashboard", () => {
         method: "POST",
         url: "/v1/tools/execute",
         headers: {
-          authorization: `Bearer ${session.token}`,
+          authorization: `Bearer ${credential.token}`,
           host: "127.0.0.1:8787",
         },
         payload,
@@ -925,7 +1204,7 @@ describe("local dashboard", () => {
         method: "POST",
         url: "/v1/tools/execute",
         headers: {
-          authorization: `Bearer ${session.token}`,
+          authorization: `Bearer ${credential.token}`,
           host: "127.0.0.1:8787",
         },
         payload,
@@ -936,6 +1215,418 @@ describe("local dashboard", () => {
       });
     } finally {
       execute.mockRestore();
+    }
+  });
+
+  it("enforces Dashboard approval, request binding, expiry, and route boundaries", async () => {
+    let now = Date.parse("2026-08-09T10:00:00.000Z");
+    const toolBackend = new MemoryDashboardBackend();
+    const toolVault = new PermissionVault({
+      path: ":memory:",
+      key: new Uint8Array(32).fill(8),
+    });
+    const providerFetch = vi.fn<ProviderFetch>(async (input, init) => {
+      expect(String(input)).toBe(
+        "https://api.github.com/repos/one-status/core/issues",
+      );
+      expect(init?.method).toBe("POST");
+      return new Response(
+        JSON.stringify({
+          assignees: [],
+          created_at: "2026-08-09T10:01:00Z",
+          html_url: "https://github.com/one-status/core/issues/7",
+          labels: [],
+          number: 7,
+          state: "open",
+          title: "Ship approvals",
+          updated_at: "2026-08-09T10:01:00Z",
+        }),
+        { headers: { "content-type": "application/json" } },
+      );
+    });
+    const toolGateway = new ToolGateway(toolVault, {
+      fetch: providerFetch,
+      now: () => now,
+    });
+    const toolApp = createApp({
+      authRateLimit: false,
+      dbPath: join(directory, "tool-approval.sqlite"),
+      dashboard: {
+        backend: toolBackend,
+        handoffs: new TestHandoffRuntime(),
+        inventory: {
+          async get() {
+            return inventorySnapshot;
+          },
+          async refresh() {
+            return inventorySnapshot;
+          },
+        },
+        permissionVault: toolVault,
+        toolGateway,
+      },
+    });
+    await toolApp.ready();
+
+    try {
+      const github = toolVault.upsertConnection({
+        accountId: "github-user",
+        credential: { accessToken: "github-access" },
+        label: "ryan",
+        provider: "github",
+        scopes: ["repo"],
+        userId: "user-1",
+      });
+      const githubAlternate = toolVault.upsertConnection({
+        accountId: "github-user-alternate",
+        credential: { accessToken: "github-access-alternate" },
+        label: "ryan-alternate",
+        provider: "github",
+        scopes: ["repo"],
+        userId: "user-1",
+      });
+      const slack = toolVault.upsertConnection({
+        accountId: "slack-workspace",
+        credential: { accessToken: "slack-access" },
+        label: "One Status",
+        provider: "slack",
+        scopes: ["chat:write"],
+        userId: "user-1",
+      });
+      for (const connectionId of [github.id, githubAlternate.id]) {
+        toolVault.setGrant("user-1", connectionId, "codex", [
+          "github.issues.create",
+        ]);
+      }
+      toolVault.setGrant("user-1", github.id, "claude-code", [
+        "github.issues.create",
+      ]);
+      toolVault.setGrant("user-1", slack.id, "codex", [
+        "slack.messages.post",
+      ]);
+      const codexCredential = await issueAgentCredential(
+        toolApp,
+        "tool-token",
+        "codex",
+      );
+      const otherUserCredential = await issueAgentCredential(
+        toolApp,
+        "other-tool-token",
+        "codex",
+      );
+
+      const page = await toolApp.inject({
+        method: "GET",
+        url: "/integrations",
+        headers: { accept: "text/html", host: "127.0.0.1:8787" },
+      });
+      const setCookie = page.headers["set-cookie"]!;
+      const cookie = (
+        Array.isArray(setCookie) ? setCookie[0]! : setCookie
+      ).split(";")[0]!;
+      const csrf = page.body.match(
+        /name="one-status-csrf" content="([^"]+)"/,
+      )?.[1];
+      expect(csrf).toBeTruthy();
+      const dashboardHeaders = {
+        cookie,
+        host: "127.0.0.1:8787",
+        origin: "http://127.0.0.1:8787",
+        "x-one-status-csrf": csrf!,
+      };
+      const request = {
+        action: "github.issues.create",
+        agentId: "codex",
+        arguments: {
+          owner: "one-status",
+          repo: "core",
+          title: "Ship approvals",
+        },
+        connectionId: github.id,
+      };
+
+      const wrongBearer = await toolApp.inject({
+        method: "POST",
+        url: "/v1/tools/approval-requests",
+        headers: {
+          authorization: "Bearer wrong-tool-token",
+          host: "127.0.0.1:8787",
+        },
+        payload: request,
+      });
+      expect(wrongBearer.statusCode).toBe(401);
+
+      const publicHost = await toolApp.inject({
+        method: "POST",
+        url: "/v1/tools/approval-requests",
+        headers: {
+          authorization: `Bearer ${codexCredential.token}`,
+          host: "os.example.test",
+        },
+        payload: request,
+      });
+      expect(publicHost.statusCode).toBe(403);
+
+      const requested = await toolApp.inject({
+        method: "POST",
+        url: "/v1/tools/approval-requests",
+        headers: {
+          authorization: `Bearer ${codexCredential.token}`,
+          host: "127.0.0.1:8787",
+        },
+        payload: request,
+      });
+      expect(requested.statusCode).toBe(200);
+      const approval = requested.json().approval as { id: string };
+
+      const snapshot = await toolApp.inject({
+        method: "GET",
+        url: "/v1/dashboard/snapshot",
+        headers: { cookie, host: "127.0.0.1:8787" },
+      });
+      expect(snapshot.json().integrations.approvals).toEqual([
+        expect.objectContaining({
+          action: request.action,
+          agentId: request.agentId,
+          arguments: request.arguments,
+          connectionId: github.id,
+          id: approval.id,
+          status: "pending",
+        }),
+      ]);
+
+      const noCsrf = await toolApp.inject({
+        method: "POST",
+        url: `/v1/dashboard/tool-approvals/${approval.id}`,
+        headers: { cookie, host: "127.0.0.1:8787" },
+        payload: { decision: "approve" },
+      });
+      expect(noCsrf.statusCode).toBe(403);
+
+      toolBackend.activeUserId = "user-2";
+      const wrongDashboardUser = await toolApp.inject({
+        method: "POST",
+        url: `/v1/dashboard/tool-approvals/${approval.id}`,
+        headers: dashboardHeaders,
+        payload: { decision: "approve" },
+      });
+      expect(wrongDashboardUser.statusCode).toBe(409);
+      toolBackend.activeUserId = "user-1";
+
+      const approved = await toolApp.inject({
+        method: "POST",
+        url: `/v1/dashboard/tool-approvals/${approval.id}`,
+        headers: dashboardHeaders,
+        payload: { decision: "approve" },
+      });
+      expect(approved.statusCode).toBe(200);
+      expect(approved.json().approval).toMatchObject({ status: "approved" });
+
+      const duplicateDecision = await toolApp.inject({
+        method: "POST",
+        url: `/v1/dashboard/tool-approvals/${approval.id}`,
+        headers: dashboardHeaders,
+        payload: { decision: "deny" },
+      });
+      expect(duplicateDecision.statusCode).toBe(409);
+
+      const changedArguments = await toolApp.inject({
+        method: "POST",
+        url: "/v1/tools/execute",
+        headers: {
+          authorization: `Bearer ${codexCredential.token}`,
+          host: "127.0.0.1:8787",
+        },
+        payload: {
+          ...request,
+          approvalId: approval.id,
+          arguments: { ...request.arguments, title: "Changed after approval" },
+        },
+      });
+      expect(changedArguments.statusCode).toBe(409);
+
+      const changedAgent = await toolApp.inject({
+        method: "POST",
+        url: "/v1/tools/execute",
+        headers: {
+          authorization: `Bearer ${codexCredential.token}`,
+          host: "127.0.0.1:8787",
+        },
+        payload: {
+          ...request,
+          agentId: "claude-code",
+          approvalId: approval.id,
+        },
+      });
+      expect(changedAgent.statusCode).toBe(403);
+      expect(changedAgent.json()).toMatchObject({
+        error: { code: "agent_identity_mismatch" },
+      });
+
+      const changedConnection = await toolApp.inject({
+        method: "POST",
+        url: "/v1/tools/execute",
+        headers: {
+          authorization: `Bearer ${codexCredential.token}`,
+          host: "127.0.0.1:8787",
+        },
+        payload: {
+          ...request,
+          approvalId: approval.id,
+          connectionId: githubAlternate.id,
+        },
+      });
+      expect(changedConnection.statusCode).toBe(409);
+
+      const changedAction = await toolApp.inject({
+        method: "POST",
+        url: "/v1/tools/execute",
+        headers: {
+          authorization: `Bearer ${codexCredential.token}`,
+          host: "127.0.0.1:8787",
+        },
+        payload: {
+          action: "slack.messages.post",
+          agentId: "codex",
+          approvalId: approval.id,
+          arguments: { channel: "C123", text: "Changed action" },
+          connectionId: slack.id,
+        },
+      });
+      expect(changedAction.statusCode).toBe(409);
+
+      const wrongUser = await toolApp.inject({
+        method: "POST",
+        url: "/v1/tools/execute",
+        headers: {
+          authorization: `Bearer ${otherUserCredential.token}`,
+          host: "127.0.0.1:8787",
+        },
+        payload: { ...request, approvalId: approval.id },
+      });
+      expect(wrongUser.statusCode).toBe(403);
+
+      const executed = await toolApp.inject({
+        method: "POST",
+        url: "/v1/tools/execute",
+        headers: {
+          authorization: `Bearer ${codexCredential.token}`,
+          host: "127.0.0.1:8787",
+        },
+        payload: {
+          action: request.action,
+          agentId: request.agentId,
+          approvalId: approval.id,
+          arguments: {
+            title: request.arguments.title,
+            repo: request.arguments.repo,
+            owner: request.arguments.owner,
+          },
+          connectionId: request.connectionId,
+        },
+      });
+      expect(executed.statusCode).toBe(200);
+      expect(executed.json().result).toMatchObject({ number: 7 });
+
+      const replayed = await toolApp.inject({
+        method: "POST",
+        url: "/v1/tools/execute",
+        headers: {
+          authorization: `Bearer ${codexCredential.token}`,
+          host: "127.0.0.1:8787",
+        },
+        payload: { ...request, approvalId: approval.id },
+      });
+      expect(replayed.statusCode).toBe(200);
+      expect(replayed.json()).toEqual(executed.json());
+      expect(providerFetch).toHaveBeenCalledTimes(1);
+
+      const deniedRequest = await toolApp.inject({
+        method: "POST",
+        url: "/v1/tools/approval-requests",
+        headers: {
+          authorization: `Bearer ${codexCredential.token}`,
+          host: "127.0.0.1:8787",
+        },
+        payload: {
+          ...request,
+          arguments: { ...request.arguments, title: "Reject this" },
+        },
+      });
+      const deniedApproval = deniedRequest.json().approval as { id: string };
+      const denied = await toolApp.inject({
+        method: "POST",
+        url: `/v1/dashboard/tool-approvals/${deniedApproval.id}`,
+        headers: dashboardHeaders,
+        payload: { decision: "deny" },
+      });
+      expect(denied.statusCode).toBe(200);
+      const deniedExecution = await toolApp.inject({
+        method: "POST",
+        url: "/v1/tools/execute",
+        headers: {
+          authorization: `Bearer ${codexCredential.token}`,
+          host: "127.0.0.1:8787",
+        },
+        payload: {
+          ...request,
+          approvalId: deniedApproval.id,
+          arguments: { ...request.arguments, title: "Reject this" },
+        },
+      });
+      expect(deniedExecution.statusCode).toBe(409);
+
+      const expiringRequest = await toolApp.inject({
+        method: "POST",
+        url: "/v1/tools/approval-requests",
+        headers: {
+          authorization: `Bearer ${codexCredential.token}`,
+          host: "127.0.0.1:8787",
+        },
+        payload: {
+          ...request,
+          arguments: { ...request.arguments, title: "Expire this" },
+        },
+      });
+      const expiringApproval = expiringRequest.json().approval as { id: string };
+      now += 10 * 60_000 + 1;
+
+      const expiredSnapshot = await toolApp.inject({
+        method: "GET",
+        url: "/v1/dashboard/snapshot",
+        headers: { cookie, host: "127.0.0.1:8787" },
+      });
+      expect(
+        expiredSnapshot
+          .json()
+          .integrations.approvals.some(
+            (entry: { id: string }) => entry.id === expiringApproval.id,
+          ),
+      ).toBe(false);
+      const expiredDecision = await toolApp.inject({
+        method: "POST",
+        url: `/v1/dashboard/tool-approvals/${expiringApproval.id}`,
+        headers: dashboardHeaders,
+        payload: { decision: "approve" },
+      });
+      expect(expiredDecision.statusCode).toBe(409);
+      const expiredExecution = await toolApp.inject({
+        method: "POST",
+        url: "/v1/tools/execute",
+        headers: {
+          authorization: `Bearer ${codexCredential.token}`,
+          host: "127.0.0.1:8787",
+        },
+        payload: {
+          ...request,
+          approvalId: expiringApproval.id,
+          arguments: { ...request.arguments, title: "Expire this" },
+        },
+      });
+      expect(expiredExecution.statusCode).toBe(409);
+      expect(providerFetch).toHaveBeenCalledTimes(1);
+    } finally {
+      await toolApp.close();
     }
   });
 
@@ -1084,9 +1775,52 @@ const inventorySnapshot = {
   warnings: [],
 };
 
+async function issueAgentCredential(
+  targetApp: FastifyInstance,
+  deviceToken: string,
+  agentId: string,
+): Promise<{
+  agentId: string;
+  credentialId: string;
+  expiresAt: string;
+  token: string;
+}> {
+  const response = await targetApp.inject({
+    method: "POST",
+    url: "/v1/tools/credentials",
+    headers: {
+      authorization: `Bearer ${deviceToken}`,
+      host: "127.0.0.1:8787",
+    },
+    payload: { agentId },
+  });
+  expect(response.statusCode).toBe(200);
+  const credential = response.json().credential;
+  expect(credential).toMatchObject({
+    agentId,
+    credentialId: expect.any(String),
+    expiresAt: expect.any(String),
+    token: expect.stringMatching(/^osa1_[A-Za-z0-9_-]{43}$/),
+  });
+  return credential;
+}
+
 class MemoryDashboardBackend implements DashboardBackend {
+  activeUserId = "user-1";
   status: StatusDocument = createEmptyStatus();
   version = 1;
+
+  async authenticateDevice(
+    authorization?: string,
+  ): Promise<{ deviceId: string; userId: string } | undefined> {
+    if (authorization === "Bearer tool-token") {
+      return { deviceId: "device-1", userId: "user-1" };
+    }
+    if (authorization === "Bearer other-tool-token") {
+      return { deviceId: "device-2", userId: "user-2" };
+    }
+    return undefined;
+  }
 
   async getSnapshot(): Promise<DashboardStatusSnapshot> {
     return this.snapshot();
@@ -1104,7 +1838,7 @@ class MemoryDashboardBackend implements DashboardBackend {
 
   async revokeDevice(): Promise<void> {}
   async userId(): Promise<string> {
-    return "user-1";
+    return this.activeUserId;
   }
 
   private snapshot(): DashboardStatusSnapshot {

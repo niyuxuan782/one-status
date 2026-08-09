@@ -1,54 +1,54 @@
 {
-  "tag_name": "v0.5.0",
-  "html_url": "https://github.com/niyuxuan782/one-status/releases/tag/v0.5.0",
+  "tag_name": "v0.6.0",
+  "html_url": "https://github.com/niyuxuan782/one-status/releases/tag/v0.6.0",
   "assets": [
     {
-      "name": "One-Status-0.5.0-linux-x64.AppImage",
-      "browser_download_url": "https://github.com/niyuxuan782/one-status/releases/download/v0.5.0/One-Status-0.5.0-linux-x64.AppImage"
+      "name": "One-Status-0.6.0-linux-x64.AppImage",
+      "browser_download_url": "https://github.com/niyuxuan782/one-status/releases/download/v0.6.0/One-Status-0.6.0-linux-x64.AppImage"
     },
     {
-      "name": "One-Status-0.5.0-linux-x64.deb",
-      "browser_download_url": "https://github.com/niyuxuan782/one-status/releases/download/v0.5.0/One-Status-0.5.0-linux-x64.deb"
+      "name": "One-Status-0.6.0-linux-x64.deb",
+      "browser_download_url": "https://github.com/niyuxuan782/one-status/releases/download/v0.6.0/One-Status-0.6.0-linux-x64.deb"
     },
     {
-      "name": "One-Status-0.5.0-mac-arm64.dmg",
-      "browser_download_url": "https://github.com/niyuxuan782/one-status/releases/download/v0.5.0/One-Status-0.5.0-mac-arm64.dmg"
+      "name": "One-Status-0.6.0-mac-arm64.dmg",
+      "browser_download_url": "https://github.com/niyuxuan782/one-status/releases/download/v0.6.0/One-Status-0.6.0-mac-arm64.dmg"
     },
     {
-      "name": "One-Status-0.5.0-mac-arm64.zip",
-      "browser_download_url": "https://github.com/niyuxuan782/one-status/releases/download/v0.5.0/One-Status-0.5.0-mac-arm64.zip"
+      "name": "One-Status-0.6.0-mac-arm64.zip",
+      "browser_download_url": "https://github.com/niyuxuan782/one-status/releases/download/v0.6.0/One-Status-0.6.0-mac-arm64.zip"
     },
     {
-      "name": "One-Status-0.5.0-mac-x64.dmg",
-      "browser_download_url": "https://github.com/niyuxuan782/one-status/releases/download/v0.5.0/One-Status-0.5.0-mac-x64.dmg"
+      "name": "One-Status-0.6.0-mac-x64.dmg",
+      "browser_download_url": "https://github.com/niyuxuan782/one-status/releases/download/v0.6.0/One-Status-0.6.0-mac-x64.dmg"
     },
     {
-      "name": "One-Status-0.5.0-mac-x64.zip",
-      "browser_download_url": "https://github.com/niyuxuan782/one-status/releases/download/v0.5.0/One-Status-0.5.0-mac-x64.zip"
+      "name": "One-Status-0.6.0-mac-x64.zip",
+      "browser_download_url": "https://github.com/niyuxuan782/one-status/releases/download/v0.6.0/One-Status-0.6.0-mac-x64.zip"
     },
     {
-      "name": "One-Status-Portable-0.5.0-windows-x64.exe",
-      "browser_download_url": "https://github.com/niyuxuan782/one-status/releases/download/v0.5.0/One-Status-Portable-0.5.0-windows-x64.exe"
+      "name": "One-Status-Portable-0.6.0-windows-x64.exe",
+      "browser_download_url": "https://github.com/niyuxuan782/one-status/releases/download/v0.6.0/One-Status-Portable-0.6.0-windows-x64.exe"
     },
     {
-      "name": "One-Status-Setup-0.5.0-windows-x64.exe",
-      "browser_download_url": "https://github.com/niyuxuan782/one-status/releases/download/v0.5.0/One-Status-Setup-0.5.0-windows-x64.exe"
+      "name": "One-Status-Setup-0.6.0-windows-x64.exe",
+      "browser_download_url": "https://github.com/niyuxuan782/one-status/releases/download/v0.6.0/One-Status-Setup-0.6.0-windows-x64.exe"
     },
     {
-      "name": "one-status-0.5.0.tgz",
-      "browser_download_url": "https://github.com/niyuxuan782/one-status/releases/download/v0.5.0/one-status-0.5.0.tgz"
+      "name": "one-status-0.6.0.tgz",
+      "browser_download_url": "https://github.com/niyuxuan782/one-status/releases/download/v0.6.0/one-status-0.6.0.tgz"
     },
     {
       "name": "one-status-cask.rb",
-      "browser_download_url": "https://github.com/niyuxuan782/one-status/releases/download/v0.5.0/one-status-cask.rb"
+      "browser_download_url": "https://github.com/niyuxuan782/one-status/releases/download/v0.6.0/one-status-cask.rb"
     },
     {
       "name": "one-status.rb",
-      "browser_download_url": "https://github.com/niyuxuan782/one-status/releases/download/v0.5.0/one-status.rb"
+      "browser_download_url": "https://github.com/niyuxuan782/one-status/releases/download/v0.6.0/one-status.rb"
     },
     {
       "name": "SHA256SUMS.txt",
-      "browser_download_url": "https://github.com/niyuxuan782/one-status/releases/download/v0.5.0/SHA256SUMS.txt"
+      "browser_download_url": "https://github.com/niyuxuan782/one-status/releases/download/v0.6.0/SHA256SUMS.txt"
     }
   ]
 }

@@ -128,9 +128,72 @@ const preferenceValueSchema = z.union([
   z.array(z.string()),
 ]);
 
+export const capabilityTargetSchema = z.enum([
+  "chatgpt",
+  "codex",
+  "claude-code",
+  "cursor",
+  "ide",
+  "markdown",
+  "sdk",
+]);
+
+export const capabilityInstallationSchema = z
+  .object({
+    packId: z
+      .string()
+      .min(1)
+      .max(128)
+      .regex(
+        /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?)*$/,
+      ),
+    version: z.string().min(1).max(64),
+    manifestDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+    source: z
+      .object({
+        type: z.enum(["builtin", "file", "url"]),
+        reference: z.string().min(1).max(2_000).optional(),
+      })
+      .strict(),
+    targets: z
+      .array(capabilityTargetSchema)
+      .min(1)
+      .max(capabilityTargetSchema.options.length)
+      .refine((targets) => new Set(targets).size === targets.length, {
+        message: "capability installation targets must be unique",
+      }),
+    enabled: z.boolean(),
+    installedAt: timestampSchema,
+    updatedAt: timestampSchema,
+  })
+  .strict()
+  .superRefine((installation, context) => {
+    if (installation.source.type !== "builtin" && !installation.source.reference) {
+      context.addIssue({
+        code: "custom",
+        message: "reference is required for file and URL capability sources",
+        path: ["source", "reference"],
+      });
+    }
+  });
+
+const capabilityInstallationsSchema = z
+  .record(z.string(), capabilityInstallationSchema)
+  .superRefine((installations, context) => {
+    for (const [packId, installation] of Object.entries(installations)) {
+      if (installation.packId !== packId) {
+        context.addIssue({
+          code: "custom",
+          message: "capability installation key must match packId",
+          path: [packId, "packId"],
+        });
+      }
+    }
+  });
+
 export const statusDocumentSchema = z
   .object({
-    schemaVersion: z.literal(2),
+    schemaVersion: z.literal(3),
     identity: z
       .object({
         displayName: z.string().optional(),
@@ -159,8 +222,18 @@ export const statusDocumentSchema = z
         enabled: z.array(z.string()),
       })
       .strict(),
+    capabilities: z
+      .object({
+        installations: capabilityInstallationsSchema,
+      })
+      .strict(),
     tasks: z.record(z.string(), taskSchema),
   })
+  .strict();
+
+const legacyStatusDocumentV2Schema = statusDocumentSchema
+  .omit({ capabilities: true })
+  .extend({ schemaVersion: z.literal(2) })
   .strict();
 
 const legacyMemoryEntrySchema = memoryEntryObjectSchema
@@ -180,7 +253,7 @@ const legacyProjectHandoffSchema = projectHandoffSchema
 const legacyProjectSchema = projectSchema
   .extend({ handoff: legacyProjectHandoffSchema.optional() })
   .strict();
-const legacyStatusDocumentSchema = statusDocumentSchema
+const legacyStatusDocumentSchema = legacyStatusDocumentV2Schema
   .extend({
     schemaVersion: z.literal(1),
     memory: z.array(legacyMemoryEntrySchema),
@@ -189,6 +262,10 @@ const legacyStatusDocumentSchema = statusDocumentSchema
   .strict();
 
 export type StatusDocument = z.infer<typeof statusDocumentSchema>;
+export type CapabilityInstallation = z.infer<
+  typeof capabilityInstallationSchema
+>;
+export type CapabilityTarget = z.infer<typeof capabilityTargetSchema>;
 export type MemoryEntry = z.infer<typeof memoryEntrySchema>;
 export type MemoryOrigin = z.infer<typeof memoryOriginSchema>;
 export type MemoryScope = z.infer<typeof memoryScopeSchema>;
@@ -330,7 +407,7 @@ export type PutStatusRequest = z.infer<typeof putStatusRequestSchema>;
 
 export function createEmptyStatus(): StatusDocument {
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     identity: {},
     preferences: {},
     memory: [],
@@ -338,6 +415,7 @@ export function createEmptyStatus(): StatusDocument {
     workspace: {},
     permissions: { grants: [] },
     tools: { enabled: [] },
+    capabilities: { installations: {} },
     tasks: {},
   };
 }
@@ -345,10 +423,19 @@ export function createEmptyStatus(): StatusDocument {
 export function parseStatusDocument(value: unknown): StatusDocument {
   const current = statusDocumentSchema.safeParse(value);
   if (current.success) return current.data;
+  const previous = legacyStatusDocumentV2Schema.safeParse(value);
+  if (previous.success) {
+    return {
+      ...previous.data,
+      schemaVersion: 3,
+      capabilities: { installations: {} },
+    };
+  }
   const legacy = legacyStatusDocumentSchema.parse(value);
   return {
     ...legacy,
-    schemaVersion: 2,
+    schemaVersion: 3,
+    capabilities: { installations: {} },
     memory: legacy.memory.map((entry) => ({
       ...entry,
       state: "confirmed" as const,

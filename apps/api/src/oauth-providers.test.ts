@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { listBuiltInCapabilityPacks } from "@one-status/capability-pack";
 import {
   buildAuthorizationUrl,
   exchangeOAuthCode,
@@ -15,6 +16,39 @@ const config = { clientId: "client-id", clientSecret: "client-secret" };
 const redirectUri = "https://os.example.test/oauth/callback";
 
 describe("OAuth provider protocols", () => {
+  it("keeps Capability Packs aligned with the executable provider catalog", () => {
+    const packs = listBuiltInCapabilityPacks().map((entry) => entry.manifest);
+    for (const provider of Object.values(providerCatalog)) {
+      const matches = packs.filter(
+        (pack) => pack.authorization?.provider === provider.id,
+      );
+      expect(matches, provider.id).toHaveLength(1);
+      const pack = matches[0]!;
+      expect(
+        pack.authorization?.requiredScopes.every((scope) =>
+          provider.scopes.includes(scope),
+        ),
+        provider.id,
+      ).toBe(true);
+      expect(
+        pack.tools.map((tool) => ({
+          id: tool.id,
+          readOnly: tool.readOnly,
+          requiredScopes: tool.requiredScopes,
+          requiresConfirmation: tool.requiresConfirmation,
+        })).sort((left, right) => left.id.localeCompare(right.id)),
+        provider.id,
+      ).toEqual(
+        provider.actions.map((action) => ({
+          id: action.id,
+          readOnly: action.readOnly,
+          requiredScopes: action.requiredScopes,
+          requiresConfirmation: action.requiresConfirmation,
+        })).sort((left, right) => left.id.localeCompare(right.id)),
+      );
+    }
+  });
+
   it("publishes executable argument schemas for Gateway discovery", () => {
     for (const [provider, definition] of Object.entries(providerCatalog)) {
       for (const action of definition.actions) {
@@ -57,6 +91,29 @@ describe("OAuth provider protocols", () => {
       },
       required: ["owner", "repo", "title"],
     });
+    expect(
+      providerActionInputSchema("google", "gmail.messages.send"),
+    ).toMatchObject({
+      additionalProperties: false,
+      properties: {
+        subject: { type: "string" },
+        textBody: { type: "string" },
+        to: { type: "array" },
+      },
+      required: ["subject", "textBody", "to"],
+    });
+    expect(
+      providerActionInputSchema("google", "docs.documents.get"),
+    ).toMatchObject({
+      additionalProperties: false,
+      properties: { documentId: { type: "string" } },
+      required: ["documentId"],
+    });
+    expect(
+      providerCatalog.google.actions.find(
+        (action) => action.id === "gmail.messages.send",
+      ),
+    ).toMatchObject({ readOnly: false, requiresConfirmation: true });
     expect(() =>
       providerActionInputSchema("slack", "slack.unsupported"),
     ).toThrow("Unsupported provider action");
@@ -79,6 +136,15 @@ describe("OAuth provider protocols", () => {
     expect(google.searchParams.get("code_challenge")).toBe("challenge");
     expect(google.searchParams.get("code_challenge_method")).toBe("S256");
     expect(google.searchParams.get("prompt")).toBe("consent");
+    expect(google.searchParams.get("scope")?.split(" ")).toEqual(
+      expect.arrayContaining([
+        "https://www.googleapis.com/auth/calendar.readonly",
+        "https://www.googleapis.com/auth/gmail.readonly",
+        "https://www.googleapis.com/auth/gmail.send",
+        "https://www.googleapis.com/auth/drive.metadata.readonly",
+        "https://www.googleapis.com/auth/documents.readonly",
+      ]),
+    );
 
     const github = new URL(
       buildAuthorizationUrl({
@@ -121,6 +187,357 @@ describe("OAuth provider protocols", () => {
       "unused-challenge",
     );
     expect(slack.searchParams.get("code_challenge_method")).toBe("S256");
+  });
+
+  it("builds bounded OAuth URLs for the extended provider registry", () => {
+    const microsoft = new URL(
+      buildAuthorizationUrl({
+        codeChallenge: "microsoft-challenge",
+        config,
+        provider: "microsoft",
+        redirectUri,
+        state: "microsoft-state",
+      }),
+    );
+    expect(microsoft.origin + microsoft.pathname).toBe(
+      "https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize",
+    );
+    expect(microsoft.searchParams.get("code_challenge")).toBe(
+      "microsoft-challenge",
+    );
+    expect(microsoft.searchParams.get("scope")?.split(" ")).toContain(
+      "offline_access",
+    );
+
+    const notion = new URL(
+      buildAuthorizationUrl({
+        codeChallenge: "unused",
+        config,
+        provider: "notion",
+        redirectUri,
+        state: "notion-state",
+      }),
+    );
+    expect(notion.origin + notion.pathname).toBe(
+      "https://api.notion.com/v1/oauth/authorize",
+    );
+    expect(notion.searchParams.get("owner")).toBe("user");
+    expect(notion.searchParams.has("scope")).toBe(false);
+
+    const figma = new URL(
+      buildAuthorizationUrl({
+        codeChallenge: "figma-challenge",
+        config,
+        provider: "figma",
+        redirectUri,
+        state: "figma-state",
+      }),
+    );
+    expect(figma.origin + figma.pathname).toBe("https://www.figma.com/oauth");
+    expect(figma.searchParams.get("code_challenge")).toBe("figma-challenge");
+    expect(figma.searchParams.has("code_challenge_method")).toBe(false);
+    expect(figma.toString()).not.toContain(config.clientSecret);
+
+    expect(() =>
+      buildAuthorizationUrl({
+        codeChallenge: "unused",
+        config: { clientId: "trello-key" },
+        provider: "trello",
+        redirectUri,
+        state: "trello-state",
+      }),
+    ).toThrow("Token connection");
+  });
+
+  it("exchanges Microsoft and Notion codes without exposing secrets", async () => {
+    let microsoftCall = 0;
+    const microsoft = await exchangeOAuthCode({
+      code: "microsoft-code",
+      codeVerifier: "microsoft-verifier",
+      config,
+      fetch: async (input, init) => {
+        microsoftCall += 1;
+        if (microsoftCall === 1) {
+          expect(requestUrl(input)).toBe(
+            "https://login.microsoftonline.com/organizations/oauth2/v2.0/token",
+          );
+          expect(formBody(init).get("code_verifier")).toBe(
+            "microsoft-verifier",
+          );
+          expect(requestUrl(input)).not.toContain(config.clientSecret);
+          return json({
+            access_token: "microsoft-access",
+            expires_in: 3600,
+            refresh_token: "microsoft-refresh",
+            scope: "User.Read Mail.Read offline_access",
+            token_type: "Bearer",
+          });
+        }
+        expect(requestUrl(input)).toContain(
+          "https://graph.microsoft.com/v1.0/me",
+        );
+        expect(requestHeaders(init).get("authorization")).toBe(
+          "Bearer microsoft-access",
+        );
+        return json({
+          displayName: "Ryan",
+          id: "microsoft-user",
+          mail: "ryan@example.test",
+        });
+      },
+      provider: "microsoft",
+      redirectUri,
+    });
+    expect(microsoft).toMatchObject({
+      accountId: "microsoft-user",
+      credential: { refreshToken: "microsoft-refresh" },
+      label: "ryan@example.test",
+    });
+
+    const notion = await exchangeOAuthCode({
+      code: "notion-code",
+      codeVerifier: "unused",
+      config,
+      fetch: async (input, init) => {
+        expect(requestUrl(input)).toBe("https://api.notion.com/v1/oauth/token");
+        expect(requestHeaders(init).get("authorization")).toMatch(/^Basic /);
+        expect(jsonBody(init)).toMatchObject({
+          code: "notion-code",
+          grant_type: "authorization_code",
+        });
+        return json({
+          access_token: "notion-access",
+          bot_id: "notion-bot",
+          owner: { user: { id: "notion-user" } },
+          refresh_token: "notion-refresh",
+          token_type: "bearer",
+          workspace_id: "notion-workspace",
+          workspace_name: "One Status",
+        });
+      },
+      provider: "notion",
+      redirectUri,
+    });
+    expect(notion).toMatchObject({
+      accountId: "notion-workspace:notion-user",
+      credential: { refreshToken: "notion-refresh" },
+      expiresAt: null,
+      label: "One Status",
+    });
+  });
+
+  it("uses HTTP Basic for Figma exchange and refresh", async () => {
+    let exchangeCall = 0;
+    const exchanged = await exchangeOAuthCode({
+      code: "figma-code",
+      codeVerifier: "figma-verifier",
+      config,
+      fetch: async (input, init) => {
+        exchangeCall += 1;
+        if (exchangeCall === 1) {
+          expect(requestUrl(input)).toBe("https://api.figma.com/v1/oauth/token");
+          expect(requestHeaders(init).get("authorization")).toMatch(/^Basic /);
+          expect(formBody(init).get("client_id")).toBeNull();
+          expect(formBody(init).get("client_secret")).toBeNull();
+          expect(formBody(init).get("code_verifier")).toBe("figma-verifier");
+          return json({
+            access_token: "figma-access",
+            expires_in: 3600,
+            refresh_token: "figma-refresh",
+            scope: "current_user:read projects:read",
+            token_type: "Bearer",
+          });
+        }
+        expect(requestUrl(input)).toBe("https://api.figma.com/v1/me");
+        return json({ id: "figma-user", handle: "Ryan" });
+      },
+      provider: "figma",
+      redirectUri,
+    });
+    expect(exchanged).toMatchObject({
+      accountId: "figma-user",
+      credential: { refreshToken: "figma-refresh" },
+    });
+
+    const refreshed = await refreshOAuthCredential({
+      config,
+      credential: {
+        accessToken: "old-figma-access",
+        refreshToken: "figma-refresh",
+      },
+      fetch: async (input, init) => {
+        expect(requestUrl(input)).toBe("https://api.figma.com/v1/oauth/refresh");
+        expect(requestHeaders(init).get("authorization")).toMatch(/^Basic /);
+        expect(formBody(init).get("client_id")).toBeNull();
+        expect(formBody(init).get("client_secret")).toBeNull();
+        expect(formBody(init).get("refresh_token")).toBe("figma-refresh");
+        return json({
+          access_token: "new-figma-access",
+          expires_in: 3600,
+          refresh_token: "figma-refresh",
+          token_type: "Bearer",
+        });
+      },
+      provider: "figma",
+    });
+    expect(refreshed.credential.accessToken).toBe("new-figma-access");
+  });
+
+  it("uses Asana revoke parameters and omits Zoom host start URLs", async () => {
+    await revokeOAuthCredential({
+      config,
+      credential: {
+        accessToken: "asana-access",
+        refreshToken: "asana-refresh",
+      },
+      fetch: async (input, init) => {
+        expect(requestUrl(input)).toBe("https://app.asana.com/-/oauth_revoke");
+        expect(requestHeaders(init).has("authorization")).toBe(false);
+        expect(formBody(init).get("client_id")).toBe(config.clientId);
+        expect(formBody(init).get("client_secret")).toBe(config.clientSecret);
+        expect(formBody(init).get("token")).toBe("asana-refresh");
+        return json({});
+      },
+      provider: "asana",
+    });
+
+    const zoom = await executeProviderAction({
+      action: "zoom.meetings.get",
+      arguments: { meetingId: "42" },
+      credential: { accessToken: "zoom-access" },
+      fetch: async () =>
+        json({
+          id: 42,
+          join_url: "https://zoom.example.test/join/42",
+          start_url: "https://zoom.example.test/start/secret-host-token",
+          topic: "Gateway review",
+          uuid: "meeting-uuid",
+        }),
+      provider: "zoom",
+    });
+    expect(zoom.data).toMatchObject({
+      id: "42",
+      joinUrl: "https://zoom.example.test/join/42",
+    });
+    expect(zoom.data).not.toHaveProperty("startUrl");
+    expect(JSON.stringify(zoom.data)).not.toContain("secret-host-token");
+  });
+
+  it("executes extended actions through fixed endpoints and normalized outputs", async () => {
+    const trello = await executeProviderAction({
+      action: "trello.boards.list",
+      arguments: { filter: "open" },
+      config: { clientId: "trello-key" },
+      credential: { accessToken: "trello-token" },
+      fetch: async (input, init) => {
+        const url = requestUrl(input);
+        expect(url).toContain("https://api.trello.com/1/members/me/boards");
+        expect(url).not.toContain("trello-key");
+        expect(url).not.toContain("trello-token");
+        expect(requestHeaders(init).get("authorization")).toContain(
+          'oauth_consumer_key="trello-key"',
+        );
+        return json([
+          {
+            closed: false,
+            id: "board-1",
+            name: "One Status",
+            url: "https://trello.example.test/b/1",
+          },
+        ]);
+      },
+      provider: "trello",
+    });
+    expect(trello.data).toEqual({
+      items: [
+        {
+          closed: false,
+          description: null,
+          id: "board-1",
+          lastActivityAt: null,
+          name: "One Status",
+          url: "https://trello.example.test/b/1",
+        },
+      ],
+    });
+
+    const airtable = await executeProviderAction({
+      action: "airtable.bases.list",
+      arguments: {},
+      credential: { accessToken: "airtable-access" },
+      fetch: async (input, init) => {
+        expect(requestUrl(input)).toBe("https://api.airtable.com/v0/meta/bases");
+        expect(requestHeaders(init).get("authorization")).toBe(
+          "Bearer airtable-access",
+        );
+        return json({
+          bases: [
+            { id: "app123", name: "Roadmap", permissionLevel: "create" },
+          ],
+        });
+      },
+      provider: "airtable",
+    });
+    expect(airtable.data).toEqual({
+      items: [
+        { id: "app123", name: "Roadmap", permissionLevel: "create" },
+      ],
+      nextOffset: null,
+    });
+  });
+
+  it("continues Microsoft and Linear pagination with opaque cursors", async () => {
+    const firstPage = await executeProviderAction({
+      action: "teams.chats.list",
+      arguments: { limit: 50 },
+      credential: { accessToken: "microsoft-access" },
+      fetch: async () =>
+        json({
+          "@odata.nextLink":
+            "https://graph.microsoft.com/v1.0/me/chats?%24select=id%2Ctopic&%24skip=50&%24top=50",
+          value: [{ id: "chat-1", topic: "One Status" }],
+        }),
+      provider: "microsoft",
+    });
+    const nextCursor = (firstPage.data as { nextCursor: string }).nextCursor;
+    expect(nextCursor).toMatch(/^[A-Za-z0-9_-]+$/);
+
+    await executeProviderAction({
+      action: "teams.chats.list",
+      arguments: { cursor: nextCursor, limit: 50 },
+      credential: { accessToken: "microsoft-access" },
+      fetch: async (input) => {
+        const url = new URL(requestUrl(input));
+        expect(url.pathname).toBe("/v1.0/me/chats");
+        expect(url.searchParams.get("$skip")).toBe("50");
+        expect(url.searchParams.get("$top")).toBe("50");
+        return json({ value: [] });
+      },
+      provider: "microsoft",
+    });
+
+    const linear = await executeProviderAction({
+      action: "linear.issues.list",
+      arguments: { after: "linear-page-2", first: 25 },
+      credential: { accessToken: "linear-access" },
+      fetch: async (_input, init) => {
+        expect(jsonBody(init)).toMatchObject({
+          variables: { after: "linear-page-2", first: 25 },
+        });
+        return json({
+          data: {
+            issues: {
+              nodes: [],
+              pageInfo: { endCursor: null, hasNextPage: false },
+            },
+          },
+        });
+      },
+      provider: "linear",
+    });
+    expect(linear.data).toMatchObject({
+      pageInfo: { hasNextPage: false },
+    });
   });
 
   it("exchanges a Google code with PKCE and reads the OpenID profile", async () => {
@@ -593,6 +1010,392 @@ describe("OAuth provider protocols", () => {
         { busy: [], id: "team@example.test" },
       ],
     });
+  });
+
+  it("executes Gmail metadata reads and confirmed-send provider requests", async () => {
+    const listed = await executeProviderAction({
+      action: "gmail.messages.list",
+      arguments: {
+        labelIds: ["INBOX", "STARRED"],
+        maxResults: 10,
+        query: "is:unread newer_than:7d",
+      },
+      credential: { accessToken: "google-access" },
+      fetch: async (input, init) => {
+        const url = new URL(requestUrl(input));
+        expect(url.origin + url.pathname).toBe(
+          "https://gmail.googleapis.com/gmail/v1/users/me/messages",
+        );
+        expect(url.searchParams.getAll("labelIds")).toEqual([
+          "INBOX",
+          "STARRED",
+        ]);
+        expect(url.searchParams.get("maxResults")).toBe("10");
+        expect(url.searchParams.get("q")).toBe("is:unread newer_than:7d");
+        expect(url.searchParams.get("fields")).toBe(
+          "messages(id,threadId),nextPageToken,resultSizeEstimate",
+        );
+        expect(requestHeaders(init).get("authorization")).toBe(
+          "Bearer google-access",
+        );
+        return json(
+          {
+            messages: [
+              {
+                id: "18abc",
+                threadId: "thread-1",
+                untrustedProviderField: "removed",
+              },
+            ],
+            nextPageToken: "page-2",
+            resultSizeEstimate: 1,
+          },
+          200,
+          { "x-request-id": "gmail-list-1" },
+        );
+      },
+      provider: "google",
+    });
+    expect(listed).toEqual({
+      data: {
+        items: [{ id: "18abc", threadId: "thread-1" }],
+        nextPageToken: "page-2",
+        resultSizeEstimate: 1,
+      },
+      providerRequestId: "gmail-list-1",
+    });
+
+    const message = await executeProviderAction({
+      action: "gmail.messages.get",
+      arguments: { messageId: "18abc" },
+      credential: { accessToken: "google-access" },
+      fetch: async (input) => {
+        const url = new URL(requestUrl(input));
+        expect(url.pathname).toBe("/gmail/v1/users/me/messages/18abc");
+        expect(url.searchParams.get("format")).toBe("metadata");
+        expect(url.searchParams.getAll("metadataHeaders")).toEqual([
+          "From",
+          "To",
+          "Cc",
+          "Bcc",
+          "Subject",
+          "Date",
+          "Message-ID",
+          "Reply-To",
+        ]);
+        return json({
+          id: "18abc",
+          internalDate: "1786240800000",
+          labelIds: ["INBOX", "UNREAD"],
+          payload: {
+            headers: [
+              { name: "From", value: "sender@example.test" },
+              { name: "To", value: "ryan@example.test" },
+              { name: "Subject", value: "One Status update" },
+              { name: "X-Untrusted", value: "removed" },
+            ],
+            body: { data: "must-not-reach-agent" },
+          },
+          sizeEstimate: 2048,
+          snippet: "The Google Workspace actions are ready.",
+          threadId: "thread-1",
+          untrustedProviderField: "removed",
+        });
+      },
+      provider: "google",
+    });
+    expect(message.data).toEqual({
+      headers: {
+        bcc: null,
+        cc: null,
+        date: null,
+        from: "sender@example.test",
+        messageId: null,
+        replyTo: null,
+        subject: "One Status update",
+        to: "ryan@example.test",
+      },
+      id: "18abc",
+      internalDate: "1786240800000",
+      labelIds: ["INBOX", "UNREAD"],
+      sizeEstimate: 2048,
+      snippet: "The Google Workspace actions are ready.",
+      threadId: "thread-1",
+    });
+    expect(message.data).not.toHaveProperty("payload");
+
+    const sent = await executeProviderAction({
+      action: "gmail.messages.send",
+      arguments: {
+        cc: ["reviewer@example.test"],
+        subject: "One Status 邮件",
+        textBody: "Gateway write confirmed.\nSecond line.",
+        to: ["owner@example.test"],
+      },
+      credential: { accessToken: "google-access" },
+      fetch: async (input, init) => {
+        const url = new URL(requestUrl(input));
+        expect(url.origin + url.pathname).toBe(
+          "https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
+        );
+        expect(init?.method).toBe("POST");
+        expect(requestHeaders(init).get("content-type")).toBe(
+          "application/json",
+        );
+        const raw = (jsonBody(init) as { raw: string }).raw;
+        const mime = Buffer.from(raw, "base64url").toString("utf8");
+        expect(mime).toContain("To: owner@example.test");
+        expect(mime).toContain("Cc: reviewer@example.test");
+        expect(mime).toContain("Subject: =?UTF-8?B?");
+        const encodedBody = mime.split("\r\n\r\n")[1]?.replace(/\r\n/g, "");
+        expect(Buffer.from(encodedBody ?? "", "base64").toString("utf8")).toBe(
+          "Gateway write confirmed.\r\nSecond line.",
+        );
+        return json({
+          id: "18sent",
+          labelIds: ["SENT"],
+          threadId: "thread-sent",
+          untrustedProviderField: "removed",
+        });
+      },
+      provider: "google",
+    });
+    expect(sent.data).toEqual({
+      id: "18sent",
+      labelIds: ["SENT"],
+      threadId: "thread-sent",
+    });
+  });
+
+  it("executes Drive metadata and Docs text reads with bounded output", async () => {
+    const listed = await executeProviderAction({
+      action: "drive.files.list",
+      arguments: {
+        orderBy: "name",
+        pageSize: 25,
+        query: "mimeType = 'application/vnd.google-apps.document'",
+      },
+      credential: { accessToken: "google-access" },
+      fetch: async (input) => {
+        const url = new URL(requestUrl(input));
+        expect(url.origin + url.pathname).toBe(
+          "https://www.googleapis.com/drive/v3/files",
+        );
+        expect(url.searchParams.get("pageSize")).toBe("25");
+        expect(url.searchParams.get("orderBy")).toBe("name");
+        expect(url.searchParams.get("supportsAllDrives")).toBe("true");
+        expect(url.searchParams.get("fields")).toContain(
+          "files(id,name,mimeType",
+        );
+        return json({
+          files: [
+            {
+              createdTime: "2026-08-01T00:00:00Z",
+              id: "doc-1",
+              mimeType: "application/vnd.google-apps.document",
+              modifiedTime: "2026-08-09T00:00:00Z",
+              name: "One Status plan",
+              owners: [
+                {
+                  displayName: "Ryan",
+                  emailAddress: "ryan@example.test",
+                  me: true,
+                },
+              ],
+              parents: ["folder-1"],
+              shared: false,
+              starred: true,
+              trashed: false,
+              webViewLink: "https://docs.google.com/document/d/doc-1/edit",
+              untrustedProviderField: "removed",
+            },
+          ],
+          nextPageToken: "drive-page-2",
+        });
+      },
+      provider: "google",
+    });
+    expect(listed.data).toEqual({
+      items: [
+        {
+          createdAt: "2026-08-01T00:00:00Z",
+          driveId: null,
+          id: "doc-1",
+          mimeType: "application/vnd.google-apps.document",
+          modifiedAt: "2026-08-09T00:00:00Z",
+          name: "One Status plan",
+          owners: [
+            {
+              displayName: "Ryan",
+              emailAddress: "ryan@example.test",
+              me: true,
+            },
+          ],
+          parentIds: ["folder-1"],
+          shared: false,
+          sizeBytes: null,
+          starred: true,
+          trashed: false,
+          webViewUrl: "https://docs.google.com/document/d/doc-1/edit",
+        },
+      ],
+      nextPageToken: "drive-page-2",
+    });
+
+    const file = await executeProviderAction({
+      action: "drive.files.get",
+      arguments: { fileId: "binary-1" },
+      credential: { accessToken: "google-access" },
+      fetch: async (input) => {
+        const url = new URL(requestUrl(input));
+        expect(url.pathname).toBe("/drive/v3/files/binary-1");
+        expect(url.searchParams.get("fields")).toContain("id,name,mimeType");
+        return json({
+          id: "binary-1",
+          mimeType: "application/pdf",
+          name: "architecture.pdf",
+          size: "4096",
+        });
+      },
+      provider: "google",
+    });
+    expect(file.data).toMatchObject({
+      id: "binary-1",
+      name: "architecture.pdf",
+      sizeBytes: "4096",
+    });
+
+    const document = await executeProviderAction({
+      action: "docs.documents.get",
+      arguments: { documentId: "doc-1" },
+      credential: { accessToken: "google-access" },
+      fetch: async (input) => {
+        const url = new URL(requestUrl(input));
+        expect(url.origin + url.pathname).toBe(
+          "https://docs.googleapis.com/v1/documents/doc-1",
+        );
+        expect(url.searchParams.get("includeTabsContent")).toBe("true");
+        return json({
+          documentId: "doc-1",
+          revisionId: "revision-7",
+          tabs: [
+            {
+              childTabs: [
+                {
+                  documentTab: {
+                    body: {
+                      content: [
+                        {
+                          paragraph: {
+                            elements: [
+                              { textRun: { content: "Child notes\n" } },
+                            ],
+                          },
+                        },
+                      ],
+                    },
+                  },
+                  tabProperties: {
+                    parentTabId: "tab-main",
+                    tabId: "tab-child",
+                    title: "Notes",
+                  },
+                },
+              ],
+              documentTab: {
+                body: {
+                  content: [
+                    {
+                      paragraph: {
+                        elements: [
+                          { textRun: { content: "One Status plan\n" } },
+                        ],
+                      },
+                    },
+                    {
+                      table: {
+                        tableRows: [
+                          {
+                            tableCells: [
+                              {
+                                content: [
+                                  {
+                                    paragraph: {
+                                      elements: [
+                                        {
+                                          textRun: {
+                                            content: "Gateway actions\n",
+                                          },
+                                        },
+                                      ],
+                                    },
+                                  },
+                                ],
+                              },
+                            ],
+                          },
+                        ],
+                      },
+                    },
+                  ],
+                },
+              },
+              tabProperties: { tabId: "tab-main", title: "Overview" },
+              untrustedProviderField: "removed",
+            },
+          ],
+          title: "One Status",
+          untrustedProviderField: "removed",
+        });
+      },
+      provider: "google",
+    });
+    expect(document.data).toEqual({
+      documentId: "doc-1",
+      revisionId: "revision-7",
+      tabs: [
+        {
+          id: "tab-main",
+          parentId: null,
+          text: "One Status plan\nGateway actions\n",
+          title: "Overview",
+          truncated: false,
+        },
+        {
+          id: "tab-child",
+          parentId: "tab-main",
+          text: "Child notes\n",
+          title: "Notes",
+          truncated: false,
+        },
+      ],
+      title: "One Status",
+      truncated: false,
+    });
+
+    const longDocument = await executeProviderAction({
+      action: "docs.documents.get",
+      arguments: { documentId: "doc-long" },
+      credential: { accessToken: "google-access" },
+      fetch: async () =>
+        json({
+          body: {
+            content: [
+              {
+                paragraph: {
+                  elements: [{ textRun: { content: "x".repeat(100_100) } }],
+                },
+              },
+            ],
+          },
+          documentId: "doc-long",
+          title: "Long document",
+        }),
+      provider: "google",
+    });
+    expect((longDocument.data as { tabs: Array<{ text: string }> }).tabs[0]?.text)
+      .toHaveLength(100_000);
+    expect(longDocument.data).toMatchObject({ truncated: true });
   });
 
   it("executes the expanded GitHub repository actions", async () => {

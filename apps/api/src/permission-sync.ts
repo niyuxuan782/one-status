@@ -1,4 +1,5 @@
 import {
+  createHash,
   createCipheriv,
   createDecipheriv,
   hkdfSync,
@@ -47,7 +48,8 @@ export class PermissionSyncService {
 
   async #run<T>(operation: () => Promise<T> | T): Promise<T> {
     const context = await this.loadContext();
-    let syncedAt = await this.#reconcile(context);
+    let base = await this.#reconcile(context);
+    let localBaseline = this.vault.exportBundle(context.userId);
     try {
       try {
         return await operation();
@@ -61,9 +63,10 @@ export class PermissionSyncService {
         for (const delay of this.options.refreshRetryDelaysMs ??
           DEFAULT_REFRESH_RETRY_DELAYS_MS) {
           await (this.options.sleep ?? sleep)(delay);
-          const reconciledAt = await this.#reconcile(context);
-          if (Date.parse(reconciledAt) > Date.parse(syncedAt)) {
-            syncedAt = reconciledAt;
+          const reconciled = await this.#reconcile(context);
+          if (bundleFingerprint(reconciled) !== bundleFingerprint(base)) {
+            base = reconciled;
+            localBaseline = this.vault.exportBundle(context.userId);
             return await operation();
           }
         }
@@ -71,14 +74,15 @@ export class PermissionSyncService {
       }
     } finally {
       const local = this.vault.exportBundle(context.userId);
-      if (Date.parse(local.updatedAt) > Date.parse(syncedAt)) {
-        await this.#push(context, local);
-        syncedAt = local.updatedAt;
+      if (bundleFingerprint(local) !== bundleFingerprint(localBaseline)) {
+        await this.#push(context, base, local);
       }
     }
   }
 
-  async #reconcile(context: PermissionSyncContext): Promise<string> {
+  async #reconcile(
+    context: PermissionSyncContext,
+  ): Promise<PermissionVaultBundle> {
     const snapshot = await this.backend.getSnapshot();
     if (snapshot.profile.userId !== context.userId) {
       throw new Error("Permission Vault sync account does not match the profile.");
@@ -87,43 +91,39 @@ export class PermissionSyncService {
     const envelope = snapshot.status.permissions.vault;
     if (!envelope) {
       if (local.updatedAt !== EMPTY_UPDATED_AT) {
-        await this.#push(context, local);
-        return local.updatedAt;
+        return this.#push(context, emptyBundle(), local);
       }
-      return EMPTY_UPDATED_AT;
+      return local;
     }
 
     const remote = decryptBundle(envelope, context);
     if (remote.updatedAt !== envelope.updatedAt) {
       throw new PermissionVaultSyncError();
     }
-    const remoteTime = Date.parse(remote.updatedAt);
-    const localTime = Date.parse(local.updatedAt);
-    if (remoteTime > localTime) {
-      this.vault.importBundle(context.userId, remote);
-      return remote.updatedAt;
-    }
-    if (localTime > remoteTime) {
-      await this.#push(context, local);
-      return local.updatedAt;
-    }
-    return remote.updatedAt;
+    this.vault.importBundle(context.userId, remote);
+    return remote;
   }
 
   async #push(
     context: PermissionSyncContext,
-    bundle: PermissionVaultBundle,
-  ): Promise<void> {
-    const envelope = encryptBundle(bundle, context);
+    base: PermissionVaultBundle,
+    local: PermissionVaultBundle,
+  ): Promise<PermissionVaultBundle> {
+    let published: PermissionVaultBundle | undefined;
     await this.backend.mutateStatus((status) => {
-      const current = status.permissions.vault;
-      if (
-        !current ||
-        Date.parse(envelope.updatedAt) >= Date.parse(current.updatedAt)
-      ) {
-        status.permissions.vault = envelope;
+      const currentEnvelope = status.permissions.vault;
+      const current = currentEnvelope
+        ? decryptBundle(currentEnvelope, context)
+        : emptyBundle();
+      if (currentEnvelope && current.updatedAt !== currentEnvelope.updatedAt) {
+        throw new PermissionVaultSyncError();
       }
+      published = mergePermissionBundles(base, local, current);
+      status.permissions.vault = encryptBundle(published, context);
     });
+    if (!published) throw new PermissionVaultSyncError();
+    this.vault.importBundle(context.userId, published);
+    return published;
   }
 }
 
@@ -202,4 +202,114 @@ function additionalData(userId: string, updatedAt: string): Buffer {
     `one-status/permission-vault-sync-v1/user:${userId}/updated:${updatedAt}`,
     "utf8",
   );
+}
+
+function emptyBundle(): PermissionVaultBundle {
+  return {
+    connections: [],
+    format: "one-status.permission-vault-bundle",
+    grants: [],
+    providers: [],
+    updatedAt: EMPTY_UPDATED_AT,
+    version: 1,
+  };
+}
+
+function mergePermissionBundles(
+  base: PermissionVaultBundle,
+  local: PermissionVaultBundle,
+  remote: PermissionVaultBundle,
+): PermissionVaultBundle {
+  const connections = mergeRecords(
+    base.connections,
+    local.connections,
+    remote.connections,
+    (entry) => entry.id,
+  );
+  const connectionIds = new Set(connections.map((entry) => entry.id));
+  return {
+    connections,
+    format: "one-status.permission-vault-bundle",
+    grants: mergeRecords(
+      base.grants,
+      local.grants,
+      remote.grants,
+      (entry) => `${entry.connectionId}\u0000${entry.agentId}`,
+    ).filter((entry) => connectionIds.has(entry.connectionId)),
+    providers: mergeRecords(
+      base.providers,
+      local.providers,
+      remote.providers,
+      (entry) => entry.provider,
+    ),
+    updatedAt: nextUpdatedAt(
+      base.updatedAt,
+      local.updatedAt,
+      remote.updatedAt,
+    ),
+    version: 1,
+  };
+}
+
+function mergeRecords<T>(
+  base: readonly T[],
+  local: readonly T[],
+  remote: readonly T[],
+  key: (entry: T) => string,
+): T[] {
+  const baseByKey = new Map(base.map((entry) => [key(entry), entry]));
+  const localByKey = new Map(local.map((entry) => [key(entry), entry]));
+  const remoteByKey = new Map(remote.map((entry) => [key(entry), entry]));
+  const keys = new Set([
+    ...baseByKey.keys(),
+    ...localByKey.keys(),
+    ...remoteByKey.keys(),
+  ]);
+  const merged: T[] = [];
+  for (const recordKey of [...keys].sort()) {
+    const baseEntry = baseByKey.get(recordKey);
+    const localEntry = localByKey.get(recordKey);
+    const remoteEntry = remoteByKey.get(recordKey);
+    const localChanged = !sameRecord(localEntry, baseEntry);
+    const remoteChanged = !sameRecord(remoteEntry, baseEntry);
+    const selected = !localChanged
+      ? remoteEntry
+      : !remoteChanged || sameRecord(localEntry, remoteEntry)
+        ? localEntry
+        : localEntry === undefined || remoteEntry === undefined
+          ? undefined
+          : remoteEntry;
+    if (selected !== undefined) merged.push(selected);
+  }
+  return merged;
+}
+
+function sameRecord(left: unknown, right: unknown): boolean {
+  return stableJson(left) === stableJson(right);
+}
+
+function bundleFingerprint(bundle: PermissionVaultBundle): string {
+  return createHash("sha256")
+    .update(stableJson(bundle), "utf8")
+    .digest("hex");
+}
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .filter(([, entry]) => entry !== undefined)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, entry]) => `${JSON.stringify(key)}:${stableJson(entry)}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "undefined";
+}
+
+function nextUpdatedAt(...values: string[]): string {
+  const latest = Math.max(
+    Date.now(),
+    ...values.map((value) => Date.parse(value)).filter(Number.isFinite),
+  );
+  return new Date(latest + 1).toISOString();
 }

@@ -20,13 +20,20 @@ import {
 } from "./dashboard.js";
 import { ProviderRequestError } from "./oauth-providers.js";
 import {
+  ToolApprovalError,
   ToolConnectionExpiredError,
   ToolPermissionDeniedError,
 } from "./tool-gateway.js";
 
 export interface CreateAppOptions {
   authRateLimit?: false | AuthRateLimitOptions;
-  dashboard?: Omit<DashboardRuntime, "authenticateDevice">;
+  dashboard?: Omit<
+    DashboardRuntime,
+    | "authenticateAgent"
+    | "authenticateDevice"
+    | "issueAgentCredential"
+    | "revokeAgentCredential"
+  >;
   dbPath: string;
   logger?: boolean;
   releaseId?: string;
@@ -108,6 +115,11 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
         error: { code: "tool_permission_denied", message: error.message },
       });
     }
+    if (error instanceof ToolApprovalError) {
+      return reply.code(409).send({
+        error: { code: "tool_approval_required", message: error.message },
+      });
+    }
     if (error instanceof ToolConnectionExpiredError) {
       return reply.code(409).send({
         error: {
@@ -160,10 +172,20 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
   if (options.dashboard) {
     registerDashboardRoutes(app, {
       ...options.dashboard,
+      authenticateAgent: (authorization) => {
+        const token = readBearerToken(authorization);
+        return token
+          ? (database.authenticateAgent(token) ?? undefined)
+          : undefined;
+      },
       authenticateDevice: (authorization) => {
         const token = readBearerToken(authorization);
         return token ? (database.authenticate(token) ?? undefined) : undefined;
       },
+      issueAgentCredential: (session, agentId) =>
+        database.issueAgentCredential(session, agentId),
+      revokeAgentCredential: (userId, deviceId, credentialId) =>
+        database.revokeAgentCredential(userId, deviceId, credentialId),
     });
   } else {
     app.get("/", async () => ({

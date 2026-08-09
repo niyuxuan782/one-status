@@ -6,9 +6,32 @@ import {
   type OAuthProvider,
   type OAuthProviderConfig,
 } from "./permission-vault.js";
+import { ProviderRequestError } from "./provider-errors.js";
+import {
+  providerExtensionCatalog,
+  requireProviderExtension,
+} from "./provider-extensions/index.js";
+
+export { ProviderRequestError } from "./provider-errors.js";
 
 const REQUEST_TIMEOUT_MS = 15_000;
 const PROVIDER_RESPONSE_MAX_BYTES = 1024 * 1024;
+const GOOGLE_DOC_TEXT_MAX_CHARS = 100_000;
+const GOOGLE_DOC_MAX_TABS = 50;
+const GOOGLE_DOC_MAX_STRUCTURAL_ELEMENTS = 10_000;
+const GMAIL_METADATA_HEADERS = [
+  "From",
+  "To",
+  "Cc",
+  "Bcc",
+  "Subject",
+  "Date",
+  "Message-ID",
+  "Reply-To",
+] as const;
+const GOOGLE_DRIVE_FILE_FIELDS =
+  "id,name,mimeType,createdTime,modifiedTime,size,webViewLink,shared,starred," +
+  "trashed,parents,driveId,owners(displayName,emailAddress,me)";
 
 export type ProviderFetch = (
   input: string | URL | Request,
@@ -27,8 +50,10 @@ export interface ProviderAction {
 export interface ProviderDefinition {
   actions: ProviderAction[];
   accent: string;
+  authMode?: "oauth2" | "token";
   requiresSecret: boolean;
   description: string;
+  documentationUrl?: string;
   id: OAuthProvider;
   label: string;
   requiresPkce: boolean;
@@ -82,36 +107,11 @@ function compactActionInputSchema(
   return compact(schema) as Record<string, unknown>;
 }
 
-export class ProviderRequestError extends Error {
-  constructor(
-    message: string,
-    readonly code: string,
-    readonly status?: number,
-  ) {
-    super(message);
-    this.name = "ProviderRequestError";
-  }
-
-  get authorizationInvalid(): boolean {
-    return (
-      this.status === 401 ||
-      [
-        "account_inactive",
-        "invalid_auth",
-        "invalid_grant",
-        "not_authed",
-        "token_expired",
-        "token_revoked",
-      ].includes(this.code)
-    );
-  }
-}
-
-export const providerCatalog: Record<OAuthProvider, ProviderDefinition> = {
+export const providerCatalog = validateProviderCatalog({
   google: {
     id: "google",
-    label: "Google Calendar",
-    description: "读取日历和即将开始的日程。",
+    label: "Google Workspace",
+    description: "读取 Calendar、Gmail、Drive 和 Docs，并在用户确认后发送邮件。",
     accent: "#4285f4",
     requiresPkce: true,
     requiresSecret: true,
@@ -120,6 +120,10 @@ export const providerCatalog: Record<OAuthProvider, ProviderDefinition> = {
       "email",
       "profile",
       "https://www.googleapis.com/auth/calendar.readonly",
+      "https://www.googleapis.com/auth/gmail.readonly",
+      "https://www.googleapis.com/auth/gmail.send",
+      "https://www.googleapis.com/auth/drive.metadata.readonly",
+      "https://www.googleapis.com/auth/documents.readonly",
     ],
     actions: [
       {
@@ -162,6 +166,58 @@ export const providerCatalog: Record<OAuthProvider, ProviderDefinition> = {
         ],
         requiresConfirmation: false,
       },
+      {
+        id: "gmail.messages.list",
+        title: "读取 Gmail 邮件列表",
+        description: "按查询条件读取邮件 ID、会话 ID 和分页信息。",
+        readOnly: true,
+        requiredScopes: ["https://www.googleapis.com/auth/gmail.readonly"],
+        requiresConfirmation: false,
+      },
+      {
+        id: "gmail.messages.get",
+        title: "读取 Gmail 邮件元数据",
+        description: "读取单封邮件的发件人、收件人、主题、标签和摘要。",
+        readOnly: true,
+        requiredScopes: ["https://www.googleapis.com/auth/gmail.readonly"],
+        requiresConfirmation: false,
+      },
+      {
+        id: "gmail.messages.send",
+        title: "发送 Gmail 邮件",
+        description: "以当前 Google 账号发送纯文本邮件。",
+        readOnly: false,
+        requiredScopes: ["https://www.googleapis.com/auth/gmail.send"],
+        requiresConfirmation: true,
+      },
+      {
+        id: "drive.files.list",
+        title: "读取 Google Drive 文件列表",
+        description: "按固定字段和查询条件读取 Drive 文件元数据。",
+        readOnly: true,
+        requiredScopes: [
+          "https://www.googleapis.com/auth/drive.metadata.readonly",
+        ],
+        requiresConfirmation: false,
+      },
+      {
+        id: "drive.files.get",
+        title: "读取 Google Drive 文件元数据",
+        description: "按文件 ID 读取 Drive 文件的受控元数据。",
+        readOnly: true,
+        requiredScopes: [
+          "https://www.googleapis.com/auth/drive.metadata.readonly",
+        ],
+        requiresConfirmation: false,
+      },
+      {
+        id: "docs.documents.get",
+        title: "读取 Google Docs 文档",
+        description: "按文档 ID 读取标题、Tab 和经过长度限制的纯文本正文。",
+        readOnly: true,
+        requiredScopes: ["https://www.googleapis.com/auth/documents.readonly"],
+        requiresConfirmation: false,
+      },
     ],
   },
   github: {
@@ -171,7 +227,7 @@ export const providerCatalog: Record<OAuthProvider, ProviderDefinition> = {
     accent: "#24292f",
     requiresPkce: false,
     requiresSecret: true,
-    scopes: ["read:user", "user:email", "repo"],
+    scopes: ["read:user", "repo"],
     actions: [
       {
         id: "github.viewer.get",
@@ -273,7 +329,25 @@ export const providerCatalog: Record<OAuthProvider, ProviderDefinition> = {
       },
     ],
   },
-};
+  ...providerExtensionCatalog,
+});
+
+function validateProviderCatalog(
+  catalog: Record<string, ProviderDefinition>,
+): Record<OAuthProvider, ProviderDefinition> {
+  const expected = new Set<string>(oauthProviders);
+  for (const provider of oauthProviders) {
+    if (!catalog[provider]) {
+      throw new Error(`Provider catalog is missing ${provider}.`);
+    }
+  }
+  for (const provider of Object.keys(catalog)) {
+    if (!expected.has(provider)) {
+      throw new Error(`Provider catalog contains unknown provider ${provider}.`);
+    }
+  }
+  return Object.freeze(catalog) as Record<OAuthProvider, ProviderDefinition>;
+}
 
 export function parseOAuthProvider(value: string): OAuthProvider {
   if ((oauthProviders as readonly string[]).includes(value)) {
@@ -316,17 +390,20 @@ export function buildAuthorizationUrl(input: {
     });
     return url.toString();
   }
-  const url = new URL("https://slack.com/oauth/v2/authorize");
-  addQuery(url, {
-    client_id: input.config.clientId,
-    code_challenge: input.codeChallenge,
-    code_challenge_method: "S256",
-    redirect_uri: input.redirectUri,
-    state: input.state,
-    user_scope: definition.scopes.join(","),
-  });
-  url.searchParams.set("scope", "");
-  return url.toString();
+  if (input.provider === "slack") {
+    const url = new URL("https://slack.com/oauth/v2/authorize");
+    addQuery(url, {
+      client_id: input.config.clientId,
+      code_challenge: input.codeChallenge,
+      code_challenge_method: "S256",
+      redirect_uri: input.redirectUri,
+      state: input.state,
+      user_scope: definition.scopes.join(","),
+    });
+    url.searchParams.set("scope", "");
+    return url.toString();
+  }
+  return requireProviderExtension(input.provider).buildAuthorizationUrl(input);
 }
 
 export async function exchangeOAuthCode(input: {
@@ -339,7 +416,8 @@ export async function exchangeOAuthCode(input: {
 }): Promise<OAuthExchangeResult> {
   if (input.provider === "google") return exchangeGoogle(input);
   if (input.provider === "github") return exchangeGitHub(input);
-  return exchangeSlack(input);
+  if (input.provider === "slack") return exchangeSlack(input);
+  return requireProviderExtension(input.provider).exchangeOAuthCode(input);
 }
 
 export async function refreshOAuthCredential(input: {
@@ -352,6 +430,9 @@ export async function refreshOAuthCredential(input: {
   expiresAt: string | null;
   scopes?: string[];
 }> {
+  if (!isCoreProvider(input.provider)) {
+    return requireProviderExtension(input.provider).refreshCredential(input);
+  }
   if (!input.credential.refreshToken) {
     throw new Error("The provider did not issue a refresh token.");
   }
@@ -420,6 +501,9 @@ export async function revokeOAuthCredential(input: {
   fetch?: ProviderFetch;
   provider: OAuthProvider;
 }): Promise<void> {
+  if (!isCoreProvider(input.provider)) {
+    return requireProviderExtension(input.provider).revokeCredential(input);
+  }
   const fetch_ = input.fetch ?? globalThis.fetch;
   let response: Response;
   if (input.provider === "google") {
@@ -474,10 +558,14 @@ export async function revokeOAuthCredential(input: {
 export async function executeProviderAction(input: {
   action: string;
   arguments: unknown;
+  config?: OAuthProviderConfig;
   credential: OAuthCredential;
   fetch?: ProviderFetch;
   provider: OAuthProvider;
 }): Promise<ToolExecutionResult> {
+  if (!isCoreProvider(input.provider)) {
+    return requireProviderExtension(input.provider).executeAction(input);
+  }
   const token = input.credential.accessToken;
   if (input.provider === "google" && input.action === "calendar.events.list") {
     const arguments_ = googleEventsArgumentsSchema.parse(input.arguments ?? {});
@@ -604,6 +692,139 @@ export async function executeProviderAction(input: {
         timeMax: body.timeMax,
         timeMin: body.timeMin,
       },
+      providerRequestId: response.requestId,
+    };
+  }
+  if (input.provider === "google" && input.action === "gmail.messages.list") {
+    const arguments_ = gmailMessagesListArgumentsSchema.parse(
+      input.arguments ?? {},
+    );
+    const url = new URL(
+      "https://gmail.googleapis.com/gmail/v1/users/me/messages",
+    );
+    addQuery(url, {
+      fields: "messages(id,threadId),nextPageToken,resultSizeEstimate",
+      includeSpamTrash: String(arguments_.includeSpamTrash),
+      maxResults: String(arguments_.maxResults),
+      pageToken: arguments_.pageToken,
+      q: arguments_.query,
+    });
+    for (const labelId of arguments_.labelIds ?? []) {
+      url.searchParams.append("labelIds", labelId);
+    }
+    const response = await providerFetch(input.fetch, url, token);
+    const body = parseProviderPayload(gmailMessagesListResponseSchema, response.body);
+    return {
+      data: gmailMessagesListOutputSchema.parse({
+        items: body.messages.map((message) => ({
+          id: message.id,
+          threadId: message.threadId,
+        })),
+        nextPageToken: body.nextPageToken ?? null,
+        resultSizeEstimate: body.resultSizeEstimate ?? 0,
+      }),
+      providerRequestId: response.requestId,
+    };
+  }
+  if (input.provider === "google" && input.action === "gmail.messages.get") {
+    const arguments_ = gmailMessageGetArgumentsSchema.parse(
+      input.arguments ?? {},
+    );
+    const url = new URL(
+      "https://gmail.googleapis.com/gmail/v1/users/me/messages/" +
+        encodeURIComponent(arguments_.messageId),
+    );
+    addQuery(url, {
+      fields:
+        "id,threadId,labelIds,snippet,internalDate,sizeEstimate,payload(headers)",
+      format: "metadata",
+    });
+    for (const header of GMAIL_METADATA_HEADERS) {
+      url.searchParams.append("metadataHeaders", header);
+    }
+    const response = await providerFetch(input.fetch, url, token);
+    const body = parseProviderPayload(gmailMessageResponseSchema, response.body);
+    return {
+      data: normalizeGmailMessage(body),
+      providerRequestId: response.requestId,
+    };
+  }
+  if (input.provider === "google" && input.action === "gmail.messages.send") {
+    const arguments_ = gmailMessageSendArgumentsSchema.parse(
+      input.arguments ?? {},
+    );
+    const url = new URL(
+      "https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
+    );
+    addQuery(url, { fields: "id,threadId,labelIds" });
+    const response = await providerFetch(input.fetch, url, token, {
+      body: JSON.stringify({ raw: buildGmailRawMessage(arguments_) }),
+      headers: { "content-type": "application/json" },
+      method: "POST",
+    });
+    const body = parseProviderPayload(gmailMessageResponseSchema, response.body);
+    return {
+      data: gmailMessageSendOutputSchema.parse({
+        id: body.id,
+        labelIds: body.labelIds ?? [],
+        threadId: body.threadId,
+      }),
+      providerRequestId: response.requestId,
+    };
+  }
+  if (input.provider === "google" && input.action === "drive.files.list") {
+    const arguments_ = driveFilesListArgumentsSchema.parse(
+      input.arguments ?? {},
+    );
+    const url = new URL("https://www.googleapis.com/drive/v3/files");
+    addQuery(url, {
+      fields: `nextPageToken,files(${GOOGLE_DRIVE_FILE_FIELDS})`,
+      includeItemsFromAllDrives: "true",
+      orderBy: arguments_.orderBy,
+      pageSize: String(arguments_.pageSize),
+      pageToken: arguments_.pageToken,
+      q: arguments_.query,
+      spaces: "drive",
+      supportsAllDrives: "true",
+    });
+    const response = await providerFetch(input.fetch, url, token);
+    const body = parseProviderPayload(driveFilesListResponseSchema, response.body);
+    return {
+      data: driveFilesListOutputSchema.parse({
+        items: body.files.map(normalizeDriveFile),
+        nextPageToken: body.nextPageToken ?? null,
+      }),
+      providerRequestId: response.requestId,
+    };
+  }
+  if (input.provider === "google" && input.action === "drive.files.get") {
+    const arguments_ = driveFileGetArgumentsSchema.parse(input.arguments ?? {});
+    const url = new URL(
+      "https://www.googleapis.com/drive/v3/files/" +
+        encodeURIComponent(arguments_.fileId),
+    );
+    addQuery(url, {
+      fields: GOOGLE_DRIVE_FILE_FIELDS,
+      supportsAllDrives: "true",
+    });
+    const response = await providerFetch(input.fetch, url, token);
+    const body = parseProviderPayload(driveFileSchema, response.body);
+    return {
+      data: normalizeDriveFile(body),
+      providerRequestId: response.requestId,
+    };
+  }
+  if (input.provider === "google" && input.action === "docs.documents.get") {
+    const arguments_ = googleDocsGetArgumentsSchema.parse(input.arguments ?? {});
+    const url = new URL(
+      "https://docs.googleapis.com/v1/documents/" +
+        encodeURIComponent(arguments_.documentId),
+    );
+    addQuery(url, { includeTabsContent: "true" });
+    const response = await providerFetch(input.fetch, url, token);
+    const body = parseProviderPayload(googleDocsDocumentSchema, response.body);
+    return {
+      data: normalizeGoogleDocument(body),
       providerRequestId: response.requestId,
     };
   }
@@ -1534,6 +1755,321 @@ const googleFreeBusyResponseSchema = z
   })
   .passthrough();
 
+const googleResourceIdSchema = z
+  .string()
+  .min(1)
+  .max(1_000)
+  .regex(/^[A-Za-z0-9_-]+$/);
+const googleTabIdSchema = z
+  .string()
+  .min(1)
+  .max(1_000)
+  .regex(/^[A-Za-z0-9._:-]+$/);
+const gmailLabelIdSchema = z.string().min(1).max(500);
+
+const gmailMessagesListArgumentsSchema = z
+  .object({
+    includeSpamTrash: z.boolean().default(false),
+    labelIds: z.array(gmailLabelIdSchema).max(20).optional(),
+    maxResults: z.number().int().min(1).max(50).default(20),
+    pageToken: z.string().max(4_000).optional(),
+    query: z.string().min(1).max(5_000).optional(),
+  })
+  .strict();
+
+const gmailMessageReferenceSchema = z
+  .object({
+    id: googleResourceIdSchema,
+    threadId: googleResourceIdSchema,
+  })
+  .passthrough();
+
+const gmailMessagesListResponseSchema = z
+  .object({
+    messages: z.array(gmailMessageReferenceSchema).max(50).default([]),
+    nextPageToken: z.string().max(4_000).optional(),
+    resultSizeEstimate: z.number().int().nonnegative().optional(),
+  })
+  .passthrough();
+
+const gmailMessageReferenceOutputSchema = z
+  .object({
+    id: googleResourceIdSchema,
+    threadId: googleResourceIdSchema,
+  })
+  .strict();
+
+const gmailMessagesListOutputSchema = z
+  .object({
+    items: z.array(gmailMessageReferenceOutputSchema).max(50),
+    nextPageToken: z.string().max(4_000).nullable(),
+    resultSizeEstimate: z.number().int().nonnegative(),
+  })
+  .strict();
+
+const gmailMessageGetArgumentsSchema = z
+  .object({ messageId: googleResourceIdSchema })
+  .strict();
+
+const gmailHeaderSchema = z
+  .object({
+    name: z.string().min(1).max(500),
+    value: z.string().max(10_000),
+  })
+  .passthrough();
+
+const gmailMessageResponseSchema = z
+  .object({
+    id: googleResourceIdSchema,
+    internalDate: z.string().max(100).optional(),
+    labelIds: z.array(gmailLabelIdSchema).max(100).default([]),
+    payload: z
+      .object({ headers: z.array(gmailHeaderSchema).max(100).default([]) })
+      .passthrough()
+      .optional(),
+    sizeEstimate: z.number().int().nonnegative().optional(),
+    snippet: z.string().max(10_000).optional(),
+    threadId: googleResourceIdSchema,
+  })
+  .passthrough();
+
+const gmailMessageHeadersOutputSchema = z
+  .object({
+    bcc: z.string().max(2_000).nullable(),
+    cc: z.string().max(2_000).nullable(),
+    date: z.string().max(2_000).nullable(),
+    from: z.string().max(2_000).nullable(),
+    messageId: z.string().max(2_000).nullable(),
+    replyTo: z.string().max(2_000).nullable(),
+    subject: z.string().max(2_000).nullable(),
+    to: z.string().max(2_000).nullable(),
+  })
+  .strict();
+
+const gmailMessageOutputSchema = z
+  .object({
+    headers: gmailMessageHeadersOutputSchema,
+    id: googleResourceIdSchema,
+    internalDate: z.string().max(100).nullable(),
+    labelIds: z.array(gmailLabelIdSchema).max(100),
+    sizeEstimate: z.number().int().nonnegative().nullable(),
+    snippet: z.string().max(4_000),
+    threadId: googleResourceIdSchema,
+  })
+  .strict();
+
+const gmailMessageSendArgumentsSchema = z
+  .object({
+    bcc: z.array(z.email().max(254)).max(20).optional(),
+    cc: z.array(z.email().max(254)).max(20).optional(),
+    subject: z.string().min(1).max(998),
+    textBody: z.string().min(1).max(100_000),
+    to: z.array(z.email().max(254)).min(1).max(20),
+  })
+  .strict()
+  .refine(
+    (value) =>
+      value.to.length + (value.cc?.length ?? 0) + (value.bcc?.length ?? 0) <=
+      40,
+    { message: "A message can contain at most 40 recipients." },
+  );
+
+const gmailMessageSendOutputSchema = z
+  .object({
+    id: googleResourceIdSchema,
+    labelIds: z.array(gmailLabelIdSchema).max(100),
+    threadId: googleResourceIdSchema,
+  })
+  .strict();
+
+const driveFilesListArgumentsSchema = z
+  .object({
+    orderBy: z
+      .enum([
+        "createdTime",
+        "createdTime desc",
+        "modifiedTime",
+        "modifiedTime desc",
+        "name",
+        "name desc",
+        "recency",
+        "recency desc",
+        "starred",
+      ])
+      .default("modifiedTime desc"),
+    pageSize: z.number().int().min(1).max(100).default(50),
+    pageToken: z.string().max(4_000).optional(),
+    query: z.string().min(1).max(5_000).optional(),
+  })
+  .strict();
+
+const driveFileGetArgumentsSchema = z
+  .object({ fileId: googleResourceIdSchema })
+  .strict();
+
+const driveOwnerSchema = z
+  .object({
+    displayName: z.string().max(500).optional(),
+    emailAddress: z.string().max(500).optional(),
+    me: z.boolean().optional(),
+  })
+  .passthrough();
+
+const driveFileSchema = z
+  .object({
+    createdTime: z.string().max(100).optional(),
+    driveId: googleResourceIdSchema.optional(),
+    id: googleResourceIdSchema,
+    mimeType: z.string().min(1).max(500),
+    modifiedTime: z.string().max(100).optional(),
+    name: z.string().max(5_000),
+    owners: z.array(driveOwnerSchema).max(100).default([]),
+    parents: z.array(googleResourceIdSchema).max(100).default([]),
+    shared: z.boolean().optional(),
+    size: z.string().max(30).regex(/^\d+$/).optional(),
+    starred: z.boolean().optional(),
+    trashed: z.boolean().optional(),
+    webViewLink: z.string().max(4_000).optional(),
+  })
+  .passthrough();
+
+const driveFilesListResponseSchema = z
+  .object({
+    files: z.array(driveFileSchema).max(100).default([]),
+    nextPageToken: z.string().max(4_000).optional(),
+  })
+  .passthrough();
+
+const driveOwnerOutputSchema = z
+  .object({
+    displayName: z.string().max(500).nullable(),
+    emailAddress: z.string().max(500).nullable(),
+    me: z.boolean(),
+  })
+  .strict();
+
+const driveFileOutputSchema = z
+  .object({
+    createdAt: z.string().max(100).nullable(),
+    driveId: googleResourceIdSchema.nullable(),
+    id: googleResourceIdSchema,
+    mimeType: z.string().min(1).max(500),
+    modifiedAt: z.string().max(100).nullable(),
+    name: z.string().max(5_000),
+    owners: z.array(driveOwnerOutputSchema).max(100),
+    parentIds: z.array(googleResourceIdSchema).max(100),
+    shared: z.boolean(),
+    sizeBytes: z.string().max(30).regex(/^\d+$/).nullable(),
+    starred: z.boolean(),
+    trashed: z.boolean(),
+    webViewUrl: z.string().max(4_000).nullable(),
+  })
+  .strict();
+
+const driveFilesListOutputSchema = z
+  .object({
+    items: z.array(driveFileOutputSchema).max(100),
+    nextPageToken: z.string().max(4_000).nullable(),
+  })
+  .strict();
+
+const googleDocsGetArgumentsSchema = z
+  .object({ documentId: googleResourceIdSchema })
+  .strict();
+
+const googleDocsContentContainerSchema = z
+  .object({ content: z.array(z.unknown()).max(5_000).default([]) })
+  .passthrough();
+
+const googleDocsStructuralElementSchema = z
+  .object({
+    paragraph: z
+      .object({
+        elements: z
+          .array(
+            z
+              .object({
+                textRun: z
+                  .object({ content: z.string().max(200_000) })
+                  .passthrough()
+                  .optional(),
+              })
+              .passthrough(),
+          )
+          .max(5_000)
+          .default([]),
+      })
+      .passthrough()
+      .optional(),
+    table: z
+      .object({
+        tableRows: z
+          .array(
+            z
+              .object({
+                tableCells: z
+                  .array(googleDocsContentContainerSchema)
+                  .max(500)
+                  .default([]),
+              })
+              .passthrough(),
+          )
+          .max(500)
+          .default([]),
+      })
+      .passthrough()
+      .optional(),
+    tableOfContents: googleDocsContentContainerSchema.optional(),
+  })
+  .passthrough();
+
+const googleDocsTabSchema = z
+  .object({
+    childTabs: z.array(z.unknown()).max(100).default([]),
+    documentTab: z
+      .object({ body: googleDocsContentContainerSchema.optional() })
+      .passthrough()
+      .optional(),
+    tabProperties: z
+      .object({
+        parentTabId: googleTabIdSchema.optional(),
+        tabId: googleTabIdSchema,
+        title: z.string().max(5_000),
+      })
+      .passthrough(),
+  })
+  .passthrough();
+
+const googleDocsDocumentSchema = z
+  .object({
+    body: googleDocsContentContainerSchema.optional(),
+    documentId: googleResourceIdSchema,
+    revisionId: z.string().max(1_000).optional(),
+    tabs: z.array(z.unknown()).max(100).default([]),
+    title: z.string().max(5_000),
+  })
+  .passthrough();
+
+const googleDocsTabOutputSchema = z
+  .object({
+    id: googleTabIdSchema.nullable(),
+    parentId: googleTabIdSchema.nullable(),
+    text: z.string().max(GOOGLE_DOC_TEXT_MAX_CHARS),
+    title: z.string().max(5_000),
+    truncated: z.boolean(),
+  })
+  .strict();
+
+const googleDocsDocumentOutputSchema = z
+  .object({
+    documentId: googleResourceIdSchema,
+    revisionId: z.string().max(1_000).nullable(),
+    tabs: z.array(googleDocsTabOutputSchema).max(GOOGLE_DOC_MAX_TABS),
+    title: z.string().max(5_000),
+    truncated: z.boolean(),
+  })
+  .strict();
+
 const githubRepositoriesArgumentsSchema = z
   .object({
     page: z.number().int().min(1).max(10_000).default(1),
@@ -1839,6 +2375,16 @@ function providerActionArgumentsSchema(
     if (action === "calendar.freebusy.query") {
       return googleFreeBusyArgumentsSchema;
     }
+    if (action === "gmail.messages.list") {
+      return gmailMessagesListArgumentsSchema;
+    }
+    if (action === "gmail.messages.get") return gmailMessageGetArgumentsSchema;
+    if (action === "gmail.messages.send") {
+      return gmailMessageSendArgumentsSchema;
+    }
+    if (action === "drive.files.list") return driveFilesListArgumentsSchema;
+    if (action === "drive.files.get") return driveFileGetArgumentsSchema;
+    if (action === "docs.documents.get") return googleDocsGetArgumentsSchema;
   }
   if (provider === "github") {
     if (action === "github.viewer.get") return emptyActionArgumentsSchema;
@@ -1864,7 +2410,16 @@ function providerActionArgumentsSchema(
     }
     if (action === "slack.messages.post") return slackPostMessageArgumentsSchema;
   }
+  if (!isCoreProvider(provider)) {
+    return requireProviderExtension(provider).actionArgumentsSchema(action);
+  }
   throw new Error(`Unsupported provider action: ${action}`);
+}
+
+function isCoreProvider(
+  provider: OAuthProvider,
+): provider is "google" | "github" | "slack" {
+  return provider === "google" || provider === "github" || provider === "slack";
 }
 
 function normalizeGoogleEvent(event: z.infer<typeof googleEventSchema>) {
@@ -1895,6 +2450,221 @@ function normalizeGoogleEvent(event: z.infer<typeof googleEventSchema>) {
     summary: event.summary ?? "(Untitled event)",
     updatedAt: event.updated ?? null,
   };
+}
+
+function normalizeGmailMessage(
+  message: z.infer<typeof gmailMessageResponseSchema>,
+): z.infer<typeof gmailMessageOutputSchema> {
+  const headers = message.payload?.headers ?? [];
+  const header = (name: (typeof GMAIL_METADATA_HEADERS)[number]) => {
+    const value = headers.find(
+      (entry) => entry.name.toLowerCase() === name.toLowerCase(),
+    )?.value;
+    return value === undefined ? null : value.slice(0, 2_000);
+  };
+  return gmailMessageOutputSchema.parse({
+    headers: {
+      bcc: header("Bcc"),
+      cc: header("Cc"),
+      date: header("Date"),
+      from: header("From"),
+      messageId: header("Message-ID"),
+      replyTo: header("Reply-To"),
+      subject: header("Subject"),
+      to: header("To"),
+    },
+    id: message.id,
+    internalDate: message.internalDate ?? null,
+    labelIds: message.labelIds,
+    sizeEstimate: message.sizeEstimate ?? null,
+    snippet: (message.snippet ?? "").slice(0, 4_000),
+    threadId: message.threadId,
+  });
+}
+
+function buildGmailRawMessage(
+  input: z.infer<typeof gmailMessageSendArgumentsSchema>,
+): string {
+  const headers = [
+    formatEmailAddressHeader("To", input.to),
+    ...(input.cc?.length
+      ? [formatEmailAddressHeader("Cc", input.cc)]
+      : []),
+    ...(input.bcc?.length
+      ? [formatEmailAddressHeader("Bcc", input.bcc)]
+      : []),
+    `Subject: ${encodeMimeHeader(input.subject)}`,
+    "MIME-Version: 1.0",
+    "Content-Type: text/plain; charset=UTF-8",
+    "Content-Transfer-Encoding: base64",
+  ];
+  const normalizedBody = input.textBody
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .replace(/\n/g, "\r\n");
+  const encodedBody = Buffer.from(normalizedBody, "utf8")
+    .toString("base64")
+    .match(/.{1,76}/g)
+    ?.join("\r\n");
+  return Buffer.from(
+    `${headers.join("\r\n")}\r\n\r\n${encodedBody ?? ""}`,
+    "utf8",
+  ).toString("base64url");
+}
+
+function formatEmailAddressHeader(name: string, addresses: string[]): string {
+  return `${name}: ${addresses.join(",\r\n ")}`;
+}
+
+function encodeMimeHeader(value: string): string {
+  const chunks: string[] = [];
+  let chunk = "";
+  for (const character of value) {
+    if (chunk && Buffer.byteLength(chunk + character, "utf8") > 45) {
+      chunks.push(chunk);
+      chunk = character;
+    } else {
+      chunk += character;
+    }
+  }
+  if (chunk) chunks.push(chunk);
+  return chunks
+    .map(
+      (part) =>
+        `=?UTF-8?B?${Buffer.from(part, "utf8").toString("base64")}?=`,
+    )
+    .join("\r\n ");
+}
+
+function normalizeDriveFile(
+  file: z.infer<typeof driveFileSchema>,
+): z.infer<typeof driveFileOutputSchema> {
+  return driveFileOutputSchema.parse({
+    createdAt: file.createdTime ?? null,
+    driveId: file.driveId ?? null,
+    id: file.id,
+    mimeType: file.mimeType,
+    modifiedAt: file.modifiedTime ?? null,
+    name: file.name,
+    owners: file.owners.map((owner) => ({
+      displayName: owner.displayName ?? null,
+      emailAddress: owner.emailAddress ?? null,
+      me: owner.me ?? false,
+    })),
+    parentIds: file.parents,
+    shared: file.shared ?? false,
+    sizeBytes: file.size ?? null,
+    starred: file.starred ?? false,
+    trashed: file.trashed ?? false,
+    webViewUrl: file.webViewLink ?? null,
+  });
+}
+
+interface GoogleDocTabSource {
+  content: unknown[];
+  id: string | null;
+  parentId: string | null;
+  title: string;
+}
+
+function normalizeGoogleDocument(
+  document: z.infer<typeof googleDocsDocumentSchema>,
+): z.infer<typeof googleDocsDocumentOutputSchema> {
+  const collected = collectGoogleDocTabSources(document);
+  let remaining = GOOGLE_DOC_TEXT_MAX_CHARS;
+  let truncated = collected.truncated;
+  const tabs = collected.sources.map((source) => {
+    const extracted = extractGoogleDocsText(source.content, remaining);
+    remaining -= extracted.text.length;
+    truncated ||= extracted.truncated;
+    return {
+      id: source.id,
+      parentId: source.parentId,
+      text: extracted.text,
+      title: source.title,
+      truncated: extracted.truncated,
+    };
+  });
+  return googleDocsDocumentOutputSchema.parse({
+    documentId: document.documentId,
+    revisionId: document.revisionId ?? null,
+    tabs,
+    title: document.title,
+    truncated,
+  });
+}
+
+function collectGoogleDocTabSources(
+  document: z.infer<typeof googleDocsDocumentSchema>,
+): { sources: GoogleDocTabSource[]; truncated: boolean } {
+  if (document.tabs.length === 0) {
+    return {
+      sources: [
+        {
+          content: document.body?.content ?? [],
+          id: null,
+          parentId: null,
+          title: document.title,
+        },
+      ],
+      truncated: false,
+    };
+  }
+
+  const sources: GoogleDocTabSource[] = [];
+  const stack = [...document.tabs].reverse();
+  while (stack.length > 0 && sources.length < GOOGLE_DOC_MAX_TABS) {
+    const tab = parseProviderPayload(googleDocsTabSchema, stack.pop());
+    sources.push({
+      content: tab.documentTab?.body?.content ?? [],
+      id: tab.tabProperties.tabId,
+      parentId: tab.tabProperties.parentTabId ?? null,
+      title: tab.tabProperties.title,
+    });
+    for (let index = tab.childTabs.length - 1; index >= 0; index -= 1) {
+      stack.push(tab.childTabs[index]);
+    }
+  }
+  return { sources, truncated: stack.length > 0 };
+}
+
+function extractGoogleDocsText(
+  content: unknown[],
+  maxChars: number,
+): { text: string; truncated: boolean } {
+  const stack = [...content].reverse();
+  let processed = 0;
+  let text = "";
+  let truncated = false;
+
+  while (
+    stack.length > 0 &&
+    processed < GOOGLE_DOC_MAX_STRUCTURAL_ELEMENTS &&
+    text.length < maxChars
+  ) {
+    const element = parseProviderPayload(
+      googleDocsStructuralElementSchema,
+      stack.pop(),
+    );
+    processed += 1;
+    const paragraphText = (element.paragraph?.elements ?? [])
+      .map((entry) => entry.textRun?.content ?? "")
+      .join("");
+    const remaining = maxChars - text.length;
+    text += paragraphText.slice(0, remaining);
+    if (paragraphText.length > remaining) truncated = true;
+
+    const nested: unknown[] = [];
+    for (const row of element.table?.tableRows ?? []) {
+      for (const cell of row.tableCells) nested.push(...cell.content);
+    }
+    nested.push(...(element.tableOfContents?.content ?? []));
+    for (let index = nested.length - 1; index >= 0; index -= 1) {
+      stack.push(nested[index]);
+    }
+  }
+  if (stack.length > 0) truncated = true;
+  return { text, truncated };
 }
 
 function normalizeGitHubIssue(issue: z.infer<typeof githubIssueSchema>) {
