@@ -1,20 +1,25 @@
 {
   "format": "one-status.handoff",
   "version": 1,
-  "generatedAt": "2026-08-09T09:53:23.528Z",
+  "generatedAt": "2026-08-09T14:46:08.102Z",
   "projectId": "one-status",
-  "statusVersion": 43,
+  "statusVersion": 78,
   "repository": {
-    "commit": "92c2e3ecb8d54b4afa14864eee88125fe37874d9",
+    "commit": "11d9e9fa9de32bd4d87c0ebd28a7de6665fa7124",
     "branch": "main",
     "dirty": false,
     "changedFiles": [],
     "remote": "https://github.com/niyuxuan782/one-status.git"
   },
   "context": {
-    "currentGoal": "Reauthorize and grant the new Gateway actions, then validate Open and Continue on a second physical device.",
-    "decisions": [],
-    "currentContext": "One Status v0.5.0 is fully released and deployed. Source/tag: 92c2e3ecb8d54b4afa14864eee88125fe37874d9. Release workflow 31306306609 passed all jobs and published 12 assets plus GHCR digest sha256:87cd1f711212d3d5fc8b0a0aacba4870ca41152fa4e9275b3682b8c1b7014989. GitHub Pages shows v0.5.0 and 14 Gateway actions. Homebrew tap commit ab69ba134b84f14da9a75d397139684d315edb4a publishes Formula/Cask 0.5.0; fetch, style, and strict audit passed. Tencent Cloud runs release 20260809T094657Z with API version 0.5.0; public HTTPS, redirect, auth denial, container health, read-only rootfs, non-root user, and SQLite quick_check passed. Local Codex and Claude Code MCP are connected; a real Claude Qwen session used only One Status tools_list. Next: reauthorize Slack for new scopes, grant desired new actions, and validate second-device Open and Continue.",
+    "currentGoal": "Configure OAuth Apps and complete real-account acceptance for the 11 new providers, reauthorize Google Workspace and Slack scopes, then validate Open and Continue on a second physical device.",
+    "decisions": [
+      "Capability Pack is the platform-neutral capability unit; adapters compile it for each Agent.",
+      "Codex and Claude Code are the fully installed MVP targets; Cursor manifest exists, while ChatGPT Apps SDK and hosted Remote MCP remain on the roadmap.",
+      "Provider credentials remain in the encrypted local Permission Vault; Agent tool calls use short-lived bound credentials and exact Dashboard approval for writes.",
+      "One Status Cloud stores encrypted Status and permission bundles; GitHub stores project code and release artifacts."
+    ],
+    "currentContext": "One Status v0.6.0 is released and deployed. Source/tag commit: 11d9e9fa9de32bd4d87c0ebd28a7de6665fa7124. GitHub Actions CI run 31317955613 and Release run 31318055640 passed; the release publishes 12 CLI/macOS/Windows/Linux assets and GHCR digest sha256:9cbad1c5844a3a636ff93db9fbd7ae50b568caa7ab9d43c37deb89436123d019. GitHub Pages presents 14 Capability Packs and 69 controlled actions. Homebrew tap commit 338689731ed1df95894936cd985ebca50a34baa5 publishes Formula and Cask 0.6.0; local Formula install, brew test, style and strict audits passed. Tencent Cloud now runs release 20260809T143804Z with API 0.6.0; public HTTPS, redirect, auth denial, non-root/read-only containers, SQLite quick_check, foreign keys and agent_credentials migration passed. Local Homebrew LaunchAgent is healthy at 127.0.0.1:8787. Fresh Codex and Claude Code MCP processes used bound Agent credentials, read status version 77, listed 14 packs and the existing GitHub, Google and Slack grants. All 14 packs are installed for Codex and Claude Code. Real OAuth acceptance is complete for Google Workspace, GitHub and Slack; Google requires reauthorization for Gmail, Drive and Docs scopes, Slack requires history, search and chat scopes. Microsoft 365, Notion, Dropbox, Zoom, Canva, Asana, Trello, Airtable, Linear, Figma and Box have code-complete OAuth/action implementations and still need Provider App credentials plus real-account acceptance. ChatGPT Apps SDK/hosted Remote MCP and second-device Open and Continue remain next-stage validation.",
     "lastAgentId": "codex",
     "completed": [
       "Release One Status v0.2.0",
@@ -50,7 +55,12 @@
       "Published GHCR image digest sha256:87cd1f711212d3d5fc8b0a0aacba4870ca41152fa4e9275b3682b8c1b7014989",
       "Updated Homebrew Formula and Cask at tap commit ab69ba134b84f14da9a75d397139684d315edb4a",
       "Deployed Tencent Cloud release 20260809T094657Z; API 0.5.0 healthy and SQLite quick_check passed",
-      "Verified local Codex and Claude Code MCP connections and real Claude tools_list call"
+      "Verified local Codex and Claude Code MCP connections and real Claude tools_list call",
+      "Google Workspace, GitHub and Slack real-account flows verified",
+      "14 Provider catalogs and 69 fixed actions released",
+      "Per-Agent grants, bound credentials and write approvals verified",
+      "Two-device encrypted Demo passed",
+      "Codex and Claude Code adapters installed locally"
     ],
     "next": [
       "Complete Apple Developer ID signing and notarization",
@@ -58,7 +68,16 @@
       "Validate Open and Continue on a second physical device",
       "Monitor post-release regression reports; ship patch v0.4.x if needed",
       "Reauthorize the existing Slack connection for history, search, and chat scopes",
-      "Choose additional read actions for Codex and Claude Code in Connections"
+      "Choose additional read actions for Codex and Claude Code in Connections",
+      "Complete OAuth acceptance for v0.6.0 Providers",
+      "Reauthorize Google Workspace for Gmail, Drive and Docs",
+      "Reauthorize Slack for history, search and chat",
+      "Create OAuth Apps and validate Microsoft 365, Notion, Dropbox, Zoom, Canva, Asana, Airtable, Linear, Figma and Box",
+      "Configure Trello API key and user Token",
+      "Install One Status 0.6.0 on Mac B",
+      "Login with recovery key",
+      "Open published Handoff at exact Git commit",
+      "Confirm Codex restores current context"
     ],
     "blocked": []
   },
