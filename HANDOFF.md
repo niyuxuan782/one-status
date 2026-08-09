@@ -1,14 +1,14 @@
 # One Status Handoff
 
-Generated: 2026-08-09T08:29:03.479Z
+Generated: 2026-08-09T09:34:44.830Z
 
 ## Current Goal
 
-Validate Open and Continue on a second physical device.
+Publish and verify One Status v0.5.0 with the Gateway-first MCP experience.
 
 ## Current Context
 
-v0.4.0 发布已完成并全项验证通过（2026-08-09）：worktree 干净，本地 HEAD、tag v0.4.0、origin/main、远端 tag 均为 64430d29e3bf30f5abbcc87537253f2c3c819e90。GitHub Release v0.4.0 已发布（非 draft/prerelease），含 12 个资产：mac arm64/x64 dmg+zip、Windows Setup/Portable exe、Linux AppImage/deb、npm tarball、one-status.rb、one-status-cask.rb、SHA256SUMS.txt。工作流结论：Release=success（tag v0.4.0）、CI=success（main）、Pages=success（main），全部跑在 64430d29。下一步：在第二台物理设备上验证 Open and Continue。
+One Status v0.5.0 implementation is ready for publication. The local Formula, API, GUI, Codex MCP, and Claude Code MCP run version 0.5.0. Gateway catalog: Calendar 4, GitHub 6, Slack 4 actions. tools_list returns compact inputSchema/readOnly/requiresConfirmation metadata; tools_execute enforces grants, scopes, confirmation, refresh, response normalization, and audit. Real checks passed: 161/161 tests, encrypted two-device demo, desktop/mobile GUI with no console errors, live GitHub viewer, live Google Calendar query with token refresh, and Claude Code using only One Status tools_list. Next: publish Handoff, tag v0.5.0, verify GitHub Release/CI/Pages/Homebrew.
 
 ## Architecture Decisions
 
@@ -42,6 +42,11 @@ v0.4.0 发布已完成并全项验证通过（2026-08-09）：worktree 干净，
 - Release workflow success on tag v0.4.0 (run 31301582002)
 - CI workflow success on main 64430d29 (run 31301580210)
 - Pages workflow success on main 64430d29 (run 31301580227)
+- Added 14 controlled Calendar, GitHub, and Slack actions
+- Added Gateway-first MCP instructions and per-action input schemas
+- Enforced confirmed writes with stable API errors and audit events
+- Added one-status handoff preview/publish command
+- Validated 161 tests, encrypted demo, GUI desktop/mobile, live Calendar/GitHub, and Claude Code
 
 ## Next
 
@@ -49,6 +54,9 @@ v0.4.0 发布已完成并全项验证通过（2026-08-09）：worktree 干净，
 - Validate Windows and Linux installers on native devices
 - Validate Open and Continue on a second physical device
 - Monitor post-release regression reports; ship patch v0.4.x if needed
+- Publish One Status v0.5.0
+- Publish Handoff commit to main
+- Tag v0.5.0 and verify Release, CI, Pages, and Homebrew tap
 
 ## Blocked
 
@@ -57,6 +65,6 @@ v0.4.0 发布已完成并全项验证通过（2026-08-09）：worktree 干净，
 ## Git State
 
 - Branch: main
-- Commit: 64430d29e3bf30f5abbcc87537253f2c3c819e90
-- Dirty: no
+- Commit: f8c4c487ada883c7b0961a121349122d6e0854ce
+- Dirty: yes
 - Tests: not run

@@ -28,6 +28,7 @@ describe("MCP runtime Tool Gateway", () => {
         expect(JSON.parse(String(init?.body))).toMatchObject({
           action: "github.viewer.get",
           agentId: "codex",
+          confirmed: true,
         });
         return Response.json({ result: { login: "ryan" } });
       }
@@ -40,6 +41,7 @@ describe("MCP runtime Tool Gateway", () => {
     await expect(
       gateway.execute({
         action: "github.viewer.get",
+        confirmed: true,
         connectionId: "18f6680f-79de-4df6-8d88-08e66ddfbb53",
       }),
     ).resolves.toEqual({ login: "ryan" });

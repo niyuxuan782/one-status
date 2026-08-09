@@ -4,6 +4,7 @@ import type {
   FastifyReply,
   FastifyRequest,
 } from "fastify";
+import { ONE_STATUS_VERSION } from "@one-status/protocol";
 import { z } from "zod";
 import type { AuthenticatedSession } from "./database.js";
 import type { DashboardBackend } from "./dashboard-backend.js";
@@ -92,7 +93,7 @@ export function registerDashboardRoutes(
       if (path === "/" && !request.headers.accept?.includes("text/html")) {
         return {
           name: "One Status",
-          version: "0.3.0",
+          version: ONE_STATUS_VERSION,
           tagline: "One user. One status. Every AI. Private by design.",
           dashboard: "/",
           health: "/health",
@@ -1108,6 +1109,7 @@ const toolExecuteInputSchema = z
     action: z.string().min(1).max(160),
     agentId: z.string().min(1).max(120),
     arguments: z.unknown().optional(),
+    confirmed: z.boolean().optional(),
     connectionId: z.uuid(),
   })
   .strict();

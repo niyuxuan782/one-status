@@ -4,6 +4,7 @@ export interface RuntimeToolGateway {
   execute(input: {
     action: string;
     arguments?: Record<string, unknown>;
+    confirmed?: boolean;
     connectionId: string;
   }): Promise<unknown>;
   list(): Promise<{ connections: unknown[] }>;

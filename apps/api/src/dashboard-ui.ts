@@ -347,6 +347,10 @@ tr:last-child td { border-bottom: 0; }
 .check-row input { margin: 2px 0 0; }
 .check-row strong { display: block; font-size: 12px; }
 .check-row small { color: var(--muted); font-size: 11px; }
+.action-meta { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+.action-meta .tag { font-size: 9px; }
+.action-meta .write-risk { border-color: color-mix(in srgb, var(--red) 45%, var(--line)); color: var(--red); }
+.action-meta .scope-missing { border-color: color-mix(in srgb, var(--amber) 55%, var(--line)); color: var(--amber); }
 .permission-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
 .permission-toolbar > span { color: var(--muted); font-size: 11px; }
 .permission-toolbar > div { display: flex; gap: 6px; }
@@ -604,7 +608,7 @@ function dashboardClient(): void {
         if (!form) return;
         const checked = target.dataset.value === "all";
         form.querySelectorAll<HTMLInputElement>('input[name="actions"]').forEach((input) => {
-          input.checked = checked;
+          input.checked = checked && !input.disabled;
         });
         updateGrantSummary(form);
         return;
@@ -1357,7 +1361,24 @@ function dashboardClient(): void {
     const provider = snapshot.integrations.providers.find((entry: any) => entry.id === connection.provider);
     const grant = snapshot.integrations.grants.find((entry: any) => entry.connectionId === connectionId && entry.agentId === agentId);
     const selected = new Set(grant?.actions || []);
-    openModal(`${agentLabel(agentId)} 权限`, `<form data-form="grant"><input type="hidden" name="connectionId" value="${escapeHtml(connectionId)}"><input type="hidden" name="agentId" value="${escapeHtml(agentId)}"><div class="permission-toolbar"><span data-grant-summary aria-live="polite">已允许 ${selected.size}/${provider.actions.length} 项操作</span><div><button class="button secondary" data-action="set-grant-selection" data-value="all" type="button">全选</button><button class="button secondary" data-action="set-grant-selection" data-value="none" type="button">清空</button></div></div><div class="check-list">${provider.actions.map((action: any) => `<label class="check-row"><input type="checkbox" name="actions" value="${escapeHtml(action.id)}" ${selected.has(action.id) ? "checked" : ""}><span><strong>${escapeHtml(action.title)}</strong><small>${escapeHtml(action.description)}</small></span></label>`).join("")}</div>${modalActions("保存权限")}</form>`);
+    const grantedScopes = new Set(connection.scopes || []);
+    const availableActions = provider.actions.filter((action: any) =>
+      action.requiredScopes.every((scope: string) => grantedScopes.has(scope)),
+    );
+    const availableSelected = availableActions.filter((action: any) =>
+      selected.has(action.id),
+    ).length;
+    const actionRows = provider.actions.map((action: any) => {
+      const hasScopes = action.requiredScopes.every((scope: string) => grantedScopes.has(scope));
+      const risk = action.requiresConfirmation
+        ? '<span class="tag write-risk">写入 · 每次确认</span>'
+        : '<span class="tag">只读</span>';
+      const scope = hasScopes
+        ? ""
+        : '<span class="tag scope-missing">缺少 scope · 重新授权</span>';
+      return `<label class="check-row"><input type="checkbox" name="actions" value="${escapeHtml(action.id)}" ${selected.has(action.id) && hasScopes ? "checked" : ""} ${hasScopes ? "" : "disabled"}><span><strong>${escapeHtml(action.title)}</strong><small>${escapeHtml(action.description)}</small><span class="action-meta">${risk}${scope}</span></span></label>`;
+    }).join("");
+    openModal(`${agentLabel(agentId)} 权限`, `<form data-form="grant"><input type="hidden" name="connectionId" value="${escapeHtml(connectionId)}"><input type="hidden" name="agentId" value="${escapeHtml(agentId)}"><div class="permission-toolbar"><span data-grant-summary aria-live="polite">已允许 ${availableSelected}/${availableActions.length} 项可用操作</span><div><button class="button secondary" data-action="set-grant-selection" data-value="all" type="button">全选</button><button class="button secondary" data-action="set-grant-selection" data-value="none" type="button">清空</button></div></div><div class="check-list">${actionRows}</div>${modalActions("保存权限")}</form>`);
   }
 
   async function connectProvider(provider: string, button: HTMLButtonElement): Promise<void> {
@@ -1450,10 +1471,10 @@ function dashboardClient(): void {
   }
 
   function updateGrantSummary(form: HTMLFormElement): void {
-    const selected = form.querySelectorAll<HTMLInputElement>('input[name="actions"]:checked').length;
-    const total = form.querySelectorAll<HTMLInputElement>('input[name="actions"]').length;
+    const selected = form.querySelectorAll<HTMLInputElement>('input[name="actions"]:checked:not(:disabled)').length;
+    const total = form.querySelectorAll<HTMLInputElement>('input[name="actions"]:not(:disabled)').length;
     const summary = form.querySelector<HTMLElement>("[data-grant-summary]");
-    if (summary) summary.textContent = `已允许 ${selected}/${total} 项操作`;
+    if (summary) summary.textContent = `已允许 ${selected}/${total} 项可用操作`;
   }
 
   function metric(iconName: string, label: string, value: unknown, detail: string): string {

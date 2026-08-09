@@ -199,6 +199,15 @@ HANDOFF.md
 
 已有文件需要额外确认覆盖。发布时用户还要分别确认提交当前 Git 变更和推送 GitHub；程序会禁用 commit/push Git hooks，推送后通过 `ls-remote` 校验精确 commit，再把仓库、branch、commit 和来源设备写入加密 Status。本机绝对路径只保存在设备本地数据库，不进入云端。
 
+已完成项目映射后，也可以从终端运行同一条 Handoff 流程。默认回环 Dashboard 尚未运行时，CLI 会先启动本机后台服务：
+
+```bash
+one-status handoff --project one-status --agent claude-code
+one-status handoff --project one-status --agent claude-code --publish
+```
+
+第一条命令只执行预检，输出 worktree、Secret 扫描、源 commit 和 Status version。`--publish` 代表更新现有 Handoff 文件、提交当前 Git 改动并推送 GitHub 的明确授权；成功结果同时返回 source commit、published commit 和同步后的 Status version。CLI 仅连接回环 Dashboard，并使用 Dashboard 发放的 session cookie 与 CSRF token 调用现有 Handoff API。
+
 另一台 macOS 设备可选择 `Continue with Codex` 或 `Continue with Claude Code`。没有本机映射时，One Status 克隆到用户确认的新目录；已有映射时只接受 clean worktree。fetch 后会从已发布 commit 建立独立的 `one-status/continue/...` 本地分支，既保证起点精确，也允许 Agent 正常提交后续工作。程序验证 `HANDOFF.md`、`.one-status/handoff.json` 和 Status reference 一致后，通过 Terminal 打开 Agent，并要求 Agent 先读取 Handoff、调用 `status_get_context`。
 
 当前 `handoff.json` 的测试状态仍记录为 `not_run`。发布要求 GitHub origin、有效 Git author 配置和已连接的 GitHub OAuth 账号。One Status 会按仓库 owner 选择 Permission Vault 连接，只通过 Git 子进程环境注入认证并禁用交互式 credential helper；Token 不进入 remote URL、命令参数、错误、返回值或 Activity。
@@ -248,6 +257,18 @@ claude mcp add --scope user one-status \
   -e ONE_STATUS_AGENT_ID=claude-code \
   -- one-status mcp --transport stdio
 ```
+
+连接成功后，One Status 会向 Agent 提供 Gateway 优先策略。涉及 Calendar、Slack、GitHub 等第三方服务时，Agent 应先调用 `tools_list`，再用返回的 `connectionId` 与 `action` 调用 `tools_execute`。模型供应商、API Key 类型和 Agent 自带集成不会改变这条链路；Provider Token 始终留在本机 Permission Vault。
+
+当前 Gateway action：
+
+| Service | Read actions | Confirmed write actions |
+| --- | --- | --- |
+| Google Calendar | `calendar.calendars.list`、`calendar.events.list`、`calendar.events.get`、`calendar.freebusy.query` | 后续加入日程写入 |
+| GitHub | `github.viewer.get`、`github.repositories.list`、`github.issues.list`、`github.pull_requests.list`、`github.contents.get` | `github.issues.create` |
+| Slack | `slack.channels.list`、`slack.conversations.history`、`slack.search.messages` | `slack.messages.post` |
+
+`tools_list` 只显示当前连接已授予 scope 且用户已为该 Agent 勾选的 action，并为每项能力返回与执行校验同源的 `inputSchema`。标记为 `requiresConfirmation` 的操作需要用户明确确认后才能执行；无可用 action 时，Agent 会引导用户前往 One Status 的 `连接与权限` 页面连接、授权或重新连接服务。
 
 MCP 当前提供：
 

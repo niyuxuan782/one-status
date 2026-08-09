@@ -76,7 +76,7 @@
           </div>
           <p class="release-line">
             <span class="status-dot"></span>
-            <span id="release-label">v0.3.0</span>
+            <span id="release-label">v0.5.0</span>
             <span>Apache-2.0</span>
             <span>macOS · Windows · Linux</span>
           </p>
@@ -87,8 +87,35 @@
       <section class="signal-band" aria-label="当前能力">
         <div><strong>2</strong><span>Agent Adapters</span></div>
         <div><strong>3</strong><span>OAuth Connections</span></div>
+        <div><strong>14</strong><span>Gateway Actions</span></div>
         <div><strong>E2EE</strong><span>Portable Status</span></div>
-        <div><strong>MCP</strong><span>Open Protocol</span></div>
+      </section>
+
+      <section class="product-section" aria-labelledby="gateway-title">
+        <div class="section-heading">
+          <p class="eyebrow dark"><span></span> ONE GATEWAY · MANY SERVICES</p>
+          <h2 id="gateway-title">Agent 只连接 One Status</h2>
+          <p>
+            Calendar、Slack 与 GitHub 的授权集中在本机 Permission Vault。Codex、Claude Code 和第三方模型通过同一组受控 MCP actions 调用服务。
+          </p>
+        </div>
+        <div class="workflow" aria-label="One Status Gateway 工作流">
+          <article>
+            <span class="step-number">01</span>
+            <h3>发现允许的能力</h3>
+            <p>Agent 先调用 tools_list，只看到当前账号、Agent grant 与 OAuth scope 共同允许的 actions。</p>
+          </article>
+          <article>
+            <span class="step-number">02</span>
+            <h3>在 Gateway 内调用</h3>
+            <p>One Status 刷新并使用 Provider Token，模型只接收经过 schema 校验和裁剪的业务结果。</p>
+          </article>
+          <article>
+            <span class="step-number">03</span>
+            <h3>控制每一次写入</h3>
+            <p>读取操作可以直接运行；发 Slack 消息、创建 GitHub Issue 等写入需要明确确认并记录审计。</p>
+          </article>
+        </div>
       </section>
 
       <section class="product-section" id="product">

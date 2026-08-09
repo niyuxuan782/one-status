@@ -20,14 +20,13 @@ import {
   saveLocalProfile,
   type LocalProfile,
 } from "@one-status/local-config";
-import type { MemoryScope, StatusDocument } from "@one-status/protocol";
-
-const VERSION = "0.3.0";
-
-interface ParsedArguments {
-  command: string;
-  flags: Map<string, string>;
-}
+import {
+  ONE_STATUS_VERSION,
+  type MemoryScope,
+  type StatusDocument,
+} from "@one-status/protocol";
+import { booleanFlag, parseArguments } from "./arguments.js";
+import { runHandoffCommand } from "./handoff-command.js";
 
 async function main(): Promise<void> {
   const arguments_ = parseArguments(process.argv.slice(2));
@@ -81,10 +80,13 @@ async function main(): Promise<void> {
     case "app":
       await openDesktopApp();
       break;
+    case "handoff":
+      await handoff(arguments_.flags);
+      break;
     case "version":
     case "--version":
     case "-v":
-      console.log(VERSION);
+      console.log(ONE_STATUS_VERSION);
       break;
     case "help":
     case "--help":
@@ -381,34 +383,45 @@ async function openDesktopApp(): Promise<void> {
   if (launchInstalledDesktop()) return;
 
   const dashboardUrl = "http://127.0.0.1:8787/";
-  if (!(await isHealthyLocalService(dashboardUrl))) {
-    const scriptPath = process.argv[1];
-    if (!scriptPath) throw new Error("Unable to locate the One Status CLI entrypoint.");
-    const child = spawn(process.execPath, [scriptPath, "server"], {
-      detached: true,
-      env: process.env,
-      stdio: "ignore",
-    });
-    child.unref();
-
-    let healthy = false;
-    for (let attempt = 0; attempt < 80; attempt += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 125));
-      if (await isHealthyLocalService(dashboardUrl)) {
-        healthy = true;
-        break;
-      }
-    }
-    if (!healthy) {
-      throw new Error(
-        "The local dashboard did not start. Run `one-status server` to inspect the startup error.",
-      );
-    }
-  }
+  await ensureDefaultLocalService(dashboardUrl);
 
   if (!openExternalApplicationUrl(dashboardUrl)) {
     console.log(`One Status is running at ${dashboardUrl}`);
   }
+}
+
+async function handoff(flags: Map<string, string>): Promise<void> {
+  const dashboardUrl = flags.get("dashboard-url");
+  if (!dashboardUrl && !process.env.ONE_STATUS_DASHBOARD_URL) {
+    await ensureDefaultLocalService("http://127.0.0.1:8787/");
+  }
+  const result = await runHandoffCommand({
+    agentId: requiredFlag(flags, "agent"),
+    dashboardUrl,
+    projectId: requiredFlag(flags, "project"),
+    publish: booleanFlag(flags, "publish"),
+  });
+  console.log(JSON.stringify(result, null, 2));
+}
+
+async function ensureDefaultLocalService(dashboardUrl: string): Promise<void> {
+  if (await isHealthyLocalService(dashboardUrl)) return;
+  const scriptPath = process.argv[1];
+  if (!scriptPath) throw new Error("Unable to locate the One Status CLI entrypoint.");
+  const child = spawn(process.execPath, [scriptPath, "server"], {
+    detached: true,
+    env: process.env,
+    stdio: "ignore",
+  });
+  child.unref();
+
+  for (let attempt = 0; attempt < 80; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 125));
+    if (await isHealthyLocalService(dashboardUrl)) return;
+  }
+  throw new Error(
+    "The local dashboard did not start. Run `one-status server` to inspect the startup error.",
+  );
 }
 
 function launchInstalledDesktop(): boolean {
@@ -552,20 +565,6 @@ async function resolveInstallationId(
   return loadOrCreateInstallationId(legacyDeviceId);
 }
 
-function parseArguments(arguments_: string[]): ParsedArguments {
-  const [command = "", ...rest] = arguments_;
-  const flags = new Map<string, string>();
-  for (let index = 0; index < rest.length; index += 2) {
-    const flag = rest[index];
-    const value = rest[index + 1];
-    if (!flag?.startsWith("--") || value === undefined || value.startsWith("--")) {
-      throw new Error(`Expected --flag value near ${flag ?? "end of command"}.`);
-    }
-    flags.set(flag.slice(2), value);
-  }
-  return { command, flags };
-}
-
 function requiredFlag(flags: Map<string, string>, name: string): string {
   const value = flags.get(name);
   if (!value) {
@@ -648,6 +647,7 @@ Usage:
   one-status mcp --transport http [--host <host>] [--port <port>] [--endpoint </mcp>]
   one-status server [--host <host>] [--port <port>] [--db <path>] [--workspace-db <path>] [--public-url <url>] [--trust-proxy true]
   one-status app
+  one-status handoff --project <id> --agent claude-code|codex [--publish]
   one-status version
 
 Environment:
@@ -664,6 +664,7 @@ Environment:
   ONE_STATUS_PERMISSION_DB  Permission Vault SQLite path
   ONE_STATUS_PERMISSION_KEY_FILE  Permission Vault encryption key path
   ONE_STATUS_WORKSPACE_DB  Device-local project mapping SQLite path
+  ONE_STATUS_DASHBOARD_URL  Local dashboard URL used by handoff (default: http://127.0.0.1:8787)
   ONE_STATUS_PUBLIC_URL  Public HTTPS base URL for OAuth callbacks
   ONE_STATUS_TRUST_PROXY  Trust reverse-proxy forwarding headers (true/false)
 `);

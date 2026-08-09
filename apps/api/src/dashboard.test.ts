@@ -13,7 +13,12 @@ import type {
 } from "./dashboard-backend.js";
 import { LocalDashboardBackend } from "./dashboard-backend.js";
 import { PermissionVault } from "./permission-vault.js";
-import { ToolGateway } from "./tool-gateway.js";
+import { ProviderRequestError } from "./oauth-providers.js";
+import {
+  ToolConnectionExpiredError,
+  ToolGateway,
+  ToolPermissionDeniedError,
+} from "./tool-gateway.js";
 import type { HandoffPreview, HandoffService } from "./handoff.js";
 
 describe("local dashboard", () => {
@@ -349,9 +354,14 @@ describe("local dashboard", () => {
     const slackAuthorizationUrl = new URL(
       startedSlack.json().authorizationUrl,
     );
-    expect(slackAuthorizationUrl.searchParams.get("user_scope")).toBe(
-      "channels:read,groups:read",
-    );
+    expect(slackAuthorizationUrl.searchParams.get("user_scope")?.split(",")).toEqual([
+      "channels:read",
+      "groups:read",
+      "channels:history",
+      "groups:history",
+      "search:read",
+      "chat:write",
+    ]);
     expect(slackAuthorizationUrl.searchParams.get("code_challenge")).toBeTruthy();
     expect(slackAuthorizationUrl.searchParams.get("scope")).toBe("");
 
@@ -693,11 +703,23 @@ describe("local dashboard", () => {
     expect(authorized.json()).toMatchObject({
       connections: [
         {
-          actions: [{ id: "github.viewer.get" }],
+          actions: [
+            {
+              id: "github.viewer.get",
+              inputSchema: {
+                additionalProperties: false,
+                properties: {},
+                type: "object",
+              },
+              readOnly: true,
+              requiresConfirmation: false,
+            },
+          ],
           connection: { id: connection.id, provider: "github" },
         },
       ],
     });
+    expect(authorized.body).not.toContain("encrypted-in-vault");
 
     const wrongBearer = await app.inject({
       method: "GET",
@@ -772,6 +794,149 @@ describe("local dashboard", () => {
     expect(response.json()).toMatchObject({
       connections: [{ connection: { id: connection.id } }],
     });
+  });
+
+  it("validates and forwards explicit Tool Gateway confirmation", async () => {
+    const registration = await app.inject({
+      method: "POST",
+      url: "/v1/auth/register",
+      payload: {
+        email: "tool-confirmation@example.test",
+        password: "tool confirmation password",
+        deviceName: "Local Mac",
+        initialEnvelope: encryptStatus(
+          createEmptyStatus(),
+          generateStatusKey(),
+          1,
+        ),
+      },
+    });
+    expect(registration.statusCode).toBe(201);
+    const session = registration.json<{ token: string; userId: string }>();
+    const execute = vi
+      .spyOn(ToolGateway.prototype, "execute")
+      .mockResolvedValue({ number: 7 });
+    const payload = {
+      action: "github.issues.create",
+      agentId: "codex",
+      arguments: {
+        owner: "one-status",
+        repo: "core",
+        title: "Confirm tool writes",
+      },
+      confirmed: true,
+      connectionId: "2cc16694-140d-4575-8189-3283163c15c7",
+    };
+
+    try {
+      const response = await app.inject({
+        method: "POST",
+        url: "/v1/tools/execute",
+        headers: {
+          authorization: `Bearer ${session.token}`,
+          host: "127.0.0.1:8787",
+        },
+        payload,
+      });
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toEqual({ result: { number: 7 } });
+      expect(execute).toHaveBeenCalledWith({
+        ...payload,
+        userId: session.userId,
+      });
+
+      const invalid = await app.inject({
+        method: "POST",
+        url: "/v1/tools/execute",
+        headers: {
+          authorization: `Bearer ${session.token}`,
+          host: "127.0.0.1:8787",
+        },
+        payload: { ...payload, confirmed: "yes" },
+      });
+      expect(invalid.statusCode).toBe(400);
+      expect(execute).toHaveBeenCalledTimes(1);
+
+      execute.mockRejectedValueOnce(new ToolPermissionDeniedError());
+      const denied = await app.inject({
+        method: "POST",
+        url: "/v1/tools/execute",
+        headers: {
+          authorization: `Bearer ${session.token}`,
+          host: "127.0.0.1:8787",
+        },
+        payload: { ...payload, confirmed: false },
+      });
+      expect(denied.statusCode).toBe(403);
+      expect(denied.json()).toMatchObject({
+        error: { code: "tool_permission_denied" },
+      });
+
+      execute.mockRejectedValueOnce(new ToolConnectionExpiredError(true));
+      const expired = await app.inject({
+        method: "POST",
+        url: "/v1/tools/execute",
+        headers: {
+          authorization: `Bearer ${session.token}`,
+          host: "127.0.0.1:8787",
+        },
+        payload,
+      });
+      expect(expired.statusCode).toBe(409);
+      expect(expired.json()).toMatchObject({
+        error: {
+          code: "tool_connection_expired",
+          recoverableFromSync: true,
+        },
+      });
+
+      execute.mockRejectedValueOnce(
+        new ProviderRequestError(
+          "Slack API request failed.",
+          "provider_temporarily_unavailable",
+          503,
+        ),
+      );
+      const providerFailure = await app.inject({
+        method: "POST",
+        url: "/v1/tools/execute",
+        headers: {
+          authorization: `Bearer ${session.token}`,
+          host: "127.0.0.1:8787",
+        },
+        payload,
+      });
+      expect(providerFailure.statusCode).toBe(502);
+      expect(providerFailure.json()).toMatchObject({
+        error: {
+          code: "provider_temporarily_unavailable",
+          message: "Slack API request failed.",
+        },
+      });
+
+      execute.mockRejectedValueOnce(
+        new ProviderRequestError(
+          "GitHub authorization is invalid.",
+          "invalid_auth",
+          401,
+        ),
+      );
+      const invalidProviderAuthorization = await app.inject({
+        method: "POST",
+        url: "/v1/tools/execute",
+        headers: {
+          authorization: `Bearer ${session.token}`,
+          host: "127.0.0.1:8787",
+        },
+        payload,
+      });
+      expect(invalidProviderAuthorization.statusCode).toBe(409);
+      expect(invalidProviderAuthorization.json()).toMatchObject({
+        error: { code: "provider_authorization_invalid" },
+      });
+    } finally {
+      execute.mockRestore();
+    }
   });
 
   it("protects local project mapping and Handoff writes", async () => {

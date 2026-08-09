@@ -146,9 +146,16 @@ PUT /v1/status
 - [x] Service Permission → Agent Permission → Action Permission
 - [ ] Agent 加密身份与短时调用凭证
 - [x] `tools_list` 与 `tools_execute`
+- [x] Gateway 优先的 MCP instructions 与缺失授权引导
+- [x] Action 风险元数据（`readOnly`、`requiresConfirmation`）
+- [x] Calendar 日历列表、单事件与忙闲查询
+- [x] GitHub Issue、Pull Request 与仓库内容读取
+- [x] Slack 消息历史、搜索与受确认发送
 - [x] 调用审计与显式拒绝记录
 
-基础实现覆盖三方真实 OAuth endpoint 和首批只读 action。Google Calendar、GitHub 与 Slack 已完成真实账号、两种 Agent grant、跨 Vault 恢复和 Provider API 调用。GitHub 首版可导入本机 `gh` 会话，生产权限模型将迁移到 GitHub App installation token。
+基础实现覆盖三方真实 OAuth endpoint、14 个固定 action、Agent 级授权、scope 过滤、Token 刷新和脱敏审计。Google Calendar、GitHub 与 Slack 已完成真实账号、两种 Agent grant、跨 Vault 恢复和 Provider API 调用。GitHub 首版可导入本机 `gh` 会话，生产权限模型将迁移到 GitHub App installation token。
+
+Agent instructions 将 Calendar、Slack、GitHub 和后续服务统一导向 One Status Gateway。Agent 先调用 `tools_list` 获取当前允许的能力，再调用 `tools_execute`；Provider Token 不进入模型上下文。读取 action 可以直接运行，外部写入 action 需要风险提示和用户明确确认。缺少连接、scope 或 grant 时，Agent 引导用户回到 One Status 完成对应设置。
 
 Slack adapter 已切换到 user-token public client PKCE：`user_scope`、S256 challenge、`authed_user` token、无 Client Secret refresh、单次 refresh token 轮换和 `auth.revoke` 均有协议级测试。可导入 `docs/slack-app-manifest.yaml` 创建对应 Slack App。
 

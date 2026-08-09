@@ -22,6 +22,23 @@ flowchart TD
 
 桌面应用负责确认和操作，本机后台服务负责扫描、同步、Adapter 与 Handoff。云端保存加密状态和最少量路由元数据。GitHub保存代码、项目文档和用户确认发布的 Handoff 文件。
 
+## Universal Tool Gateway
+
+Codex、Claude Code 及使用第三方模型 API 的 Agent 只需要连接 One Status MCP。遇到 Calendar、Slack、GitHub 等任务时，MCP instructions 要求 Agent 先读取 `tools_list`，再通过 `tools_execute` 调用获准 action。One Status 在本机完成 Token 使用、刷新、scope 校验和审计，模型上下文只接收规范化后的业务结果。
+
+```text
+Agent request
+  -> tools_list(agentId)
+  -> connection + action + risk metadata
+  -> tools_execute(connectionId, action, arguments)
+  -> connection grant + action grant + scope check
+  -> optional user confirmation
+  -> provider API
+  -> normalized result + audit event
+```
+
+固定 action registry 禁止 Agent 自定义 URL、HTTP method 或 Authorization header。写操作带 `requiresConfirmation`，读取 action 带 `readOnly`，这些元数据同时进入 MCP 返回和 Dashboard 权限界面。
+
 ## 数据边界
 
 | 数据 | 位置 | 云端可读 |

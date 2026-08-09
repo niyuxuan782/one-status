@@ -2,7 +2,7 @@ _metadata:
   major_version: 2
 display_information:
   name: One Status
-  description: Read a user's Slack channel directory through One Status.
+  description: Use approved Slack actions through the One Status Gateway.
   background_color: "#161616"
 oauth_config:
   redirect_urls:
@@ -11,6 +11,10 @@ oauth_config:
     user:
       - channels:read
       - groups:read
+      - channels:history
+      - groups:history
+      - search:read
+      - chat:write
   pkce_enabled: true
 settings:
   org_deploy_enabled: false

@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { accessSync, constants } from "node:fs";
 import { isAbsolute } from "node:path";
+import { ONE_STATUS_VERSION } from "@one-status/protocol";
 import { z } from "zod";
 import type { ProviderFetch } from "./oauth-providers.js";
 import {
@@ -120,7 +121,7 @@ export class GitHubCliCredentialImporter {
         headers: {
           accept: "application/vnd.github+json",
           authorization: `Bearer ${accessToken}`,
-          "user-agent": "one-status/0.3.0",
+          "user-agent": `one-status/${ONE_STATUS_VERSION}`,
           "x-github-api-version": "2022-11-28",
         },
         signal: AbortSignal.timeout(GITHUB_REQUEST_TIMEOUT_MS),

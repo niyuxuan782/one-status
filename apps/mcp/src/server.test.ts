@@ -116,11 +116,13 @@ describe("One Status MCP", () => {
   });
 
   it("exposes approved OAuth actions without exposing credentials", async () => {
+    let executedInput: unknown;
     const server = createMcpServer(new MemoryVault(), "codex", {
       async list() {
         return { connections: [{ id: "connection-1" }] };
       },
       async execute(input) {
+        executedInput = input;
         return { action: input.action, ok: true };
       },
     });
@@ -132,6 +134,28 @@ describe("One Status MCP", () => {
     const tools = await client.listTools();
     expect(tools.tools.map((tool) => tool.name)).toContain("tools_list");
     expect(tools.tools.map((tool) => tool.name)).toContain("tools_execute");
+    expect(client.getInstructions()).toContain(
+      "call tools_list first and prefer the One Status Gateway",
+    );
+    expect(client.getInstructions()).toContain(
+      "instead of requesting provider credentials",
+    );
+
+    const listTool = tools.tools.find((tool) => tool.name === "tools_list");
+    expect(listTool?.description).toContain(
+      "Call this first for Calendar, Slack, GitHub",
+    );
+    expect(listTool?.description).toContain("inputSchema");
+    expect(listTool?.description).toContain("never returns provider credentials");
+    const executeTool = tools.tools.find((tool) => tool.name === "tools_execute");
+    expect(executeTool?.inputSchema).toMatchObject({
+      properties: {
+        confirmed: {
+          default: false,
+          type: "boolean",
+        },
+      },
+    });
 
     const listResult = await client.callTool({
       name: "tools_list",
@@ -146,9 +170,16 @@ describe("One Status MCP", () => {
         connectionId: "2cc16694-140d-4575-8189-3283163c15c7",
         action: "calendar.events.list",
         arguments: {},
+        confirmed: true,
       },
     });
     expect(JSON.stringify(executeResult)).toContain("calendar.events.list");
+    expect(executedInput).toEqual({
+      action: "calendar.events.list",
+      arguments: {},
+      confirmed: true,
+      connectionId: "2cc16694-140d-4575-8189-3283163c15c7",
+    });
 
     await client.close();
     await server.close();

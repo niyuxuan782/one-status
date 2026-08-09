@@ -9,6 +9,7 @@ import type { AddressInfo } from "node:net";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
+import { ONE_STATUS_VERSION } from "@one-status/protocol";
 import type { McpRuntimeConfig } from "./config.js";
 import { loadMcpRuntimeConfig } from "./config.js";
 import { createMcpServer, type Vault } from "./server.js";
@@ -145,7 +146,7 @@ export async function startHttpMcpServer(
           endpoint,
           name: "One Status MCP",
           transport: "streamable-http",
-          version: "0.3.0",
+          version: ONE_STATUS_VERSION,
         });
         return;
       }

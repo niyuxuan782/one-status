@@ -1,6 +1,7 @@
 import Fastify, { type FastifyInstance } from "fastify";
 import {
   authRequestSchema,
+  ONE_STATUS_VERSION,
   putStatusRequestSchema,
   registerRequestSchema,
 } from "@one-status/protocol";
@@ -17,6 +18,11 @@ import {
   registerDashboardRoutes,
   type DashboardRuntime,
 } from "./dashboard.js";
+import { ProviderRequestError } from "./oauth-providers.js";
+import {
+  ToolConnectionExpiredError,
+  ToolPermissionDeniedError,
+} from "./tool-gateway.js";
 
 export interface CreateAppOptions {
   authRateLimit?: false | AuthRateLimitOptions;
@@ -97,6 +103,30 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
         error: { code: "mutation_id_conflict", message: error.message },
       });
     }
+    if (error instanceof ToolPermissionDeniedError) {
+      return reply.code(403).send({
+        error: { code: "tool_permission_denied", message: error.message },
+      });
+    }
+    if (error instanceof ToolConnectionExpiredError) {
+      return reply.code(409).send({
+        error: {
+          code: "tool_connection_expired",
+          message: error.message,
+          recoverableFromSync: error.recoverableFromSync,
+        },
+      });
+    }
+    if (error instanceof ProviderRequestError) {
+      return reply.code(error.authorizationInvalid ? 409 : 502).send({
+        error: {
+          code: error.authorizationInvalid
+            ? "provider_authorization_invalid"
+            : error.code,
+          message: error.message,
+        },
+      });
+    }
     if (isSqliteBusy(error)) {
       reply.header("retry-after", "1");
       return reply.code(503).send({
@@ -138,7 +168,7 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
   } else {
     app.get("/", async () => ({
       name: "One Status",
-      version: "0.3.0",
+      version: ONE_STATUS_VERSION,
       tagline: "One user. One status. Every AI. Private by design.",
       health: "/health",
     }));
@@ -147,7 +177,7 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
   app.get("/health", async () => ({
     status: "ok",
     service: "one-status-api",
-    version: "0.3.0",
+    version: ONE_STATUS_VERSION,
     ...(options.releaseId ? { release: options.releaseId } : {}),
   }));
 

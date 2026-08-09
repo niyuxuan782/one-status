@@ -1,4 +1,7 @@
+import packageMetadata from "../../../package.json" with { type: "json" };
 import { z } from "zod";
+
+export const ONE_STATUS_VERSION = packageMetadata.version;
 
 const timestampSchema = z.iso.datetime({ offset: true });
 

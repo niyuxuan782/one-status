@@ -1,5 +1,5 @@
 const releaseFallback = {
-  tag_name: "v0.3.0",
+  tag_name: "v0.5.0",
   assets: [],
   html_url: "https://github.com/niyuxuan782/one-status/releases/latest",
 };

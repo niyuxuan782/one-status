@@ -3,7 +3,10 @@ import type {
   DecryptedStatusSnapshot,
   SyncedStatusVault,
 } from "@one-status/client";
-import type { StatusDocument } from "@one-status/protocol";
+import {
+  ONE_STATUS_VERSION,
+  type StatusDocument,
+} from "@one-status/protocol";
 import { z } from "zod";
 import {
   applyStatusMutation,
@@ -22,7 +25,7 @@ export function createMcpServer(
   const server = new McpServer(
     {
       name: "one-status",
-      version: "0.3.0",
+      version: ONE_STATUS_VERSION,
     },
     {
       instructions:
@@ -30,7 +33,10 @@ export function createMcpServer(
         "When the user asks to read, load, restore, continue, or show their One Status context, " +
         "call status_get_context before inspecting repository files or using shell commands. " +
         "Use the focused status tools for profile, memory, project, and context requests. " +
-        "Use tools_list to discover approved OAuth actions and tools_execute to run them without exposing credentials.",
+        "For every request involving Calendar, Slack, GitHub, or another connected service, call tools_list first and prefer the One Status Gateway over direct provider APIs, shell CLIs, or asking the user for a token. " +
+        "Only call a connection and action returned by the latest tools_list result, and construct arguments from that action's inputSchema; then use tools_execute so provider credentials remain inside One Status. " +
+        "Read-only actions may run immediately. Before an action marked requiresConfirmation, explain the concrete external change and obtain the user's explicit confirmation. " +
+        "When no eligible action is returned, tell the user which service or action must be connected, granted, or reauthorized in One Status instead of requesting provider credentials.",
     },
   );
 
@@ -247,7 +253,8 @@ export function createMcpServer(
       {
         title: "List approved One Status tools",
         description:
-          "List OAuth connections and actions the current Agent is allowed to use.",
+          "Call this first for Calendar, Slack, GitHub, and other third-party requests. " +
+          "Returns only connections and actions approved for this Agent, including inputSchema, read-only, and confirmation metadata; it never returns provider credentials.",
         inputSchema: {},
         annotations: {
           readOnlyHint: true,
@@ -264,19 +271,27 @@ export function createMcpServer(
       {
         title: "Execute an approved One Status action",
         description:
-          "Execute one action returned by tools_list. OAuth credentials remain inside One Status.",
+          "Execute one connection/action pair from the latest tools_list result through the One Status Gateway. " +
+          "OAuth credentials remain inside One Status. Obtain explicit user confirmation before actions marked requiresConfirmation.",
         inputSchema: {
           connectionId: z.uuid(),
           action: z.string().min(1),
           arguments: z.record(z.string(), z.unknown()).default({}),
+          confirmed: z
+            .boolean()
+            .default(false)
+            .describe(
+              "Set true only after the user explicitly confirms an action marked requiresConfirmation.",
+            ),
         },
       },
-      async ({ connectionId, action, arguments: arguments_ }) =>
+      async ({ connectionId, action, arguments: arguments_, confirmed }) =>
         toolResult({
           result: await toolGateway.execute({
             connectionId,
             action,
             arguments: arguments_,
+            confirmed,
           }),
         }),
     );

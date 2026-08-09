@@ -42,6 +42,131 @@ describe("Tool Gateway OAuth boundaries", () => {
     expect(fetch_).not.toHaveBeenCalled();
   });
 
+  it("returns safety metadata for actions available to an agent", () => {
+    const vault = createVault(vaults);
+    const connection = vault.upsertConnection({
+      accountId: "42",
+      credential: { accessToken: "github-access" },
+      label: "ryan",
+      provider: "github",
+      scopes: ["read:user", "repo"],
+      userId: "user-1",
+    });
+    vault.setGrant("user-1", connection.id, "codex", [
+      "github.viewer.get",
+      "github.issues.create",
+    ]);
+
+    expect(new ToolGateway(vault).list("user-1", "codex")).toEqual([
+      expect.objectContaining({
+        actions: expect.arrayContaining([
+          expect.objectContaining({
+            id: "github.viewer.get",
+            inputSchema: expect.objectContaining({
+              additionalProperties: false,
+              properties: {},
+              type: "object",
+            }),
+            readOnly: true,
+            requiresConfirmation: false,
+          }),
+          expect.objectContaining({
+            id: "github.issues.create",
+            readOnly: false,
+            requiresConfirmation: true,
+          }),
+        ]),
+      }),
+    ]);
+  });
+
+  it("blocks an unconfirmed write before the provider call and audits the denial", async () => {
+    const vault = createVault(vaults);
+    const connection = vault.upsertConnection({
+      accountId: "42",
+      credential: { accessToken: "github-access" },
+      label: "ryan",
+      provider: "github",
+      scopes: ["repo"],
+      userId: "user-1",
+    });
+    vault.setGrant("user-1", connection.id, "codex", [
+      "github.issues.create",
+    ]);
+    const fetch_ = vi.fn<ProviderFetch>(async (request, init) => {
+      expect(requestUrl(request)).toBe(
+        "https://api.github.com/repos/one-status/core/issues",
+      );
+      expect(init?.method).toBe("POST");
+      expect(JSON.parse(String(init?.body))).toMatchObject({
+        title: "Confirm tool writes",
+      });
+      return json({
+        assignees: [],
+        created_at: "2026-08-09T08:00:00Z",
+        html_url: "https://github.com/one-status/core/issues/7",
+        labels: [],
+        number: 7,
+        state: "open",
+        title: "Confirm tool writes",
+        updated_at: "2026-08-09T08:00:00Z",
+      });
+    });
+    const gateway = new ToolGateway(vault, { fetch: fetch_ });
+    const input = {
+      action: "github.issues.create",
+      agentId: "codex",
+      arguments: {
+        owner: "one-status",
+        repo: "core",
+        title: "Confirm tool writes",
+      },
+      connectionId: connection.id,
+      userId: "user-1",
+    };
+
+    await expect(gateway.execute(input)).rejects.toBeInstanceOf(
+      ToolPermissionDeniedError,
+    );
+    expect(fetch_).not.toHaveBeenCalled();
+    expect(vault.listAuditEvents("user-1")).toEqual([
+      expect.objectContaining({
+        action: "github.issues.create",
+        agentId: "codex",
+        connectionId: connection.id,
+        decision: "deny",
+        outcome: "blocked",
+      }),
+    ]);
+
+    await expect(
+      gateway.execute({ ...input, confirmed: false }),
+    ).rejects.toBeInstanceOf(ToolPermissionDeniedError);
+    expect(fetch_).not.toHaveBeenCalled();
+
+    await expect(
+      gateway.execute({ ...input, confirmed: true }),
+    ).resolves.toMatchObject({
+      number: 7,
+      title: "Confirm tool writes",
+    });
+    expect(fetch_).toHaveBeenCalledTimes(1);
+    expect(vault.listAuditEvents("user-1")).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action: "github.issues.create",
+          decision: "allow",
+          outcome: "success",
+        }),
+        expect.objectContaining({
+          action: "github.issues.create",
+          decision: "deny",
+          outcome: "blocked",
+        }),
+      ]),
+    );
+  });
+
   it("serializes concurrent Slack refreshes and stores both rotated tokens", async () => {
     const now = Date.now();
     const vault = createVault(vaults);

@@ -2,6 +2,7 @@ import {
   executeProviderAction,
   type ProviderFetch,
   ProviderRequestError,
+  providerActionInputSchema,
   providerCatalog,
   refreshOAuthCredential,
 } from "./oauth-providers.js";
@@ -17,6 +18,10 @@ export interface AvailableToolConnection {
   actions: Array<{
     description: string;
     id: string;
+    inputSchema: Record<string, unknown>;
+    readOnly: boolean;
+    requiredScopes: string[];
+    requiresConfirmation: boolean;
     title: string;
   }>;
   connection: OAuthConnection;
@@ -57,11 +62,19 @@ export class ToolGateway {
           actions:
             connection.status === "error"
               ? []
-              : providerCatalog[connection.provider].actions.filter(
-                  (action) =>
-                    allowed.has(action.id) &&
-                    hasScopes(connection.scopes, action.requiredScopes),
-                ),
+              : providerCatalog[connection.provider].actions
+                  .filter(
+                    (action) =>
+                      allowed.has(action.id) &&
+                      hasScopes(connection.scopes, action.requiredScopes),
+                  )
+                  .map((action) => ({
+                    ...action,
+                    inputSchema: providerActionInputSchema(
+                      connection.provider,
+                      action.id,
+                    ),
+                  })),
         };
       })
       .filter((entry) => entry.actions.length > 0);
@@ -71,6 +84,7 @@ export class ToolGateway {
     action: string;
     agentId: string;
     arguments?: unknown;
+    confirmed?: boolean;
     connectionId: string;
     userId: string;
   }): Promise<unknown> {
@@ -104,6 +118,18 @@ export class ToolGateway {
       !hasRequiredScopes ||
       connection.status === "error"
     ) {
+      this.vault.recordAudit({
+        action: input.action,
+        agentId: input.agentId,
+        connectionId: input.connectionId,
+        decision: "deny",
+        outcome: "blocked",
+        userId: input.userId,
+      });
+      throw new ToolPermissionDeniedError();
+    }
+
+    if (actionDefinition.requiresConfirmation && input.confirmed !== true) {
       this.vault.recordAudit({
         action: input.action,
         agentId: input.agentId,

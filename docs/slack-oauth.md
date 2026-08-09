@@ -1,9 +1,13 @@
 # Slack OAuth 配置
 
-One Status 使用 Slack 的 public client PKCE 流程，并申请用户级只读 scope：
+One Status 使用 Slack 的 public client PKCE 流程，并申请用户级 scope：
 
 - `channels:read`
 - `groups:read`
+- `channels:history`
+- `groups:history`
+- `search:read`
+- `chat:write`
 
 该模式只需要 Client ID。Client Secret 不会进入 Dashboard、Permission Vault、token exchange 或 refresh 请求。
 
@@ -33,7 +37,7 @@ http://127.0.0.1:8787/oauth/slack/callback
 授权请求使用：
 
 ```text
-user_scope=channels:read,groups:read
+user_scope=channels:read,groups:read,channels:history,groups:history,search:read,chat:write
 code_challenge=<S256 challenge>
 code_challenge_method=S256
 ```
@@ -49,7 +53,8 @@ code_challenge_method=S256
 连接完成后检查：
 
 1. Connections 显示 Slack Workspace 和 `connected` 状态。
-2. 只给目标 Agent 开启 `slack.channels.list`。
+2. 只给目标 Agent 开启实际需要的 Slack actions。
 3. Agent 调用 `tools_list` 能看到 Slack 连接。
-4. `tools_execute` 能列出当前用户可访问的公开频道和已加入的私有频道。
+4. `tools_execute` 能列出频道、读取消息历史或搜索消息。
 5. 令牌临近过期时，只触发一次 refresh，并保存 Slack 返回的新 refresh token。
+6. `slack.messages.post` 在用户明确确认前保持阻断，确认后只发送到参数指定的频道。

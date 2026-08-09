@@ -54,6 +54,9 @@
 | Slack Client Secret 落盘 | Slack 使用 public client PKCE，只保存 Client ID；exchange 与 refresh 不发送 Client Secret |
 | Dashboard 跨站写入 | 回环 Host 校验、HttpOnly SameSite cookie、Origin 与 CSRF 双校验、CSP |
 | Agent 越权调用 | connection + agent + action grant 校验、固定 action registry、allow/deny 审计 |
+| Agent 绕过 Gateway 索要 Token | MCP instructions 要求第三方任务先调用 `tools_list`，无 action 时只提供连接与授权引导 |
+| 写 action 未获确认 | action registry 标记 `requiresConfirmation`，Gateway 拒绝缺少明确确认的调用 |
+| Provider API 被当成任意 HTTP 代理 | 每个 action 固定 endpoint、method、参数 schema、响应 schema 和大小上限 |
 
 ## 已知限制
 
@@ -66,7 +69,8 @@
 - 本地 MCP 对当前 Status 拥有完整解密能力，细粒度 Agent 数据授权尚未实现。
 - 本地 Permission Vault key 与本机密文位于同一受信任设备，尚未接入系统安全存储；同步 bundle 的派生密钥依赖 Status Key 保密。
 - `agentId` 由 MCP 启动配置提供，尚未绑定设备签名或独立 Agent credential；持有设备 Token 的本地进程可以伪装其他 Agent。
-- Google OAuth 已完成真实端到端验收；GitHub 与 Slack 仍需真实 Provider App 和账号验收。
+- 写 action 的 `confirmed` 当前由受信任本地 Agent 在获得用户确认后声明，尚未升级为 Dashboard 签发的一次性确认凭证。
+- Google、GitHub 与 Slack 已完成真实账号验收；新增 Slack history、search 和 chat scopes 需要现有连接重新授权后才会开放。
 - 在线 MCP runtime 持有 Status Key，部署平台管理员可以读取运行时内存和环境变量。
 - HTTP MCP bearer 提供 endpoint 访问控制，公网机密性依赖外部 TLS reverse proxy。
 - 开发服务器使用 Node.js 内置 SQLite，当前 Node 版本仍标记该 API 为 experimental。

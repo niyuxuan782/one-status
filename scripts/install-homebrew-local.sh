@@ -52,6 +52,7 @@ if brew tap | grep -qx "one-status/local"; then
 fi
 brew tap one-status/local "$TAP_DIR"
 brew install one-status/local/one-status
+brew link --overwrite one-status/local/one-status
 
 one-status version
 # Homebrew cleanup may remove the original file:// source artifact. Restore the
