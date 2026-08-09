@@ -140,6 +140,10 @@ jobs:
           (cd release-assets && sha256sum * | sort -k2 > SHA256SUMS.txt)
           test -f release-assets/One-Status-${GITHUB_REF_NAME#v}-mac-arm64.dmg
           test -f release-assets/One-Status-${GITHUB_REF_NAME#v}-mac-x64.dmg
+          unzip -Z1 release-assets/One-Status-${GITHUB_REF_NAME#v}-mac-arm64.zip |
+            grep -Eq '^(One Status|one-status)\.app/Contents/Info\.plist$'
+          unzip -Z1 release-assets/One-Status-${GITHUB_REF_NAME#v}-mac-x64.zip |
+            grep -Eq '^(One Status|one-status)\.app/Contents/Info\.plist$'
           test -f release-assets/One-Status-Setup-${GITHUB_REF_NAME#v}-windows-x64.exe
           test -f release-assets/One-Status-${GITHUB_REF_NAME#v}-linux-x64.AppImage
           test -f release-assets/one-status-${GITHUB_REF_NAME#v}.tgz

@@ -41,7 +41,7 @@ const cask = `cask "one-status" do
 
   depends_on :macos
 
-  app "One Status.app"
+  app "one-status.app", target: "One Status.app"
 
   caveats <<~EOS
     This preview build has not completed Apple Developer ID notarization.

@@ -294,8 +294,10 @@ if [ "$PLATFORM" = "mac" ]; then
   if ! unzip -q "$ARCHIVE" -d "$EXTRACT_DIRECTORY"; then
     fail "could not extract $ASSET_NAME."
   fi
-  APP_SOURCE="$(find "$EXTRACT_DIRECTORY" -type d -name 'One Status.app' -prune | head -n 1)"
-  [ -n "$APP_SOURCE" ] || fail "$ASSET_NAME does not contain One Status.app."
+  APP_SOURCE="$(find "$EXTRACT_DIRECTORY" -type d \( -name 'One Status.app' -o -name 'one-status.app' \) -prune | head -n 1)"
+  [ -n "$APP_SOURCE" ] || fail "$ASSET_NAME does not contain a supported One Status app bundle."
+  BUNDLE_IDENTIFIER="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP_SOURCE/Contents/Info.plist" 2>/dev/null || true)"
+  [ "$BUNDLE_IDENTIFIER" = "top.furesta.onestatus" ] || fail "$ASSET_NAME contains an unexpected app bundle identifier."
 
   INSTALL_DIRECTORY="${ONE_STATUS_INSTALL_DIR:-$HOME/Applications}"
   APP_DESTINATION="$INSTALL_DIRECTORY/One Status.app"
