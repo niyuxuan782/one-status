@@ -7,6 +7,7 @@ import {
 } from "./permission-vault.js";
 
 const REQUEST_TIMEOUT_MS = 15_000;
+const PROVIDER_RESPONSE_MAX_BYTES = 1024 * 1024;
 
 export type ProviderFetch = (
   input: string | URL | Request,
@@ -641,14 +642,53 @@ async function providerFetch(
 }
 
 async function readJson(response: Response): Promise<unknown> {
+  const declaredLength = Number(response.headers.get("content-length"));
+  if (
+    Number.isFinite(declaredLength) &&
+    declaredLength > PROVIDER_RESPONSE_MAX_BYTES
+  ) {
+    await response.body?.cancel();
+    throw providerResponseTooLarge();
+  }
+
   try {
-    return await response.json();
-  } catch {
+    if (!response.body) {
+      return JSON.parse("");
+    }
+    const reader = response.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > PROVIDER_RESPONSE_MAX_BYTES) {
+        await reader.cancel();
+        throw providerResponseTooLarge();
+      }
+      chunks.push(value);
+    }
+    const bytes = new Uint8Array(size);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+  } catch (error) {
+    if (error instanceof ProviderRequestError) throw error;
     throw new ProviderRequestError(
       "Provider returned an unreadable response.",
       "invalid_provider_response",
     );
   }
+}
+
+function providerResponseTooLarge(): ProviderRequestError {
+  return new ProviderRequestError(
+    "Provider response exceeded the allowed size.",
+    "provider_response_too_large",
+  );
 }
 
 function parseTokenResponse(
@@ -739,7 +779,7 @@ function requiredClientSecret(config: OAuthProviderConfig): string {
 function githubHeaders(): Record<string, string> {
   return {
     "x-github-api-version": "2022-11-28",
-    "user-agent": "one-status/0.1.1",
+    "user-agent": "one-status/0.2.0",
   };
 }
 

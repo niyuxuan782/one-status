@@ -6,6 +6,7 @@ import type {
 } from "./dashboard-backend.js";
 import { PermissionSyncService } from "./permission-sync.js";
 import { PermissionVault } from "./permission-vault.js";
+import { ToolConnectionExpiredError } from "./tool-gateway.js";
 
 describe("Permission Vault encrypted sync", () => {
   it("moves credentials and grants between device-local vaults as ciphertext", async () => {
@@ -83,6 +84,74 @@ describe("Permission Vault encrypted sync", () => {
         userId: "user-1",
       })).run(() => undefined),
     ).rejects.toThrow("Unable to decrypt the synced Permission Vault");
+    first.close();
+    second.close();
+  });
+
+  it("recovers a single-use refresh race from another device", async () => {
+    const backend = new MemoryBackend();
+    const first = createVault(7);
+    const second = createVault(8);
+    const context = async () => ({
+      statusKey: new Uint8Array(32).fill(9),
+      userId: "user-1",
+    });
+    const firstSync = new PermissionSyncService(backend, first, context);
+    first.configureProvider("user-1", "slack", { clientId: "slack-client" });
+    const connection = first.upsertConnection({
+      accountId: "T1",
+      credential: {
+        accessToken: "old-access",
+        refreshToken: "single-use-refresh",
+      },
+      expiresAt: "2026-08-09T00:00:00.000Z",
+      label: "Workspace",
+      provider: "slack",
+      scopes: ["channels:read", "groups:read"],
+      userId: "user-1",
+    });
+    await firstSync.run(() => undefined);
+    let publishedRotation = false;
+    const secondSync = new PermissionSyncService(backend, second, context, {
+      refreshRetryDelaysMs: [0],
+      sleep: async () => {
+        if (publishedRotation) return;
+        publishedRotation = true;
+        await firstSync.run(() => {
+          first.updateCredential(
+            "user-1",
+            connection.id,
+            {
+              accessToken: "rotated-access",
+              refreshToken: "rotated-refresh",
+            },
+            "2026-08-10T00:00:00.000Z",
+          );
+        });
+      },
+    });
+    let attempts = 0;
+
+    const credential = await secondSync.run(() => {
+      attempts += 1;
+      const current = second.getConnectionWithCredential(
+        "user-1",
+        connection.id,
+      );
+      if (current?.credential.refreshToken === "single-use-refresh") {
+        throw new ToolConnectionExpiredError(true);
+      }
+      return current?.credential;
+    });
+
+    expect(attempts).toBe(2);
+    expect(credential).toMatchObject({
+      accessToken: "rotated-access",
+      refreshToken: "rotated-refresh",
+    });
+    expect(second.getConnection("user-1", connection.id)?.status).toBe(
+      "connected",
+    );
     first.close();
     second.close();
   });

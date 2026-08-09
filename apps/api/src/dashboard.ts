@@ -36,6 +36,8 @@ const dashboardPaths = new Set([
   "/environment",
   "/integrations",
   "/devices",
+  "/activity",
+  "/security",
 ]);
 
 export interface DashboardRuntime {
@@ -49,6 +51,7 @@ export interface DashboardRuntime {
     | "overview"
     | "preview"
     | "publish"
+    | "registerProjectPath"
     | "unmapProject"
     | "write"
   >;
@@ -89,7 +92,7 @@ export function registerDashboardRoutes(
       if (path === "/" && !request.headers.accept?.includes("text/html")) {
         return {
           name: "One Status",
-          version: "0.1.1",
+          version: "0.2.0",
           tagline: "One user. One status. Every AI. Private by design.",
           dashboard: "/",
           health: "/health",
@@ -144,6 +147,7 @@ export function registerDashboardRoutes(
         return {
           ...snapshot,
           integrations: {
+            auditEvents: runtime.permissionVault.listAuditEvents(userId),
             connections: runtime.permissionVault.listConnections(userId),
             grants: runtime.permissionVault.listGrants(userId),
             providers: Object.values(providerCatalog).map((provider) => {
@@ -180,6 +184,20 @@ export function registerDashboardRoutes(
     if (!authorizeDashboard(request, reply, dashboardSession)) return;
     return dashboardCall(reply, () => runtime.handoffs.overview());
   });
+
+  app.put(
+    "/v1/dashboard/local-project-paths/:projectId",
+    async (request, reply) => {
+      if (!authorizeDashboardWrite(request, reply, dashboardSession, csrfToken)) {
+        return;
+      }
+      return dashboardCall(reply, async () => {
+        const { projectId } = handoffProjectParameterSchema.parse(request.params);
+        const { path } = localProjectMappingInputSchema.parse(request.body);
+        return runtime.handoffs.registerProjectPath(projectId, path);
+      });
+    },
+  );
 
   app.put(
     "/v1/dashboard/local-project-mappings/:projectId",
@@ -368,6 +386,42 @@ export function registerDashboardRoutes(
     });
   });
 
+  app.put("/v1/dashboard/tasks/:id", async (request, reply) => {
+    if (!authorizeDashboardWrite(request, reply, dashboardSession, csrfToken)) {
+      return;
+    }
+    return dashboardCall(reply, async () => {
+      const { id } = taskParameterSchema.parse(request.params);
+      const body = taskInputSchema.parse(request.body);
+      return runtime.backend.mutateStatus((status) => {
+        if (body.projectId && !status.projects[body.projectId]) {
+          throw new Error("Task project was not found.");
+        }
+        status.tasks[id] = {
+          id,
+          ...(body.projectId ? { projectId: body.projectId } : {}),
+          title: body.title,
+          status: body.status,
+          completed: body.completed,
+          next: body.next,
+          updatedAt: new Date().toISOString(),
+        };
+      });
+    });
+  });
+
+  app.delete("/v1/dashboard/tasks/:id", async (request, reply) => {
+    if (!authorizeDashboardWrite(request, reply, dashboardSession, csrfToken)) {
+      return;
+    }
+    return dashboardCall(reply, async () => {
+      const { id } = taskParameterSchema.parse(request.params);
+      return runtime.backend.mutateStatus((status) => {
+        delete status.tasks[id];
+      });
+    });
+  });
+
   app.post("/v1/dashboard/memories", async (request, reply) => {
     if (!authorizeDashboardWrite(request, reply, dashboardSession, csrfToken)) {
       return;
@@ -385,9 +439,54 @@ export function registerDashboardRoutes(
           ...(body.projectId ? { projectId: body.projectId } : {}),
           content: body.content,
           tags: body.tags,
+          state: "confirmed",
+          origin: { type: "manual", label: "One Status Dashboard" },
           createdAt: now,
           updatedAt: now,
         });
+      });
+    });
+  });
+
+  app.put("/v1/dashboard/memories/:id", async (request, reply) => {
+    if (!authorizeDashboardWrite(request, reply, dashboardSession, csrfToken)) {
+      return;
+    }
+    return dashboardCall(reply, async () => {
+      const { id } = memoryParameterSchema.parse(request.params);
+      const body = memoryInputSchema.parse(request.body);
+      return runtime.backend.mutateStatus((status) => {
+        if (body.scope === "project" && !body.projectId) {
+          throw new Error("Project memory requires a project.");
+        }
+        const index = status.memory.findIndex((entry) => entry.id === id);
+        if (index < 0) throw new Error("Memory was not found.");
+        const current = status.memory[index]!;
+        status.memory[index] = {
+          ...current,
+          scope: body.scope,
+          ...(body.projectId
+            ? { projectId: body.projectId }
+            : { projectId: undefined }),
+          content: body.content,
+          tags: body.tags,
+          updatedAt: new Date().toISOString(),
+        };
+      });
+    });
+  });
+
+  app.put("/v1/dashboard/memories/:id/confirm", async (request, reply) => {
+    if (!authorizeDashboardWrite(request, reply, dashboardSession, csrfToken)) {
+      return;
+    }
+    return dashboardCall(reply, async () => {
+      const { id } = memoryParameterSchema.parse(request.params);
+      return runtime.backend.mutateStatus((status) => {
+        const memory = status.memory.find((entry) => entry.id === id);
+        if (!memory) throw new Error("Memory was not found.");
+        memory.state = "confirmed";
+        memory.updatedAt = new Date().toISOString();
       });
     });
   });
@@ -961,6 +1060,19 @@ const projectInputSchema = z
   })
   .strict();
 
+const taskParameterSchema = z.object({
+  id: z.string().min(1).max(2_000),
+});
+const taskInputSchema = z
+  .object({
+    completed: z.array(z.string().max(1_000)).max(100).default([]),
+    next: z.array(z.string().max(1_000)).max(100).default([]),
+    projectId: z.string().min(1).max(120).optional(),
+    status: z.enum(["todo", "in_progress", "blocked", "done"]),
+    title: z.string().min(1).max(500),
+  })
+  .strict();
+
 const memoryInputSchema = z
   .object({
     content: z.string().min(1).max(20_000),
@@ -969,7 +1081,7 @@ const memoryInputSchema = z
     tags: z.array(z.string().max(80)).max(50).default([]),
   })
   .strict();
-const memoryParameterSchema = z.object({ id: z.uuid() });
+const memoryParameterSchema = z.object({ id: z.string().min(1).max(2_000) });
 const deviceParameterSchema = z.object({ id: z.uuid() });
 const connectionParameterSchema = z.object({ id: z.uuid() });
 const providerParameterSchema = z.object({ provider: z.string() });

@@ -79,6 +79,9 @@ export function applyStatusMutation(
         ...(mutation.projectId ? { projectId: mutation.projectId } : {}),
         content: mutation.content,
         tags: mutation.tags,
+        state: "candidate",
+        origin: { type: "agent", label: agentId },
+        createdByAgentId: agentId,
         createdAt: now,
         updatedAt: now,
       });

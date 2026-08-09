@@ -22,7 +22,7 @@ export function createMcpServer(
   const server = new McpServer(
     {
       name: "one-status",
-      version: "0.1.1",
+      version: "0.2.0",
     },
     {
       instructions:
@@ -52,11 +52,19 @@ export function createMcpServer(
             "tasks",
           ])
           .default("all"),
+        includeCandidates: z.boolean().default(false),
       },
     },
-    async ({ section }) => {
+    async ({ section, includeCandidates }) => {
       const snapshot = await vault.read();
-      const data = section === "all" ? snapshot.status : snapshot.status[section];
+      const visibleMemory = includeCandidates
+        ? snapshot.status.memory
+        : snapshot.status.memory.filter((entry) => entry.state === "confirmed");
+      const data = section === "all"
+        ? { ...snapshot.status, memory: visibleMemory }
+        : section === "memory"
+          ? visibleMemory
+          : snapshot.status[section];
       return toolResult({ version: snapshot.version, section, data });
     },
   );
@@ -117,12 +125,14 @@ export function createMcpServer(
       inputSchema: {
         scope: z.enum(["user", "project", "session"]).optional(),
         projectId: z.string().min(1).optional(),
+        includeCandidates: z.boolean().default(false),
       },
     },
-    async ({ scope, projectId }) => {
+    async ({ scope, projectId, includeCandidates }) => {
       const snapshot = await vault.read();
       const memory = snapshot.status.memory.filter(
         (entry) =>
+          (includeCandidates || entry.state === "confirmed") &&
           (!scope || entry.scope === scope) &&
           (!projectId || entry.projectId === projectId),
       );
@@ -137,16 +147,19 @@ export function createMcpServer(
       inputSchema: {
         query: z.string().min(1),
         limit: z.number().int().min(1).max(50).default(20),
+        includeCandidates: z.boolean().default(false),
       },
     },
-    async ({ query, limit }) => {
+    async ({ query, limit, includeCandidates }) => {
       const snapshot = await vault.read();
       const normalizedQuery = query.toLocaleLowerCase();
       const memory = snapshot.status.memory
-        .filter((entry) =>
-          [entry.content, ...entry.tags].some((value) =>
-            value.toLocaleLowerCase().includes(normalizedQuery),
-          ),
+        .filter(
+          (entry) =>
+            (includeCandidates || entry.state === "confirmed") &&
+            [entry.content, ...entry.tags].some((value) =>
+              value.toLocaleLowerCase().includes(normalizedQuery),
+            ),
         )
         .slice(0, limit);
       return toolResult({ version: snapshot.version, memory });
@@ -198,7 +211,7 @@ export function createMcpServer(
           (task) => task.status !== "done",
         ),
         sessionMemory: snapshot.status.memory.filter(
-          (entry) => entry.scope === "session",
+          (entry) => entry.state === "confirmed" && entry.scope === "session",
         ),
       });
     },
@@ -280,7 +293,10 @@ function projectView(snapshot: DecryptedStatusSnapshot, projectId: string) {
       (task) => task.projectId === projectId,
     ),
     memory: snapshot.status.memory.filter(
-      (entry) => entry.scope === "project" && entry.projectId === projectId,
+      (entry) =>
+        entry.state === "confirmed" &&
+        entry.scope === "project" &&
+        entry.projectId === projectId,
     ),
   };
 }

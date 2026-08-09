@@ -18,7 +18,7 @@ import {
 } from "@one-status/local-config";
 import type { MemoryScope, StatusDocument } from "@one-status/protocol";
 
-const VERSION = "0.1.1";
+const VERSION = "0.2.0";
 
 interface ParsedArguments {
   command: string;
@@ -162,6 +162,8 @@ async function remember(flags: Map<string, string>): Promise<void> {
       ...(projectId ? { projectId } : {}),
       content,
       tags: splitCsv(flags.get("tags")),
+      state: "confirmed",
+      origin: { type: "manual", label: "One Status CLI" },
       createdAt: now,
       updatedAt: now,
     });

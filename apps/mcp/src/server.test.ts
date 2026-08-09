@@ -31,6 +31,51 @@ describe("One Status MCP", () => {
     expect(shared.status.preferences.packageManager).toBe("pnpm");
   });
 
+  it("keeps candidate memory out of normal Agent reads", async () => {
+    const shared = new MemoryVault();
+    shared.status.memory = [
+      {
+        id: "candidate-1",
+        scope: "user",
+        content: "Unconfirmed inference",
+        tags: ["candidate"],
+        state: "candidate",
+        origin: { type: "agent", label: "codex" },
+        createdByAgentId: "codex",
+        createdAt: "2026-08-09T00:00:00.000Z",
+        updatedAt: "2026-08-09T00:00:00.000Z",
+      },
+      {
+        id: "confirmed-1",
+        scope: "user",
+        content: "Confirmed preference",
+        tags: ["confirmed"],
+        state: "confirmed",
+        origin: { type: "manual", label: "One Status Dashboard" },
+        createdAt: "2026-08-09T00:00:00.000Z",
+        updatedAt: "2026-08-09T00:00:00.000Z",
+      },
+    ];
+
+    const normal = await callTool(shared, "claude-code", "status_get_memory", {});
+    expect(JSON.stringify(normal)).toContain("Confirmed preference");
+    expect(JSON.stringify(normal)).not.toContain("Unconfirmed inference");
+
+    const rawStatus = await callTool(shared, "claude-code", "read_status", {});
+    expect(JSON.stringify(rawStatus)).toContain("Confirmed preference");
+    expect(JSON.stringify(rawStatus)).not.toContain("Unconfirmed inference");
+
+    const review = await callTool(shared, "claude-code", "status_get_memory", {
+      includeCandidates: true,
+    });
+    expect(JSON.stringify(review)).toContain("Unconfirmed inference");
+
+    const rawReview = await callTool(shared, "claude-code", "read_status", {
+      includeCandidates: true,
+    });
+    expect(JSON.stringify(rawReview)).toContain("Unconfirmed inference");
+  });
+
   it("lists the focused Phase 1 tool surface", async () => {
     const server = createMcpServer(new MemoryVault(), "codex");
     const client = new Client({ name: "tool-list-test", version: "1.0.0" });

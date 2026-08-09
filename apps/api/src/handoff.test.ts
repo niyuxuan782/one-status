@@ -311,6 +311,11 @@ describe("handoff service", () => {
       repositoryUrl: "https://github.com/acme/project.git",
       branch: "main",
       commit: published.repository.commit,
+      sourceCommit: preview.manifest.repository.commit,
+      fileDigests: {
+        handoffMarkdownSha256: expect.stringMatching(/^[0-9a-f]{64}$/),
+        manifestSha256: expect.stringMatching(/^[0-9a-f]{64}$/),
+      },
     });
     const tracked = await git(repository, ["show", "--format=", "--name-only", "HEAD"]);
     expect(tracked).toContain("src.txt");

@@ -114,11 +114,11 @@ Git、测试和 Secret 结果由程序采集。Agent 只负责生成目标、决
 | Projects | 已有便携项目；本机 checkout 可在 Handoff 页面关联 |
 | Handoff | 已有本机映射、Secret 预览、显式 commit/push、精确 commit clone/update、Agent 启动和本机活动记录 |
 | Agents 与工具 | 已有只读 Agent、MCP、Skills、Plugins、Rules Inventory |
-| Memory | 已有编辑；来源、候选确认和可读 Agent 待加入 |
-| Connections | Google 已完成真实 OAuth 与跨设备调用验收；GitHub 支持 OAuth App 和本机 `gh` 会话导入；Slack 等待 Workspace App 配置 |
+| Memory | 已有来源、候选确认、编辑、删除与 Agent 默认过滤 |
+| Connections | Google、GitHub、Slack 已完成真实授权与 Codex/Claude Code 调用验收 |
 | Devices | 已有稳定 installation ID、活动时间、在线状态与撤销 |
-| Activity | 已有本机 Handoff 活动；同步与工具时间线待加入 |
-| Security | 已有本机 Permission Vault、二次加密同步、恢复密钥流程和 macOS Keychain profile；密钥轮换待加入 |
+| Activity | 已有本机 Handoff 与脱敏工具授权审计时间线；同步事件待加入 |
+| Security | 已有加密状态、Permission Vault、设备、Agent grants 视图；密钥轮换待加入 |
 
 ## 第一阶段验收
 
@@ -132,4 +132,4 @@ Git、测试和 Secret 结果由程序采集。Agent 只负责生成目标、决
 6. 用户选择 Continue with Codex 或 Continue with Claude Code。
 7. Agent 获得当前目标、决策、完成项和下一步。
 
-当前已完成云端加密同步、设备 presence、本机 Inventory、基础 Status UI、Codex/Claude MCP、OAuth Permission Vault，以及手动 Publish Handoff 和 macOS Open and Continue。当前限制包括测试状态仍为 `not_run`、已有 checkout 必须 clean、目标 clone 目录必须尚未存在，以及 Agent 启动依赖 macOS Terminal 与本机 CLI。
+当前已完成云端加密同步、设备 presence、本机 Inventory 与显式项目导入、Status/Task/Memory UI、Codex/Claude MCP、三方真实 OAuth、工具审计，以及手动 Publish Handoff 和 macOS Open and Continue。新发布 Handoff 会记录源 commit 和文件 SHA-256。当前限制包括测试状态仍为 `not_run`、已有 checkout 必须 clean、目标 clone 目录必须尚未存在，以及 Agent 启动依赖 macOS Terminal 与本机 CLI。

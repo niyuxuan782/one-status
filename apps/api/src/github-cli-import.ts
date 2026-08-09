@@ -120,7 +120,7 @@ export class GitHubCliCredentialImporter {
         headers: {
           accept: "application/vnd.github+json",
           authorization: `Bearer ${accessToken}`,
-          "user-agent": "one-status/0.1.1",
+          "user-agent": "one-status/0.2.0",
           "x-github-api-version": "2022-11-28",
         },
         signal: AbortSignal.timeout(GITHUB_REQUEST_TIMEOUT_MS),

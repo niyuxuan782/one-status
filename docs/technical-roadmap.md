@@ -37,13 +37,13 @@ Device A / Agent A                         Device B / Agent B
 | Local Inventory | `apps/api/src/local-inventory.ts` | 只读发现项目、Agent、MCP、Skills、Plugins、Rules |
 | Production Deploy | `deploy` | 密文 Sync API、Caddy HTTPS、持久化与备份 |
 
-## Status v1
+## Status v2
 
 Status 顶层从第一天保留完整产品边界：
 
 ```ts
 interface StatusDocument {
-  schemaVersion: 1;
+  schemaVersion: 2;
   identity: Identity;
   preferences: Record<string, PreferenceValue>;
   memory: MemoryEntry[];
@@ -141,14 +141,14 @@ PUT /v1/status
 - [x] OAuth Authorization Code、PKCE、state 防重放和 Token refresh
 - [x] Google、GitHub、Slack Provider adapter
 - [x] Google Calendar OAuth
-- [ ] GitHub OAuth
-- [ ] Slack OAuth
+- [x] GitHub 真实凭据接入（本机 `gh` 导入）
+- [x] Slack OAuth
 - [x] Service Permission → Agent Permission → Action Permission
 - [ ] Agent 加密身份与短时调用凭证
 - [x] `tools_list` 与 `tools_execute`
 - [x] 调用审计与显式拒绝记录
 
-基础实现覆盖三方真实 OAuth endpoint 和首批只读 action。Google 已完成真实账号、两种 Agent grant、第二个空 Vault 恢复和 Calendar API 调用。GitHub 与 Slack 等待账号登录后创建 Provider App。GitHub 首版使用 OAuth App，生产权限模型将迁移到 GitHub App installation token。
+基础实现覆盖三方真实 OAuth endpoint 和首批只读 action。Google Calendar、GitHub 与 Slack 已完成真实账号、两种 Agent grant、跨 Vault 恢复和 Provider API 调用。GitHub 首版可导入本机 `gh` 会话，生产权限模型将迁移到 GitHub App installation token。
 
 Slack adapter 已切换到 user-token public client PKCE：`user_scope`、S256 challenge、`authed_user` token、无 Client Secret refresh、单次 refresh token 轮换和 `auth.revoke` 均有协议级测试。可导入 `docs/slack-app-manifest.yaml` 创建对应 Slack App。
 
@@ -161,9 +161,13 @@ Slack adapter 已切换到 user-token public client PKCE：`user_scope`、S256 c
 - [x] 稳定 installation ID、heartbeat 与 90 秒在线状态
 - [x] Codex / Claude Code 本机 Inventory
 - [x] MCP、Skills、Plugins、Rules 脱敏清单
+- [x] 本机项目显式确认导入与路径映射
+- [x] Memory 候选确认、来源与编辑
+- [x] Task State 编辑器
+- [x] Activity 与 Security 页面
 - [ ] 跨平台安装器
 - [x] 云端 Docker、Caddy、持久化与备份配置
-- [ ] VPS 公网部署和外部可观测性验收
+- [x] 腾讯云 VPS 公网部署、TLS 与健康检查验收
 
 ### M4：GitHub Handoff
 
@@ -173,6 +177,7 @@ Slack adapter 已切换到 user-token public client PKCE：`user_scope`、S256 c
 - [x] 程序采集 branch、commit、dirty state；测试状态明确记录为 `not_run`
 - [x] Secret scan 与操作确认
 - [x] `HANDOFF.md` 与 `.one-status/handoff.json`
+- [x] 源 commit 与 Handoff 文件 SHA-256 写入加密 Status 并在打开时校验
 - [x] 精确 commit 的 `Open and Continue`（clone 或 clean checkout update）
 - [x] Codex 与 Claude Code macOS Terminal Adapter
 - [x] 本机 Handoff Activity timeline

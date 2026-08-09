@@ -10,13 +10,20 @@ import {
   PermissionVault,
   type PermissionVaultBundle,
 } from "./permission-vault.js";
+import { ToolConnectionExpiredError } from "./tool-gateway.js";
 
 const EMPTY_UPDATED_AT = "1970-01-01T00:00:00.000Z";
 const KEY_INFO = "one-status/permission-vault-sync-v1";
+const DEFAULT_REFRESH_RETRY_DELAYS_MS = [100, 250, 500, 1_000];
 
 export interface PermissionSyncContext {
   statusKey: Uint8Array;
   userId: string;
+}
+
+export interface PermissionSyncOptions {
+  refreshRetryDelaysMs?: number[];
+  sleep?: (milliseconds: number) => Promise<void>;
 }
 
 export class PermissionSyncService {
@@ -26,6 +33,7 @@ export class PermissionSyncService {
     private readonly backend: DashboardBackend,
     private readonly vault: PermissionVault,
     private readonly loadContext: () => Promise<PermissionSyncContext>,
+    private readonly options: PermissionSyncOptions = {},
   ) {}
 
   run<T>(operation: () => Promise<T> | T): Promise<T> {
@@ -41,7 +49,26 @@ export class PermissionSyncService {
     const context = await this.loadContext();
     let syncedAt = await this.#reconcile(context);
     try {
-      return await operation();
+      try {
+        return await operation();
+      } catch (error) {
+        if (
+          !(error instanceof ToolConnectionExpiredError) ||
+          !error.recoverableFromSync
+        ) {
+          throw error;
+        }
+        for (const delay of this.options.refreshRetryDelaysMs ??
+          DEFAULT_REFRESH_RETRY_DELAYS_MS) {
+          await (this.options.sleep ?? sleep)(delay);
+          const reconciledAt = await this.#reconcile(context);
+          if (Date.parse(reconciledAt) > Date.parse(syncedAt)) {
+            syncedAt = reconciledAt;
+            return await operation();
+          }
+        }
+        throw error;
+      }
     } finally {
       const local = this.vault.exportBundle(context.userId);
       if (Date.parse(local.updatedAt) > Date.parse(syncedAt)) {
@@ -98,6 +125,10 @@ export class PermissionSyncService {
       }
     });
   }
+}
+
+function sleep(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 export class PermissionVaultSyncError extends Error {

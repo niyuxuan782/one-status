@@ -138,7 +138,7 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
   } else {
     app.get("/", async () => ({
       name: "One Status",
-      version: "0.1.1",
+      version: "0.2.0",
       tagline: "One user. One status. Every AI. Private by design.",
       health: "/health",
     }));
@@ -147,6 +147,7 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
   app.get("/health", async () => ({
     status: "ok",
     service: "one-status-api",
+    version: "0.2.0",
     ...(options.releaseId ? { release: options.releaseId } : {}),
   }));
 

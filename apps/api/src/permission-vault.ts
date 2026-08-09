@@ -68,6 +68,18 @@ export interface AgentGrant {
   updatedAt: string;
 }
 
+export interface ToolAuditEvent {
+  action: string;
+  agentId: string;
+  connectionId?: string;
+  createdAt: string;
+  decision: "allow" | "deny";
+  durationMs?: number;
+  id: string;
+  outcome: "success" | "error" | "blocked";
+  providerRequestId?: string;
+}
+
 export interface PermissionVaultBundle {
   connections: OAuthConnectionWithCredential[];
   format: "one-status.permission-vault-bundle";
@@ -284,26 +296,42 @@ export class PermissionVault {
     const codeVerifier = randomBytes(48).toString("base64url");
     const stateHash = hashState(state);
     const now = new Date();
-    this.#database
-      .prepare(
-        `INSERT INTO oauth_flows
-           (state_hash, user_id, provider, code_verifier, redirect_uri,
-            return_to, expires_at, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        stateHash,
-        input.userId,
-        input.provider,
-        this.#encrypt(
-          codeVerifier,
-          `flow:${input.userId}:${input.provider}:${stateHash}`,
-        ),
-        input.redirectUri,
-        safeReturnTo(input.returnTo),
-        new Date(now.getTime() + FLOW_TTL_MS).toISOString(),
-        now.toISOString(),
-      );
+    const nowIso = now.toISOString();
+    const returnTo = safeReturnTo(input.returnTo);
+    this.#database.exec("BEGIN IMMEDIATE");
+    try {
+      this.#database
+        .prepare(
+          `DELETE FROM oauth_flows
+            WHERE expires_at <= ?
+               OR (user_id = ? AND provider = ?)`,
+        )
+        .run(nowIso, input.userId, input.provider);
+      this.#database
+        .prepare(
+          `INSERT INTO oauth_flows
+             (state_hash, user_id, provider, code_verifier, redirect_uri,
+              return_to, expires_at, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          stateHash,
+          input.userId,
+          input.provider,
+          this.#encrypt(
+            codeVerifier,
+            `flow:${input.userId}:${input.provider}:${stateHash}`,
+          ),
+          input.redirectUri,
+          returnTo,
+          new Date(now.getTime() + FLOW_TTL_MS).toISOString(),
+          nowIso,
+        );
+      this.#database.exec("COMMIT");
+    } catch (error) {
+      this.#database.exec("ROLLBACK");
+      throw error;
+    }
     return {
       codeChallenge: createHash("sha256")
         .update(codeVerifier)
@@ -311,7 +339,7 @@ export class PermissionVault {
       codeVerifier,
       provider: input.provider,
       redirectUri: input.redirectUri,
-      returnTo: safeReturnTo(input.returnTo),
+      returnTo,
       state,
       userId: input.userId,
     };
@@ -440,7 +468,7 @@ export class PermissionVault {
           WHERE user_id = ? ORDER BY provider, label`,
       )
       .all(userId) as unknown as ConnectionRow[];
-    return rows.map(toConnection);
+    return rows.map((row) => toConnection(row));
   }
 
   getConnection(userId: string, id: string): OAuthConnection | null {
@@ -629,7 +657,7 @@ export class PermissionVault {
 
     return permissionVaultBundleSchema.parse({
       connections: connectionRows.map((row) => ({
-        ...toConnection(row),
+        ...toConnection(row, false),
         credential: parseCredential(
           this.#decrypt(row.credentials, `connection:${userId}:${row.id}`),
         ),
@@ -805,6 +833,45 @@ export class PermissionVault {
       );
   }
 
+  listAuditEvents(userId: string, limit = 100): ToolAuditEvent[] {
+    const safeLimit = Number.isSafeInteger(limit)
+      ? Math.min(Math.max(limit, 1), 200)
+      : 100;
+    const rows = this.#database
+      .prepare(
+        `SELECT id, connection_id, agent_id, action, decision, outcome,
+                provider_request_id, duration_ms, created_at
+           FROM tool_audit_events
+          WHERE user_id = ?
+          ORDER BY created_at DESC
+          LIMIT ?`,
+      )
+      .all(userId, safeLimit) as Array<{
+      action: string;
+      agent_id: string;
+      connection_id: string | null;
+      created_at: string;
+      decision: ToolAuditEvent["decision"];
+      duration_ms: number | null;
+      id: string;
+      outcome: ToolAuditEvent["outcome"];
+      provider_request_id: string | null;
+    }>;
+    return rows.map((row) => ({
+      id: row.id,
+      action: row.action,
+      agentId: row.agent_id,
+      ...(row.connection_id ? { connectionId: row.connection_id } : {}),
+      decision: row.decision,
+      outcome: row.outcome,
+      ...(row.provider_request_id
+        ? { providerRequestId: row.provider_request_id }
+        : {}),
+      ...(row.duration_ms === null ? {} : { durationMs: row.duration_ms }),
+      createdAt: row.created_at,
+    }));
+  }
+
   #updatedAt(userId: string): string {
     const row = this.#database
       .prepare(
@@ -956,8 +1023,12 @@ function normalizePermissionVaultBundle(value: unknown): unknown {
   };
 }
 
-function toConnection(row: ConnectionRow): OAuthConnection {
+function toConnection(
+  row: ConnectionRow,
+  deriveExpiration = true,
+): OAuthConnection {
   const expired =
+    deriveExpiration &&
     row.status === "connected" &&
     row.expires_at !== null &&
     Date.parse(row.expires_at) <= Date.now();

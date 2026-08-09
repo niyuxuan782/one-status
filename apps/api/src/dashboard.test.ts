@@ -151,6 +151,98 @@ describe("local dashboard", () => {
     expect(response.statusCode).toBe(403);
   });
 
+  it("manages task state and confirmed memory with provenance", async () => {
+    const page = await app.inject({
+      method: "GET",
+      url: "/projects",
+      headers: { accept: "text/html", host: "127.0.0.1:8787" },
+    });
+    const setCookie = page.headers["set-cookie"]!;
+    const cookie = (Array.isArray(setCookie) ? setCookie[0]! : setCookie).split(
+      ";",
+    )[0]!;
+    const csrf = page.body.match(/name="one-status-csrf" content="([^"]+)"/)?.[1];
+    const headers = {
+      cookie,
+      host: "127.0.0.1:8787",
+      origin: "http://127.0.0.1:8787",
+      "x-one-status-csrf": csrf!,
+    };
+
+    await app.inject({
+      method: "PUT",
+      url: "/v1/dashboard/projects/one-status",
+      headers,
+      payload: { name: "One Status", makeActive: true },
+    });
+    const task = await app.inject({
+      method: "PUT",
+      url: "/v1/dashboard/tasks/phase%3Aoauth",
+      headers,
+      payload: {
+        title: "Complete OAuth",
+        projectId: "one-status",
+        status: "in_progress",
+        completed: ["Google"],
+        next: ["Slack"],
+      },
+    });
+    expect(task.statusCode).toBe(200);
+    expect(backend.status.tasks["phase:oauth"]).toMatchObject({
+      title: "Complete OAuth",
+      status: "in_progress",
+      next: ["Slack"],
+    });
+
+    const createdMemory = await app.inject({
+      method: "POST",
+      url: "/v1/dashboard/memories",
+      headers,
+      payload: {
+        scope: "project",
+        projectId: "one-status",
+        content: "Use PKCE",
+        tags: ["oauth"],
+      },
+    });
+    expect(createdMemory.statusCode).toBe(200);
+    expect(backend.status.memory[0]).toMatchObject({
+      state: "confirmed",
+      origin: { type: "manual", label: "One Status Dashboard" },
+    });
+
+    const candidateId = "legacy-memory";
+    backend.status.memory.push({
+      id: candidateId,
+      scope: "user",
+      content: "Candidate",
+      tags: [],
+      state: "candidate",
+      origin: { type: "agent", label: "codex" },
+      createdByAgentId: "codex",
+      createdAt: new Date(0).toISOString(),
+      updatedAt: new Date(0).toISOString(),
+    });
+    const confirmed = await app.inject({
+      method: "PUT",
+      url: `/v1/dashboard/memories/${candidateId}/confirm`,
+      headers,
+      payload: {},
+    });
+    expect(confirmed.statusCode).toBe(200);
+    expect(
+      backend.status.memory.find((entry) => entry.id === candidateId)?.state,
+    ).toBe("confirmed");
+
+    const deleted = await app.inject({
+      method: "DELETE",
+      url: "/v1/dashboard/tasks/phase%3Aoauth",
+      headers,
+    });
+    expect(deleted.statusCode).toBe(200);
+    expect(backend.status.tasks["phase:oauth"]).toBeUndefined();
+  });
+
   it("preserves an OAuth secret while updating the public client ID", async () => {
     const page = await app.inject({
       method: "GET",
@@ -350,6 +442,27 @@ describe("local dashboard", () => {
     expect(replay.headers.location).toBe(
       "/integrations?oauth=error&provider=google&reason=invalid_oauth_state",
     );
+
+    const crossProviderState = await start();
+    const crossProvider = await app.inject({
+      method: "GET",
+      url: `/oauth/github/callback?code=unused&state=${crossProviderState}`,
+      headers: { host: "127.0.0.1:8787" },
+    });
+    expect(crossProvider.statusCode).toBe(303);
+    expect(crossProvider.headers.location).toBe(
+      "/integrations?oauth=error&provider=github&reason=invalid_oauth_state",
+    );
+
+    const crossProviderReplay = await app.inject({
+      method: "GET",
+      url: `/oauth/google/callback?code=unused&state=${crossProviderState}`,
+      headers: { host: "127.0.0.1:8787" },
+    });
+    expect(crossProviderReplay.statusCode).toBe(303);
+    expect(crossProviderReplay.headers.location).toBe(
+      "/integrations?oauth=error&provider=google&reason=invalid_oauth_state",
+    );
   });
 
   it("serves OAuth configuration, permission, and mobile controls", async () => {
@@ -368,6 +481,12 @@ describe("local dashboard", () => {
     expect(script.body).toContain("connectionDisplayStatus");
     expect(script.body).toContain("import-github-cli");
     expect(script.body).toContain("从 gh 导入");
+    expect(script.body).toContain("import-inventory-project");
+    expect(script.body).toContain('data.get("git") === "true"');
+    expect(script.body).toContain('data-form="task"');
+    expect(script.body).toContain("confirm-memory");
+    expect(script.body).toContain("Agent Permission Firewall");
+    expect(script.body).toContain("auditEvents");
     expect(script.body).toContain("gatewayAddress.textContent = location.host");
     expect(script.body).toContain('data-form="handoff-publish"');
     expect(script.body).toContain('data-form="handoff-open"');
@@ -864,6 +983,7 @@ class TestHandoffRuntime
       | "overview"
       | "preview"
       | "publish"
+      | "registerProjectPath"
       | "unmapProject"
       | "write"
     >
@@ -879,9 +999,16 @@ class TestHandoffRuntime
     return { projectId, path, repoRoot: path, createdAt: now, updatedAt: now };
   }
 
+  async registerProjectPath(projectId: string, path: string) {
+    this.mappingPath = path;
+    const now = new Date(0).toISOString();
+    return { projectId, path, createdAt: now, updatedAt: now };
+  }
+
   async overview() {
     return {
       activity: [],
+      localPaths: [],
       mappings: [],
       projects: [
         {

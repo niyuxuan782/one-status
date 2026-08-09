@@ -1,7 +1,8 @@
 import { readFile, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { DatabaseSync } from "node:sqlite";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   PermissionVault,
   type PermissionVaultBundle,
@@ -66,6 +67,114 @@ describe("Permission Vault", () => {
     expect(persisted).not.toContain("google-access-token-plaintext");
     expect(persisted).not.toContain("google-refresh-token-plaintext");
     expect(persisted).not.toContain(flow.codeVerifier);
+  });
+
+  it("keeps only the latest flow for each user and provider", () => {
+    const vault = new PermissionVault({
+      path: ":memory:",
+      key: new Uint8Array(32).fill(11),
+    });
+    const superseded = vault.createFlow({
+      provider: "google",
+      redirectUri: "https://os.example.test/oauth/google/callback",
+      userId: "user-1",
+    });
+    const otherProvider = vault.createFlow({
+      provider: "github",
+      redirectUri: "https://os.example.test/oauth/github/callback",
+      userId: "user-1",
+    });
+    const otherUser = vault.createFlow({
+      provider: "google",
+      redirectUri: "https://os.example.test/oauth/google/callback",
+      userId: "user-2",
+    });
+    const latest = vault.createFlow({
+      provider: "google",
+      redirectUri: "https://os.example.test/oauth/google/callback",
+      userId: "user-1",
+    });
+
+    expect(vault.consumeFlow(superseded.state)).toBeNull();
+    expect(vault.consumeFlow(latest.state)?.userId).toBe("user-1");
+    expect(vault.consumeFlow(otherProvider.state)?.provider).toBe("github");
+    expect(vault.consumeFlow(otherUser.state)?.userId).toBe("user-2");
+    vault.close();
+  });
+
+  it("returns bounded tool audit events without credential material", () => {
+    const vault = new PermissionVault({
+      path: ":memory:",
+      key: new Uint8Array(32).fill(12),
+    });
+    vault.recordAudit({
+      userId: "user-1",
+      connectionId: "connection-1",
+      agentId: "codex",
+      action: "slack.channels.list",
+      decision: "allow",
+      outcome: "success",
+      durationMs: 42,
+      providerRequestId: "request-1",
+    });
+    vault.recordAudit({
+      userId: "user-2",
+      agentId: "claude-code",
+      action: "github.repositories.list",
+      decision: "deny",
+      outcome: "blocked",
+    });
+
+    expect(vault.listAuditEvents("user-1", 1)).toEqual([
+      expect.objectContaining({
+        action: "slack.channels.list",
+        agentId: "codex",
+        connectionId: "connection-1",
+        decision: "allow",
+        durationMs: 42,
+        outcome: "success",
+        providerRequestId: "request-1",
+      }),
+    ]);
+    expect(JSON.stringify(vault.listAuditEvents("user-1"))).not.toContain(
+      "accessToken",
+    );
+    vault.close();
+  });
+
+  it("removes expired flows whenever a new flow is created", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-09T00:00:00.000Z"));
+    const directory = await mkdtemp(join(tmpdir(), "one-status-permissions-"));
+    directories.push(directory);
+    const path = join(directory, "permissions.sqlite");
+    const vault = new PermissionVault({
+      path,
+      keyPath: join(directory, "permission.key"),
+    });
+    try {
+      vault.createFlow({
+        provider: "google",
+        redirectUri: "https://os.example.test/oauth/google/callback",
+        userId: "expired-user",
+      });
+      vi.advanceTimersByTime(10 * 60 * 1_000 + 1);
+      vault.createFlow({
+        provider: "github",
+        redirectUri: "https://os.example.test/oauth/github/callback",
+        userId: "active-user",
+      });
+
+      const inspection = new DatabaseSync(path, { readOnly: true });
+      const rows = inspection
+        .prepare("SELECT user_id, provider FROM oauth_flows ORDER BY user_id")
+        .all();
+      inspection.close();
+      expect(rows).toEqual([{ user_id: "active-user", provider: "github" }]);
+    } finally {
+      vault.close();
+      vi.useRealTimers();
+    }
   });
 
   it("retains refresh material when Google omits it during reauthorization", () => {

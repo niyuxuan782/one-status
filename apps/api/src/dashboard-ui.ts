@@ -79,6 +79,8 @@ export function renderDashboardPage(csrfToken: string): string {
         ${navLink("/memory", "brain", "记忆")}
         ${navLink("/integrations", "integrations", "连接与权限")}
         ${navLink("/devices", "devices", "设备")}
+        ${navLink("/activity", "activity", "活动")}
+        ${navLink("/security", "shield", "安全")}
       </nav>
       <div class="sidebar-footer">
         <span class="health-dot"></span>
@@ -212,9 +214,10 @@ a { color: inherit; }
 .preference-row code { overflow-wrap: anywhere; color: #3f464c; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
 .memory-row { grid-template-columns: 100px minmax(0, 1fr) auto; }
 .memory-row p { margin: 0 0 7px; font-size: 13px; line-height: 1.5; white-space: pre-wrap; }
+.memory-row small { display: block; margin-top: 8px; color: var(--muted); font-size: 10px; }
 .scope { display: inline-flex; align-items: center; width: fit-content; min-height: 24px; padding: 0 7px; border-radius: 5px; background: #eaf0ff; color: #315aaf; font-size: 10px; font-weight: 700; text-transform: uppercase; }
-.segmented { display: inline-flex; padding: 3px; border: 1px solid var(--border); border-radius: 6px; background: #eef0f2; }
-.segmented button { min-height: 29px; padding: 0 10px; border: 0; border-radius: 4px; color: var(--muted); background: transparent; font-size: 12px; }
+.segmented { display: inline-flex; max-width: 100%; padding: 3px; overflow-x: auto; border: 1px solid var(--border); border-radius: 6px; background: #eef0f2; }
+.segmented button { flex: 0 0 auto; min-height: 29px; padding: 0 10px; border: 0; border-radius: 4px; color: var(--muted); background: transparent; font-size: 12px; }
 .segmented button.active { color: #22272b; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.07); }
 .card-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
 .item-card { min-width: 0; padding: 17px; border: 1px solid var(--border); border-radius: 6px; background: #fff; }
@@ -280,6 +283,12 @@ th, td { padding: 13px 14px; border-bottom: 1px solid #e8eaec; text-align: left;
 th { color: var(--muted); background: #f7f8f9; font-size: 10px; text-transform: uppercase; }
 tr:last-child td { border-bottom: 0; }
 .current-device { color: var(--green); font-size: 10px; font-weight: 700; }
+.row-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
+.task-status { display: inline-flex; min-height: 23px; align-items: center; padding: 0 7px; border-radius: 5px; font-size: 10px; font-weight: 700; white-space: nowrap; }
+.task-todo { color: #4f5961; background: #edf0f2; }
+.task-in_progress { color: #215fb1; background: #e8f1ff; }
+.task-blocked { color: var(--red); background: #fff0f0; }
+.task-done { color: var(--green); background: #e9f7f1; }
 .modal-backdrop { position: fixed; inset: 0; z-index: 80; display: grid; place-items: center; padding: 20px; background: rgba(17,20,23,.48); }
 .modal-backdrop[hidden] { display: none; }
 .modal { width: min(560px, 100%); max-height: calc(100vh - 40px); overflow: auto; border-radius: 7px; background: #fff; box-shadow: 0 22px 70px rgba(0,0,0,.2); }
@@ -392,6 +401,8 @@ function dashboardClient(): void {
     "/memory": { label: "记忆", render: renderMemory },
     "/integrations": { label: "连接与权限", render: renderIntegrations },
     "/devices": { label: "设备", render: renderDevices },
+    "/activity": { label: "活动", render: renderActivity },
+    "/security": { label: "安全", render: renderSecurity },
   };
 
   document.querySelector("#refresh")?.addEventListener("click", () => load());
@@ -451,7 +462,25 @@ function dashboardClient(): void {
           toast("项目已删除");
         }
       }
+      if (action === "add-task") return openTaskModal();
+      if (action === "edit-task") return openTaskModal(target.dataset.id);
+      if (action === "delete-task") {
+        if (confirm("删除这项任务？")) {
+          await api(`/v1/dashboard/tasks/${encodeURIComponent(target.dataset.id || "")}`, { method: "DELETE" });
+          await load(false);
+          toast("任务已删除");
+        }
+      }
       if (action === "add-memory") return openMemoryModal();
+      if (action === "edit-memory") return openMemoryModal(target.dataset.id);
+      if (action === "confirm-memory") {
+        await api(`/v1/dashboard/memories/${encodeURIComponent(target.dataset.id || "")}/confirm`, {
+          method: "PUT",
+          body: {},
+        });
+        await load(false);
+        toast("候选记忆已确认");
+      }
       if (action === "delete-memory") {
         if (confirm("删除这条记忆？")) {
           await api(`/v1/dashboard/memories/${target.dataset.id}`, { method: "DELETE" });
@@ -470,6 +499,9 @@ function dashboardClient(): void {
         });
         renderRoute();
         toast("本机环境清单已刷新");
+      }
+      if (action === "import-inventory-project") {
+        return openInventoryProjectModal(Number(target.dataset.index));
       }
       if (action === "map-handoff-project") {
         return openHandoffMappingModal(target.dataset.id!);
@@ -645,9 +677,25 @@ function dashboardClient(): void {
         closeModal();
         toast("项目已保存");
       }
+      if (form.dataset.form === "task") {
+        const id = stringValue(data, "id");
+        await api(`/v1/dashboard/tasks/${encodeURIComponent(id)}`, {
+          method: "PUT",
+          body: {
+            title: stringValue(data, "title"),
+            projectId: stringValue(data, "projectId") || undefined,
+            status: stringValue(data, "status"),
+            completed: lines(stringValue(data, "completed")),
+            next: lines(stringValue(data, "next")),
+          },
+        });
+        closeModal();
+        toast("任务已保存");
+      }
       if (form.dataset.form === "memory") {
-        await api("/v1/dashboard/memories", {
-          method: "POST",
+        const memoryId = stringValue(data, "id");
+        await api(memoryId ? `/v1/dashboard/memories/${memoryId}` : "/v1/dashboard/memories", {
+          method: memoryId ? "PUT" : "POST",
           body: {
             scope: stringValue(data, "scope"),
             projectId: stringValue(data, "projectId") || undefined,
@@ -657,6 +705,34 @@ function dashboardClient(): void {
         });
         closeModal();
         toast("记忆已保存");
+      }
+      if (form.dataset.form === "inventory-project") {
+        const id = stringValue(data, "id");
+        await api(`/v1/dashboard/projects/${encodeURIComponent(id)}`, {
+          method: "PUT",
+          body: {
+            name: stringValue(data, "name"),
+            summary: stringValue(data, "summary"),
+            currentGoal: "",
+            techStack: [],
+            decisions: [],
+            makeActive: data.get("makeActive") === "on",
+          },
+        });
+        const gitProject = data.get("git") === "true";
+        if (gitProject) {
+          await api(`/v1/dashboard/local-project-mappings/${encodeURIComponent(id)}`, {
+            method: "PUT",
+            body: { path: stringValue(data, "path") },
+          });
+        } else {
+          await api(`/v1/dashboard/local-project-paths/${encodeURIComponent(id)}`, {
+            method: "PUT",
+            body: { path: stringValue(data, "path") },
+          });
+        }
+        closeModal();
+        toast(gitProject ? "本机项目已注册并建立路径映射" : "本机项目已注册");
       }
       if (form.dataset.form === "handoff-mapping") {
         const projectId = stringValue(data, "projectId");
@@ -763,6 +839,9 @@ function dashboardClient(): void {
           api("/v1/dashboard/local-inventory"),
         ]);
       }
+      if (location.pathname === "/activity") {
+        handoffs = await api("/v1/dashboard/handoffs");
+      }
       syncState.className = "sync-state";
       syncState.innerHTML = "<span></span>版本 " + snapshot.version;
       renderRoute();
@@ -868,6 +947,7 @@ function dashboardClient(): void {
 
   function renderProjects(): string {
     const projects = Object.values(snapshot.status.projects) as any[];
+    const tasks = Object.values(snapshot.status.tasks) as any[];
     return `
       ${sectionHeader("项目", `${projects.length} 个项目 · ${snapshot.status.workspace.activeProjectId ? "已设置活动项目" : "无活动项目"}`, `<button class="button" data-action="add-project" type="button">${icon("plus")}新建项目</button>`)}
       ${projects.length ? `<div class="card-grid">${projects.map((project) => `
@@ -876,7 +956,14 @@ function dashboardClient(): void {
           <div class="card-body">${escapeHtml(project.currentGoal || project.summary || "暂无目标")}</div>
           <div class="tag-list">${project.techStack.map((tag: string) => `<span class="tag">${escapeHtml(tag)}</span>`).join("")}</div>
           <div class="card-actions"><small>${formatDate(project.updatedAt)}</small><div><button class="button secondary" data-action="edit-project" data-id="${escapeHtml(project.id)}" type="button">编辑</button> <button class="icon-button" data-action="delete-project" data-id="${escapeHtml(project.id)}" type="button" title="删除">${icon("trash")}</button></div></div>
-        </article>`).join("")}</div>` : emptyState("projects", "暂无项目", "当前项目列表为空")}`;
+        </article>`).join("")}</div>` : emptyState("projects", "暂无项目", "当前项目列表为空")}
+      <section class="panel" style="margin-top:20px">
+        <div class="panel-title"><h3>任务状态</h3><button class="button secondary" data-action="add-task" type="button">${icon("plus")}添加任务</button></div>
+        ${tasks.length ? `<div class="table-wrap"><table><thead><tr><th>任务</th><th>项目</th><th>状态</th><th>下一步</th><th>更新时间</th><th></th></tr></thead><tbody>${tasks.map((task) => {
+          const project = task.projectId ? snapshot.status.projects[task.projectId] : null;
+          return `<tr><td><strong>${escapeHtml(task.title)}</strong><br><small>${escapeHtml(task.id)}</small></td><td>${escapeHtml(project?.name || "—")}</td><td><span class="task-status task-${escapeHtml(task.status)}">${taskStatusLabel(task.status)}</span></td><td>${escapeHtml(task.next?.[0] || "—")}</td><td>${formatDate(task.updatedAt)}</td><td><div class="row-actions"><button class="button secondary" data-action="edit-task" data-id="${escapeHtml(task.id)}" type="button">编辑</button><button class="icon-button" data-action="delete-task" data-id="${escapeHtml(task.id)}" type="button" title="删除">${icon("trash")}</button></div></td></tr>`;
+        }).join("")}</tbody></table></div>` : '<div class="empty"><p>暂无任务状态</p></div>'}
+      </section>`;
   }
 
   function renderHandoffs(): string {
@@ -942,18 +1029,28 @@ function dashboardClient(): void {
       </section>
       <section class="panel">
         <div class="panel-title"><h3>本机项目与 Rules</h3><span>${inventory.projects.length} 个项目</span></div>
-        <div class="table-wrap"><table><thead><tr><th>项目</th><th>Git</th><th>Agent</th><th>标记</th></tr></thead><tbody>${inventory.projects.map((project: any) => `<tr><td><strong>${escapeHtml(project.name)}</strong><br><small>${escapeHtml(project.path)}</small></td><td>${project.git ? escapeHtml(project.branch || "Git") : "Local only"}</td><td>${escapeHtml(project.agents.join(", ") || "—")}</td><td><div class="tag-list">${project.markers.map((marker: string) => `<span class="tag">${escapeHtml(marker)}</span>`).join("") || "—"}</div></td></tr>`).join("") || '<tr><td colspan="4">暂无项目</td></tr>'}</tbody></table></div>
+        <div class="table-wrap"><table><thead><tr><th>项目</th><th>Git</th><th>Agent</th><th>标记</th><th></th></tr></thead><tbody>${inventory.projects.map((project: any, index: number) => {
+          const registered = Boolean(snapshot.status.projects[project.id]);
+          return `<tr><td><strong>${escapeHtml(project.name)}</strong><br><small>${escapeHtml(project.path)}</small></td><td>${project.git ? escapeHtml(project.branch || "Git") : "Local only"}</td><td>${escapeHtml(project.agents.join(", ") || "—")}</td><td><div class="tag-list">${project.markers.map((marker: string) => `<span class="tag">${escapeHtml(marker)}</span>`).join("") || "—"}</div></td><td>${registered ? '<span class="current-device">已注册</span>' : `<button class="button secondary" data-action="import-inventory-project" data-index="${index}" type="button">导入</button>`}</td></tr>`;
+        }).join("") || '<tr><td colspan="5">暂无项目</td></tr>'}</tbody></table></div>
         ${inventory.rules.length ? `<div class="tag-list" style="margin-top:12px">${inventory.rules.map((rule: any) => `<span class="tag">${escapeHtml(rule.type)} · ${escapeHtml(rule.agent)}</span>`).join("")}</div>` : ""}
       </section>
       ${inventory.warnings.length ? `<section class="panel"><div class="panel-title"><h3>扫描提示</h3><span>${inventory.warnings.length}</span></div>${inventory.warnings.map((warning: string) => `<p>${escapeHtml(warning)}</p>`).join("")}</section>` : ""}`;
   }
 
   function renderMemory(): string {
-    const memories = snapshot.status.memory.filter((entry: any) => memoryFilter === "all" || entry.scope === memoryFilter);
+    const candidates = snapshot.status.memory.filter((entry: any) => entry.state === "candidate");
+    const memories = snapshot.status.memory.filter((entry: any) =>
+      memoryFilter === "all"
+        ? true
+        : memoryFilter === "candidate"
+          ? entry.state === "candidate"
+          : entry.scope === memoryFilter,
+    );
     return `
-      ${sectionHeader("记忆", `${snapshot.status.memory.length} 条加密记录`, `<button class="button" data-action="add-memory" type="button">${icon("plus")}添加记忆</button>`)}
-      <div class="section-header"><div class="segmented">${["all", "user", "project", "session"].map((scope) => `<button class="${memoryFilter === scope ? "active" : ""}" data-action="filter-memory" data-scope="${scope}" type="button">${scope === "all" ? "全部" : scopeLabel(scope)}</button>`).join("")}</div><p>${memories.length} 条</p></div>
-      ${memories.length ? `<div class="memory-list">${memories.map((entry: any) => `<div class="memory-row"><span class="scope">${scopeLabel(entry.scope)}</span><div><p>${escapeHtml(entry.content)}</p><div class="tag-list">${entry.tags.map((tag: string) => `<span class="tag">${escapeHtml(tag)}</span>`).join("")}</div></div><button class="icon-button" data-action="delete-memory" data-id="${entry.id}" type="button" title="删除">${icon("trash")}</button></div>`).join("")}</div>` : emptyState("brain", "当前筛选下没有记忆", "当前记忆列表为空")}`;
+      ${sectionHeader("记忆", `${snapshot.status.memory.length} 条加密记录 · ${candidates.length} 条待确认`, `<button class="button" data-action="add-memory" type="button">${icon("plus")}添加记忆</button>`)}
+      <div class="section-header"><div class="segmented">${["all", "candidate", "user", "project", "session"].map((scope) => `<button class="${memoryFilter === scope ? "active" : ""}" data-action="filter-memory" data-scope="${scope}" type="button">${scope === "all" ? "全部" : scope === "candidate" ? `待确认 ${candidates.length}` : scopeLabel(scope)}</button>`).join("")}</div><p>${memories.length} 条</p></div>
+      ${memories.length ? `<div class="memory-list">${memories.map((entry: any) => `<div class="memory-row"><div><span class="scope">${scopeLabel(entry.scope)}</span>${entry.state === "candidate" ? '<span class="task-status task-in_progress" style="margin-top:6px">待确认</span>' : ""}</div><div><p>${escapeHtml(entry.content)}</p><div class="tag-list">${entry.tags.map((tag: string) => `<span class="tag">${escapeHtml(tag)}</span>`).join("")}</div><small>${escapeHtml(memoryOriginLabel(entry))} · ${formatDate(entry.updatedAt)}</small></div><div class="row-actions">${entry.state === "candidate" ? `<button class="button" data-action="confirm-memory" data-id="${escapeHtml(entry.id)}" type="button">${icon("check")}确认</button>` : ""}<button class="button secondary" data-action="edit-memory" data-id="${escapeHtml(entry.id)}" type="button">编辑</button><button class="icon-button" data-action="delete-memory" data-id="${escapeHtml(entry.id)}" type="button" title="删除">${icon("trash")}</button></div></div>`).join("")}</div>` : emptyState("brain", "当前筛选下没有记忆", "当前记忆列表为空")}`;
   }
 
   function renderIntegrations(): string {
@@ -991,6 +1088,76 @@ function dashboardClient(): void {
       <div class="table-wrap"><table><thead><tr><th>设备</th><th>创建时间</th><th>最近活动</th><th>状态</th><th></th></tr></thead><tbody>${snapshot.account.devices.map((device: any) => `<tr><td><strong>${escapeHtml(device.name)}</strong></td><td>${formatDate(device.createdAt)}</td><td>${formatDate(device.lastSeenAt)}</td><td>${device.id === snapshot.profile.deviceId ? '<span class="current-device">当前设备</span>' : device.online ? '<span class="current-device">在线</span>' : "离线"}</td><td>${device.id === snapshot.profile.deviceId ? "" : `<button class="button danger" data-action="revoke-device" data-id="${device.id}" type="button">撤销</button>`}</td></tr>`).join("")}</tbody></table></div>`;
   }
 
+  function renderActivity(): string {
+    const auditEvents = snapshot.integrations.auditEvents || [];
+    const localEvents = handoffs?.activity || [];
+    const connections = new Map(
+      snapshot.integrations.connections.map((connection: any) => [connection.id, connection]),
+    );
+    const events = [
+      ...auditEvents.map((entry: any) => ({ ...entry, kind: "tool" })),
+      ...localEvents.map((entry: any) => ({ ...entry, kind: "handoff" })),
+    ].sort((left: any, right: any) => Date.parse(right.createdAt) - Date.parse(left.createdAt));
+    const successful = auditEvents.filter((entry: any) => entry.outcome === "success").length;
+    const blocked = auditEvents.filter((entry: any) => entry.outcome === "blocked").length;
+    return `
+      ${sectionHeader("活动", `${events.length} 条本机脱敏记录`)}
+      <div class="metrics">
+        ${metric("activity", "工具调用", auditEvents.length, "不记录 OAuth Token")}
+        ${metric("check", "调用成功", successful, "Provider 已响应")}
+        ${metric("shield", "权限拦截", blocked, "Agent Permission Firewall")}
+        ${metric("cloud", "Handoff", localEvents.length, "当前设备记录")}
+      </div>
+      ${events.length ? `<div class="table-wrap"><table><thead><tr><th>时间</th><th>来源</th><th>操作</th><th>目标</th><th>结果</th><th>耗时</th></tr></thead><tbody>${events.map((entry: any) => {
+        if (entry.kind === "handoff") {
+          return `<tr><td>${formatDate(entry.createdAt)}</td><td>本机 Handoff</td><td><strong>${handoffActivityLabel(entry.type)}</strong></td><td>${escapeHtml(entry.projectId || "—")}</td><td><span class="task-status task-done">完成</span></td><td>—</td></tr>`;
+        }
+        const connection = connections.get(entry.connectionId) as any;
+        return `<tr><td>${formatDate(entry.createdAt)}</td><td>${escapeHtml(agentLabel(entry.agentId))}</td><td><strong>${escapeHtml(entry.action)}</strong></td><td>${escapeHtml(connection?.label || providerLabel(connection?.provider || ""))}</td><td><span class="task-status ${auditOutcomeClass(entry.outcome)}">${auditOutcomeLabel(entry.outcome)}</span></td><td>${entry.durationMs === undefined ? "—" : `${escapeHtml(String(entry.durationMs))} ms`}</td></tr>`;
+      }).join("")}</tbody></table></div>` : emptyState("activity", "暂无活动", "Agent 工具调用与 Handoff 记录会显示在这里")}`;
+  }
+
+  function renderSecurity(): string {
+    const vault = snapshot.status.permissions.vault;
+    const configuredProviders = snapshot.integrations.providers.filter((provider: any) => provider.configured);
+    const onlineDevices = snapshot.account.devices.filter((device: any) => device.online).length;
+    const grants = snapshot.integrations.grants;
+    const connectionById = new Map(
+      snapshot.integrations.connections.map((connection: any) => [connection.id, connection]),
+    );
+    return `
+      ${sectionHeader("安全", "密钥、设备、连接和 Agent 权限的当前状态")}
+      <div class="metrics">
+        ${metric("shield", "Status 加密", "AES-256-GCM", `Version ${snapshot.version}`)}
+        ${metric("key", "Permission Vault", vault ? "已封装" : "仅本机", vault?.algorithm || "等待首次连接")}
+        ${metric("devices", "在线设备", onlineDevices, `${snapshot.account.devices.length} 台已注册`)}
+        ${metric("integrations", "Agent 授权", grants.length, `${snapshot.integrations.connections.length} 个连接`)}
+      </div>
+      <div class="layout-2">
+        <section class="panel">
+          <div class="panel-title"><h3>加密与同步</h3><span>PRIVATE BY DESIGN</span></div>
+          <div class="link-row"><div><strong>同步服务器</strong><small>${escapeHtml(snapshot.profile.baseUrl)}</small></div><span class="current-device">HTTPS</span></div>
+          <div class="link-row"><div><strong>Status Envelope</strong><small>明文只在当前设备解密</small></div><span class="scope">AES-256-GCM</span></div>
+          <div class="link-row"><div><strong>Permission Vault Bundle</strong><small>${vault ? `更新于 ${formatDate(vault.updatedAt)}` : "连接 OAuth 后生成"}</small></div><span class="scope">${vault ? "二次加密" : "LOCAL"}</span></div>
+          <div class="link-row"><div><strong>设备会话</strong><small>到期时间 ${formatDate(snapshot.profile.tokenExpiresAt)}</small></div><span class="current-device">当前设备</span></div>
+        </section>
+        <section class="panel">
+          <div class="panel-title"><h3>安全边界</h3><span>${configuredProviders.length}/3 PROVIDERS</span></div>
+          <div class="link-row"><div><strong>恢复密钥</strong><small>不会进入 Dashboard response 或云端明文</small></div>${icon("key")}</div>
+          <div class="link-row"><div><strong>OAuth Token</strong><small>Agent 只能调用已授权动作</small></div>${icon("shield")}</div>
+          <div class="link-row"><div><strong>本机绝对路径</strong><small>保存在设备本地 workspace 数据库</small></div>${icon("database")}</div>
+          <div class="link-row"><div><strong>原始会话记录</strong><small>默认留在 Agent 本机目录</small></div>${icon("terminal")}</div>
+        </section>
+      </div>
+      <section class="panel" style="margin-top:20px">
+        <div class="panel-title"><h3>Agent Permission Firewall</h3><span>${grants.length} 条授权</span></div>
+        ${grants.length ? `<div class="table-wrap"><table><thead><tr><th>Agent</th><th>服务账号</th><th>Provider</th><th>允许动作</th><th>更新时间</th></tr></thead><tbody>${grants.map((grant: any) => {
+          const connection = connectionById.get(grant.connectionId) as any;
+          return `<tr><td><strong>${escapeHtml(agentLabel(grant.agentId))}</strong></td><td>${escapeHtml(connection?.label || "已断开")}</td><td>${escapeHtml(providerLabel(connection?.provider || ""))}</td><td><div class="tag-list">${grant.actions.map((action: string) => `<span class="tag">${escapeHtml(action)}</span>`).join("")}</div></td><td>${formatDate(grant.updatedAt)}</td></tr>`;
+        }).join("")}</tbody></table></div>` : '<div class="empty"><p>尚未向 Agent 开放第三方动作</p></div>'}
+      </section>`;
+  }
+
   function openPreferenceModal(key?: string): void {
     const value = key ? snapshot.status.preferences[key] : "";
     openModal(key ? "编辑偏好" : "添加偏好", `<form data-form="preference"><div class="form-grid">${field("键", "key", key || "", "text", "full", key ? "readonly" : "")}${field("值", "value", formatValue(value), "text", "full")}</div>${modalActions()}</form>`);
@@ -999,6 +1166,34 @@ function dashboardClient(): void {
   function openProjectModal(id?: string): void {
     const project = id ? snapshot.status.projects[id] : null;
     openModal(project ? "编辑项目" : "新建项目", `<form data-form="project"><div class="form-grid">${field("项目 ID", "id", project?.id || "", "text", "full", project ? "readonly" : "")}${field("名称", "name", project?.name || "")}${field("技术栈", "techStack", project?.techStack?.join(", ") || "")}${textareaField("摘要", "summary", project?.summary || "")}${textareaField("当前目标", "currentGoal", project?.currentGoal || "")}${textareaField("架构决策（每行一项）", "decisions", project?.decisions?.join("\n") || "")}<label class="check-row full"><input type="checkbox" name="makeActive" ${project?.id === snapshot.status.workspace.activeProjectId ? "checked" : ""}><span><strong>设为活动项目</strong><small>新会话恢复时优先加载</small></span></label></div>${modalActions()}</form>`);
+  }
+
+  function openTaskModal(id?: string): void {
+    const task = id ? snapshot.status.tasks[id] : null;
+    openModal(task ? "编辑任务" : "添加任务", `<form data-form="task"><div class="form-grid">
+      ${field("任务 ID", "id", task?.id || "", "text", "full", `${task ? "readonly" : ""} required`)}
+      ${field("标题", "title", task?.title || "", "text", "full", "required")}
+      <div class="field"><label for="projectId">项目</label><select id="projectId" name="projectId"><option value="">无</option>${Object.values(snapshot.status.projects).map((project: any) => `<option value="${escapeHtml(project.id)}" ${project.id === task?.projectId ? "selected" : ""}>${escapeHtml(project.name)}</option>`).join("")}</select></div>
+      <div class="field"><label for="status">状态</label><select id="status" name="status">${["todo", "in_progress", "blocked", "done"].map((status) => `<option value="${status}" ${status === (task?.status || "todo") ? "selected" : ""}>${taskStatusLabel(status)}</option>`).join("")}</select></div>
+      ${textareaField("已完成（每行一项）", "completed", task?.completed?.join("\n") || "")}
+      ${textareaField("下一步（每行一项）", "next", task?.next?.join("\n") || "")}
+    </div>${modalActions()}</form>`);
+  }
+
+  function openInventoryProjectModal(index: number): void {
+    const project = inventory?.projects?.[index];
+    if (!project) throw new Error("本机项目已变化，请重新扫描。");
+    const summary = project.git
+      ? "从本机 Git 仓库确认导入。"
+      : "从本机 Workspace 确认导入。";
+    openModal("导入本机项目", `<form data-form="inventory-project"><input type="hidden" name="path" value="${escapeHtml(project.path)}"><input type="hidden" name="git" value="${project.git ? "true" : "false"}"><div class="form-grid">
+      ${field("项目 ID", "id", project.id, "text", "full", 'required pattern="[a-zA-Z0-9._-]+"')}
+      ${field("名称", "name", project.name, "text", "full", "required")}
+      ${textareaField("摘要", "summary", summary)}
+      <div class="field full"><label>本机路径</label><code class="handoff-path">${escapeHtml(project.path)}</code><small>该绝对路径只写入当前设备的 workspace 数据库。</small></div>
+      <div class="field full"><label>发现信息</label><div class="tag-list"><span class="tag">${project.git ? `Git · ${escapeHtml(project.branch || "detached")}` : "Local only"}</span>${project.agents.map((agent: string) => `<span class="tag">${escapeHtml(agent)}</span>`).join("")}${project.markers.map((marker: string) => `<span class="tag">${escapeHtml(marker)}</span>`).join("")}</div></div>
+      <label class="check-row full"><input type="checkbox" name="makeActive" checked><span><strong>设为活动项目</strong><small>${project.git ? "导入会写入项目元数据并建立本机 Git 路径映射。" : "导入会注册本地项目；初始化 Git 后可在 Handoff 页面建立仓库映射。"}不会自动推送 GitHub。</small></span></label>
+    </div>${modalActions("确认导入")}</form>`, true);
   }
 
   function openHandoffMappingModal(projectId: string): void {
@@ -1068,8 +1263,10 @@ function dashboardClient(): void {
     openModal(`Continue with ${agentLabel(agentId)}`, `<form data-form="handoff-open"><input type="hidden" name="projectId" value="${escapeHtml(projectId)}"><input type="hidden" name="agentId" value="${escapeHtml(agentId)}"><div class="form-grid"><div class="field full"><label>已发布版本</label><code class="handoff-path">${escapeHtml(handoff.repositoryUrl)}</code><code class="handoff-path">${escapeHtml(handoff.branch)} @ ${escapeHtml(handoff.commit)}</code></div>${destination}<label class="check-row full"><input type="checkbox" name="confirmCheckout" required><span><strong>确认检出精确 commit</strong><small>已有映射仅在工作区 clean 时更新；Agent 将在 macOS Terminal 中打开。</small></span></label></div>${modalActions(`打开 ${agentLabel(agentId)}`)}</form>`, true);
   }
 
-  function openMemoryModal(): void {
-    openModal("添加记忆", `<form data-form="memory"><div class="form-grid"><div class="field"><label>范围</label><select name="scope"><option value="user">用户</option><option value="project">项目</option><option value="session">会话</option></select></div><div class="field"><label>项目</label><select name="projectId"><option value="">无</option>${Object.values(snapshot.status.projects).map((project: any) => `<option value="${escapeHtml(project.id)}">${escapeHtml(project.name)}</option>`).join("")}</select></div>${textareaField("内容", "content", "")}${field("标签", "tags", "", "text", "full")}</div>${modalActions()}</form>`);
+  function openMemoryModal(id?: string): void {
+    const memory = id ? snapshot.status.memory.find((entry: any) => entry.id === id) : null;
+    if (id && !memory) throw new Error("记忆已变化，请刷新后重试。");
+    openModal(memory ? "编辑记忆" : "添加记忆", `<form data-form="memory"><input type="hidden" name="id" value="${escapeHtml(memory?.id || "")}"><div class="form-grid"><div class="field"><label>范围</label><select name="scope">${["user", "project", "session"].map((scope) => `<option value="${scope}" ${scope === (memory?.scope || "user") ? "selected" : ""}>${scopeLabel(scope)}</option>`).join("")}</select></div><div class="field"><label>项目</label><select name="projectId"><option value="">无</option>${Object.values(snapshot.status.projects).map((project: any) => `<option value="${escapeHtml(project.id)}" ${project.id === memory?.projectId ? "selected" : ""}>${escapeHtml(project.name)}</option>`).join("")}</select></div>${textareaField("内容", "content", memory?.content || "")}${field("标签", "tags", memory?.tags?.join(", ") || "", "text", "full")}${memory ? `<div class="field full"><label>来源</label><code class="handoff-path">${escapeHtml(memoryOriginLabel(memory))}</code><small>编辑会保留原始来源和创建时间。</small></div>` : ""}</div>${modalActions()}</form>`);
   }
 
   function openProviderModal(providerId: string): void {
@@ -1227,8 +1424,7 @@ function dashboardClient(): void {
     return agentId === "claude-code" ? "Claude Code" : agentId === "codex" ? "Codex" : agentId;
   }
   function connectionDisplayStatus(connection: any): { key: string; label: string } {
-    const expiredByTime = connection.expiresAt && new Date(connection.expiresAt).getTime() <= Date.now();
-    const status = expiredByTime ? "expired" : connection.status;
+    const status = connection.status;
     if (status === "connected") return { key: "connected", label: "已连接" };
     if (status === "expired") return { key: "expired", label: "需要重新授权" };
     return { key: "error", label: "连接异常" };
@@ -1246,8 +1442,35 @@ function dashboardClient(): void {
     if (type === "handoff_opened") return "已打开并继续";
     if (type === "handoff_written") return "已写入 Handoff";
     if (type === "project_mapped") return "已映射本机仓库";
+    if (type === "project_registered") return "已注册本机项目";
     if (type === "project_unmapped") return "已移除本机映射";
     return type;
+  }
+  function taskStatusLabel(status: string): string {
+    if (status === "in_progress") return "进行中";
+    if (status === "blocked") return "受阻";
+    if (status === "done") return "已完成";
+    return "待处理";
+  }
+  function memoryOriginLabel(memory: any): string {
+    if (memory.origin?.label) {
+      return memory.createdByAgentId
+        ? `来源：${memory.origin.label} · Agent：${agentLabel(memory.createdByAgentId)}`
+        : `来源：${memory.origin.label}`;
+    }
+    return memory.createdByAgentId
+      ? `Agent：${agentLabel(memory.createdByAgentId)}`
+      : "来源：旧版记录";
+  }
+  function auditOutcomeLabel(outcome: string): string {
+    if (outcome === "success") return "成功";
+    if (outcome === "blocked") return "已拦截";
+    return "失败";
+  }
+  function auditOutcomeClass(outcome: string): string {
+    if (outcome === "success") return "task-done";
+    if (outcome === "blocked") return "task-blocked";
+    return "task-blocked";
   }
   function scopeLabel(scope: string): string {
     return scope === "user" ? "用户" : scope === "project" ? "项目" : "会话";

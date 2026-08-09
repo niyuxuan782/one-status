@@ -124,7 +124,10 @@ async function main(): Promise<void> {
     const [contextOnB, profileOnB, memoryOnB] = await Promise.all([
       call(agentB.client, "status_get_context", {}),
       call(agentB.client, "status_get_profile", {}),
-      call(agentB.client, "status_search_memory", { query: "pnpm" }),
+      call(agentB.client, "status_search_memory", {
+        query: "pnpm",
+        includeCandidates: true,
+      }),
     ]);
     assertContains(contextOnB, "One Status");
     assertContains(profileOnB, "pnpm");

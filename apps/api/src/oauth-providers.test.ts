@@ -411,6 +411,28 @@ describe("OAuth provider protocols", () => {
       nextCursor: "next",
     });
   });
+
+  it("rejects oversized provider responses before parsing JSON", async () => {
+    await expect(
+      executeProviderAction({
+        action: "slack.channels.list",
+        arguments: {},
+        credential: { accessToken: "slack-access" },
+        fetch: async () =>
+          new Response("{}", {
+            status: 200,
+            headers: {
+              "content-length": String(1024 * 1024 + 1),
+              "content-type": "application/json",
+            },
+          }),
+        provider: "slack",
+      }),
+    ).rejects.toMatchObject({
+      code: "provider_response_too_large",
+      name: "ProviderRequestError",
+    });
+  });
 });
 
 function requestUrl(input: string | URL | Request): string {

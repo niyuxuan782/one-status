@@ -4,18 +4,31 @@ const timestampSchema = z.iso.datetime({ offset: true });
 
 export const memoryScopeSchema = z.enum(["user", "project", "session"]);
 
-export const memoryEntrySchema = z
+export const memoryOriginSchema = z
+  .object({
+    type: z.enum(["manual", "agent", "imported", "generated"]),
+    label: z.string().min(1).max(200),
+    reference: z.string().min(1).max(2_000).optional(),
+  })
+  .strict();
+
+const memoryEntryObjectSchema = z
   .object({
     id: z.string().min(1),
     scope: memoryScopeSchema,
     projectId: z.string().min(1).optional(),
     content: z.string().min(1),
     tags: z.array(z.string().min(1)).default([]),
+    state: z.enum(["candidate", "confirmed"]),
+    origin: memoryOriginSchema.optional(),
+    createdByAgentId: z.string().min(1).max(120).optional(),
     createdAt: timestampSchema,
     updatedAt: timestampSchema,
   })
-  .strict()
-  .superRefine((entry, context) => {
+  .strict();
+
+export const memoryEntrySchema = memoryEntryObjectSchema.superRefine(
+  (entry, context) => {
     if (entry.scope === "project" && !entry.projectId) {
       context.addIssue({
         code: "custom",
@@ -23,7 +36,8 @@ export const memoryEntrySchema = z
         path: ["projectId"],
       });
     }
-  });
+  },
+);
 
 export const projectHandoffSchema = z
   .object({
@@ -38,6 +52,14 @@ export const projectHandoffSchema = z
     }, "repositoryUrl must be an HTTPS github.com URL"),
     branch: z.string().min(1).max(255),
     commit: z.string().regex(/^[0-9a-f]{40,64}$/),
+    sourceCommit: z.string().regex(/^[0-9a-f]{40,64}$/).optional(),
+    fileDigests: z
+      .object({
+        handoffMarkdownSha256: z.string().regex(/^[0-9a-f]{64}$/),
+        manifestSha256: z.string().regex(/^[0-9a-f]{64}$/),
+      })
+      .strict()
+      .optional(),
     publishedAt: timestampSchema,
     sourceDeviceId: z.string().min(1),
     statusVersion: z.number().int().positive(),
@@ -105,7 +127,7 @@ const preferenceValueSchema = z.union([
 
 export const statusDocumentSchema = z
   .object({
-    schemaVersion: z.literal(1),
+    schemaVersion: z.literal(2),
     identity: z
       .object({
         displayName: z.string().optional(),
@@ -138,8 +160,34 @@ export const statusDocumentSchema = z
   })
   .strict();
 
+const legacyMemoryEntrySchema = memoryEntryObjectSchema
+  .omit({ state: true, origin: true, createdByAgentId: true })
+  .superRefine((entry, context) => {
+    if (entry.scope === "project" && !entry.projectId) {
+      context.addIssue({
+        code: "custom",
+        message: "projectId is required for project memory",
+        path: ["projectId"],
+      });
+    }
+  });
+const legacyProjectHandoffSchema = projectHandoffSchema
+  .omit({ sourceCommit: true, fileDigests: true })
+  .strict();
+const legacyProjectSchema = projectSchema
+  .extend({ handoff: legacyProjectHandoffSchema.optional() })
+  .strict();
+const legacyStatusDocumentSchema = statusDocumentSchema
+  .extend({
+    schemaVersion: z.literal(1),
+    memory: z.array(legacyMemoryEntrySchema),
+    projects: z.record(z.string(), legacyProjectSchema),
+  })
+  .strict();
+
 export type StatusDocument = z.infer<typeof statusDocumentSchema>;
 export type MemoryEntry = z.infer<typeof memoryEntrySchema>;
+export type MemoryOrigin = z.infer<typeof memoryOriginSchema>;
 export type MemoryScope = z.infer<typeof memoryScopeSchema>;
 export type Project = z.infer<typeof projectSchema>;
 export type ProjectHandoff = z.infer<typeof projectHandoffSchema>;
@@ -279,7 +327,7 @@ export type PutStatusRequest = z.infer<typeof putStatusRequestSchema>;
 
 export function createEmptyStatus(): StatusDocument {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     identity: {},
     preferences: {},
     memory: [],
@@ -292,5 +340,15 @@ export function createEmptyStatus(): StatusDocument {
 }
 
 export function parseStatusDocument(value: unknown): StatusDocument {
-  return statusDocumentSchema.parse(value);
+  const current = statusDocumentSchema.safeParse(value);
+  if (current.success) return current.data;
+  const legacy = legacyStatusDocumentSchema.parse(value);
+  return {
+    ...legacy,
+    schemaVersion: 2,
+    memory: legacy.memory.map((entry) => ({
+      ...entry,
+      state: "confirmed" as const,
+    })),
+  };
 }

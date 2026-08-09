@@ -15,6 +15,13 @@ export interface LocalProjectMapping {
   updatedAt: string;
 }
 
+export interface LocalProjectPath {
+  createdAt: string;
+  path: string;
+  projectId: string;
+  updatedAt: string;
+}
+
 export interface LocalActivityEvent {
   createdAt: string;
   id: string;
@@ -25,6 +32,7 @@ export interface LocalActivityEvent {
     | "handoff_published"
     | "handoff_written"
     | "project_mapped"
+    | "project_registered"
     | "project_unmapped";
 }
 
@@ -33,6 +41,13 @@ interface MappingRow {
   path: string;
   project_id: string;
   repo_root: string;
+  updated_at: string;
+}
+
+interface ProjectPathRow {
+  created_at: string;
+  path: string;
+  project_id: string;
   updated_at: string;
 }
 
@@ -68,6 +83,13 @@ export class LocalWorkspaceStore {
         updated_at TEXT NOT NULL
       );
 
+      CREATE TABLE IF NOT EXISTS local_project_paths (
+        project_id TEXT PRIMARY KEY,
+        path TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
       CREATE TABLE IF NOT EXISTS local_activity_events (
         id TEXT PRIMARY KEY,
         type TEXT NOT NULL,
@@ -99,6 +121,46 @@ export class LocalWorkspaceStore {
     return rows.map(toMapping);
   }
 
+  getProjectPath(projectId: string): LocalProjectPath | undefined {
+    const row = this.#database
+      .prepare("SELECT * FROM local_project_paths WHERE project_id = ?")
+      .get(projectId) as unknown as ProjectPathRow | undefined;
+    return row ? toProjectPath(row) : undefined;
+  }
+
+  listProjectPaths(): LocalProjectPath[] {
+    const rows = this.#database
+      .prepare("SELECT * FROM local_project_paths ORDER BY updated_at DESC")
+      .all() as unknown as ProjectPathRow[];
+    return rows.map(toProjectPath);
+  }
+
+  setProjectPath(
+    projectId: string,
+    path: string,
+    recordActivity = true,
+  ): LocalProjectPath {
+    const now = new Date().toISOString();
+    this.#database
+      .prepare(
+        `INSERT INTO local_project_paths
+           (project_id, path, created_at, updated_at)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT(project_id) DO UPDATE SET
+           path = excluded.path,
+           updated_at = excluded.updated_at`,
+      )
+      .run(projectId, path, now, now);
+    if (recordActivity) {
+      this.recordActivity({
+        type: "project_registered",
+        projectId,
+        summary: "Local project path registered.",
+      });
+    }
+    return this.getProjectPath(projectId)!;
+  }
+
   setMapping(projectId: string, path: string, repoRoot: string): LocalProjectMapping {
     const now = new Date().toISOString();
     this.#database
@@ -112,6 +174,7 @@ export class LocalWorkspaceStore {
            updated_at = excluded.updated_at`,
       )
       .run(projectId, path, repoRoot, now, now);
+    this.setProjectPath(projectId, path, false);
     this.recordActivity({
       type: "project_mapped",
       projectId,
@@ -188,6 +251,15 @@ function toMapping(row: MappingRow): LocalProjectMapping {
     projectId: row.project_id,
     path: row.path,
     repoRoot: row.repo_root,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function toProjectPath(row: ProjectPathRow): LocalProjectPath {
+  return {
+    projectId: row.project_id,
+    path: row.path,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

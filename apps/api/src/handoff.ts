@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   chmod,
   lstat,
@@ -21,6 +22,7 @@ import {
 } from "node:path";
 import { lintSource } from "@secretlint/core";
 import { creator as recommendedSecretRules } from "@secretlint/secretlint-rule-preset-recommend";
+import type { ProjectHandoff } from "@one-status/protocol";
 import { z } from "zod";
 import {
   LocalAgentLauncher,
@@ -163,6 +165,11 @@ export class HandoffService {
   async overview() {
     const snapshot = await this.backend.getSnapshot();
     return {
+      localPaths: this.workspaceStore.listProjectPaths().map((entry) => ({
+        ...entry,
+        projectName:
+          snapshot.status.projects[entry.projectId]?.name ?? entry.projectId,
+      })),
       mappings: this.workspaceStore.listMappings().map((mapping) => ({
         ...mapping,
         projectName:
@@ -177,6 +184,15 @@ export class HandoffService {
       })),
       activity: this.workspaceStore.listActivity(),
     };
+  }
+
+  async registerProjectPath(projectId: string, requestedPath: string) {
+    const snapshot = await this.backend.getSnapshot();
+    if (!snapshot.status.projects[projectId]) {
+      throw new Error("Portable project was not found.");
+    }
+    const path = await canonicalDirectory(requestedPath);
+    return this.workspaceStore.setProjectPath(projectId, path);
   }
 
   async mapProject(projectId: string, requestedPath: string) {
@@ -424,6 +440,11 @@ export class HandoffService {
       throw new Error("GitHub did not report the published Handoff commit.");
     }
 
+    const fileDigests = await handoffFileDigests(
+      preview.mapping.repoRoot,
+      publishedCommit,
+    );
+
     const publishedAt = new Date().toISOString();
     const synced = await this.backend.mutateStatus((status) => {
       const current = status.projects[input.projectId];
@@ -433,6 +454,8 @@ export class HandoffService {
         repositoryUrl,
         branch,
         commit: publishedCommit,
+        sourceCommit: written.manifest.repository.commit,
+        fileDigests,
         publishedAt,
         sourceDeviceId: sourceSnapshot.profile.deviceId,
         statusVersion: written.manifest.statusVersion,
@@ -545,8 +568,8 @@ export class HandoffService {
     }
     await verifyHandoffFiles(
       repoRoot,
+      handoff,
       input.projectId,
-      handoff.statusVersion,
     );
     mapping = this.workspaceStore.setMapping(input.projectId, repoRoot, repoRoot);
     const launch = await this.#agentLauncher.launch({
@@ -702,8 +725,8 @@ async function assertMatchingOrigin(
 
 async function verifyHandoffFiles(
   repoRoot: string,
+  handoff: ProjectHandoff,
   projectId: string,
-  statusVersion: number,
 ): Promise<void> {
   const markdownPath = join(repoRoot, "HANDOFF.md");
   const manifestPath = join(repoRoot, ".one-status", "handoff.json");
@@ -718,10 +741,54 @@ async function verifyHandoffFiles(
   );
   if (
     manifest.projectId !== projectId ||
-    manifest.statusVersion !== statusVersion
+    manifest.statusVersion !== handoff.statusVersion ||
+    (handoff.sourceCommit && manifest.repository.commit !== handoff.sourceCommit)
   ) {
     throw new Error("The published Handoff manifest does not match One Status.");
   }
+  if (handoff.fileDigests) {
+      const actual = await handoffFileDigests(repoRoot, handoff.commit);
+    if (
+      actual.handoffMarkdownSha256 !==
+        handoff.fileDigests.handoffMarkdownSha256 ||
+      actual.manifestSha256 !== handoff.fileDigests.manifestSha256
+    ) {
+      throw new Error("The published Handoff files do not match One Status.");
+    }
+  }
+}
+
+async function handoffFileDigests(repoRoot: string): Promise<{
+  handoffMarkdownSha256: string;
+  manifestSha256: string;
+}>;
+async function handoffFileDigests(
+  repoRoot: string,
+  commit: string,
+): Promise<{
+  handoffMarkdownSha256: string;
+  manifestSha256: string;
+}>;
+async function handoffFileDigests(
+  repoRoot: string,
+  commit?: string,
+): Promise<{
+  handoffMarkdownSha256: string;
+  manifestSha256: string;
+}> {
+  const [markdown, manifest] = commit
+    ? await Promise.all([
+        runGit(repoRoot, ["show", `${commit}:HANDOFF.md`]),
+        runGit(repoRoot, ["show", `${commit}:.one-status/handoff.json`]),
+      ])
+    : await Promise.all([
+        readFile(join(repoRoot, "HANDOFF.md")),
+        readFile(join(repoRoot, ".one-status", "handoff.json")),
+      ]);
+  return {
+    handoffMarkdownSha256: createHash("sha256").update(markdown).digest("hex"),
+    manifestSha256: createHash("sha256").update(manifest).digest("hex"),
+  };
 }
 
 export function portableGitHubUrl(value: string): string | null {

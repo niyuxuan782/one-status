@@ -28,9 +28,13 @@ One Status 是桌面优先的 AI Environment Sync 与 Handoff 系统。它发现
 - Codex / Claude Code 项目、MCP、Skills、Plugins、Rules 只读清单
 - 本机 Git checkout 映射、Handoff 预览、Secret 扫描和显式文件写入
 - 用户确认后的 GitHub Handoff commit/push、精确 commit clone/update 与 Codex/Claude Code 启动 Adapter
+- Handoff 源 commit 与文件 SHA-256 校验，打开时验证加密 Status reference
+- 记忆候选确认、来源标记、编辑与删除；未确认候选默认不进入 Agent 正常检索
+- Task State 图形化管理与本机扫描项目的显式导入
+- 脱敏工具审计 Activity 与 Security / Agent Permission Firewall 页面
 - 密文 Sync API、Caddy HTTPS 与 SQLite 备份生产栈
 
-Google Calendar 已完成真实 Provider App、账号授权、Codex/Claude Code grant、跨 Vault 恢复和 Calendar API 调用验收。GitHub 与 Slack 的协议实现和模拟测试已完成，真实 Provider App 仍需在对应账号登录后创建。
+Google Calendar、GitHub 和 Slack 均已完成真实账号授权、Codex/Claude Code grant 与 Provider API 调用验收。Slack 使用 Workspace App、PKCE 和 Token Rotation；GitHub 首版支持安全导入本机 `gh` OAuth 会话。腾讯云同步服务已在 `https://os.furesta.top` 启用公网 HTTPS。
 
 ## 60 秒 Demo
 
@@ -75,15 +79,16 @@ Homebrew 公开安装：
 
 ```bash
 brew tap niyuxuan782/tap
-brew install one-status
-brew services start one-status
+brew trust --formula niyuxuan782/tap/one-status 2>/dev/null || true
+brew install niyuxuan782/tap/one-status
+brew services start niyuxuan782/tap/one-status
 ```
 
 npm 本地 tarball：
 
 ```bash
 pnpm pack:local
-npm install -g ./dist/one-status-0.1.1.tgz
+npm install -g ./dist/one-status-0.2.0.tgz
 ```
 
 无需 Homebrew 的本地安装：
@@ -253,6 +258,14 @@ MCP 当前提供：
 - `status_update_context`
 - `tools_list`
 - `tools_execute`
+
+开发环境可用两个独立 Agent MCP 进程执行真实 OAuth 冒烟测试：
+
+```bash
+pnpm --filter @one-status/demo live:tools slack.channels.list
+pnpm --filter @one-status/demo live:tools calendar.events.list
+pnpm --filter @one-status/demo live:tools github.repositories.list
+```
 
 每次读取都会从 API 拉取最新密文并在本地解密。每次写入都以版本号、稳定 `mutationId` 和逻辑摘要提交，发生冲突时 SDK 会重新读取并重放当前变更；提交后的网络响应丢失时，服务端返回去重结果。同一个 ID 携带不同逻辑摘要会得到明确冲突。`tools_list` 只返回当前 Agent 获准使用的连接和动作，`tools_execute` 在 Gateway 内部刷新和使用 OAuth Token。
 

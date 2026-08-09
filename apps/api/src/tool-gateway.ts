@@ -128,12 +128,17 @@ export class ToolGateway {
             connection,
           );
         } catch {
-          this.vault.setConnectionStatus(
-            input.userId,
-            connection.id,
-            "expired",
+          const recoverableFromSync = Boolean(
+            connection.credential.refreshToken,
           );
-          throw new ToolConnectionExpiredError();
+          if (!recoverableFromSync) {
+            this.vault.setConnectionStatus(
+              input.userId,
+              connection.id,
+              "expired",
+            );
+          }
+          throw new ToolConnectionExpiredError(recoverableFromSync);
         }
         credential = refreshed.credential;
         if (!hasScopes(refreshed.scopes, actionDefinition.requiredScopes)) {
@@ -222,7 +227,7 @@ export class ToolPermissionDeniedError extends Error {
 }
 
 export class ToolConnectionExpiredError extends Error {
-  constructor() {
+  constructor(readonly recoverableFromSync = false) {
     super("The OAuth connection has expired and must be connected again.");
     this.name = "ToolConnectionExpiredError";
   }

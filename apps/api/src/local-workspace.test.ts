@@ -31,6 +31,10 @@ describe("local workspace store", () => {
     );
 
     expect(store.getMapping("project-1")).toEqual(first);
+    expect(store.getProjectPath("project-1")).toMatchObject({
+      projectId: "project-1",
+      path: "/tmp/project-one",
+    });
     expect(store.listMappings()).toEqual(expect.arrayContaining([first, second]));
 
     const updated = store.setMapping(
@@ -60,5 +64,20 @@ describe("local workspace store", () => {
         }),
       ]),
     );
+  });
+
+  it("persists a non-Git project path independently from Handoff mapping", () => {
+    const registered = store.setProjectPath(
+      "notes-project",
+      "/tmp/notes-project",
+    );
+
+    expect(store.getProjectPath("notes-project")).toEqual(registered);
+    expect(store.getMapping("notes-project")).toBeUndefined();
+    expect(store.listProjectPaths()).toContainEqual(registered);
+    expect(store.listActivity(1)[0]).toMatchObject({
+      type: "project_registered",
+      projectId: "notes-project",
+    });
   });
 });

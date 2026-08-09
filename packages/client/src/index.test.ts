@@ -195,6 +195,7 @@ describe("synced status client", () => {
           scope: "user",
           content: "Remember exactly once",
           tags: [],
+          state: "confirmed",
           createdAt: "2026-08-08T10:00:00.000Z",
           updatedAt: "2026-08-08T10:00:00.000Z",
         });
@@ -238,7 +239,7 @@ describe("synced status client", () => {
       .createVault(key)
       .read();
     expect(recovered.version).toBe(1);
-    expect(recovered.status).toMatchObject({ schemaVersion: 1 });
+    expect(recovered.status).toMatchObject({ schemaVersion: 2 });
   });
 
   it("deduplicates an explicitly retried append mutation", async () => {
@@ -264,6 +265,7 @@ describe("synced status client", () => {
         scope: "user",
         content: "One logical memory",
         tags: [],
+        state: "confirmed",
         createdAt: "2026-08-08T10:00:00.000Z",
         updatedAt: "2026-08-08T10:00:00.000Z",
       });

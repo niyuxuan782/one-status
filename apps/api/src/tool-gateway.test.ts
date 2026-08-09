@@ -153,6 +153,56 @@ describe("Tool Gateway OAuth boundaries", () => {
     );
   });
 
+  it("does not persist a refresh failure that another device can rotate", async () => {
+    const now = Date.now();
+    const vault = createVault(vaults);
+    vault.configureProvider("user-1", "slack", { clientId: "slack-client" });
+    const connection = vault.upsertConnection({
+      accountId: "T1",
+      credential: {
+        accessToken: "old-access",
+        refreshToken: "single-use-refresh",
+      },
+      expiresAt: new Date(now - 1_000).toISOString(),
+      label: "Workspace",
+      provider: "slack",
+      scopes: ["channels:read", "groups:read"],
+      userId: "user-1",
+    });
+    vault.setGrant("user-1", connection.id, "codex", [
+      "slack.channels.list",
+    ]);
+    const gateway = new ToolGateway(vault, {
+      fetch: async () => json({ error: "invalid_refresh_token", ok: false }),
+      now: () => now,
+    });
+
+    const error = await gateway
+      .execute({
+        action: "slack.channels.list",
+        agentId: "codex",
+        connectionId: connection.id,
+        userId: "user-1",
+      })
+      .catch((caught: unknown) => caught);
+
+    expect(error).toMatchObject({
+      name: "ToolConnectionExpiredError",
+      recoverableFromSync: true,
+    });
+    expect(vault.getConnection("user-1", connection.id)?.status).toBe(
+      "expired",
+    );
+    expect(
+      vault.exportBundle("user-1").connections.find(
+        (entry) => entry.id === connection.id,
+      )?.status,
+    ).toBe("connected");
+    expect(
+      vault.getConnectionWithCredential("user-1", connection.id)?.credential,
+    ).toMatchObject({ refreshToken: "single-use-refresh" });
+  });
+
   it("blocks execution when a refresh response drops a required scope", async () => {
     const now = Date.now();
     const vault = createVault(vaults);

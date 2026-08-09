@@ -1,14 +1,59 @@
 import { describe, expect, it } from "vitest";
-import { createEmptyStatus, memoryEntrySchema, statusDocumentSchema } from "./index.js";
+import {
+  createEmptyStatus,
+  memoryEntrySchema,
+  parseStatusDocument,
+  statusDocumentSchema,
+} from "./index.js";
 
 describe("status protocol", () => {
   it("creates a future-ready empty status document", () => {
     expect(statusDocumentSchema.parse(createEmptyStatus())).toMatchObject({
-      schemaVersion: 1,
+      schemaVersion: 2,
       memory: [],
       projects: {},
       permissions: { grants: [] },
     });
+  });
+
+  it("migrates schema v1 memory into confirmed schema v2 memory", () => {
+    const legacy = {
+      ...createEmptyStatus(),
+      schemaVersion: 1,
+      memory: [
+        {
+          id: "legacy-memory",
+          scope: "user",
+          content: "Use pnpm",
+          tags: ["preference"],
+          createdAt: "2026-08-08T10:00:00.000Z",
+          updatedAt: "2026-08-08T10:00:00.000Z",
+        },
+      ],
+    };
+
+    expect(parseStatusDocument(legacy)).toMatchObject({
+      schemaVersion: 2,
+      memory: [{ id: "legacy-memory", state: "confirmed" }],
+    });
+  });
+
+  it("requires schema v2 writers to choose a memory state", () => {
+    expect(() =>
+      statusDocumentSchema.parse({
+        ...createEmptyStatus(),
+        memory: [
+          {
+            id: "missing-state",
+            scope: "user",
+            content: "Unreviewed inference",
+            tags: [],
+            createdAt: "2026-08-08T10:00:00.000Z",
+            updatedAt: "2026-08-08T10:00:00.000Z",
+          },
+        ],
+      }),
+    ).toThrow(/state/);
   });
 
   it("requires a project id for project memory", () => {
@@ -18,6 +63,7 @@ describe("status protocol", () => {
         scope: "project",
         content: "Use pnpm",
         tags: [],
+        state: "confirmed",
         createdAt: "2026-08-08T10:00:00.000Z",
         updatedAt: "2026-08-08T10:00:00.000Z",
       }),
