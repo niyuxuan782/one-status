@@ -1,8 +1,10 @@
 # One Status Cloud Deployment
 
-This stack runs the ciphertext-only Sync API behind Caddy. It does not receive
-the Status Key, local paths, raw Agent sessions, or a decryptable Permission
-Vault. The synchronized Permission Vault bundle remains nested ciphertext.
+This stack serves the public One Status website and the ciphertext-only Sync
+API behind Caddy. `/health` and `/v1/*` route to the API; all other paths serve
+the static website and installation scripts. The cloud API does not receive the
+Status Key, local paths, raw Agent sessions, or a decryptable Permission Vault.
+The synchronized Permission Vault bundle remains nested ciphertext.
 Caddy runs inside the Tencent Cloud Lighthouse instance; this deployment has no
 Cloudflare proxy, tunnel, DNS, or certificate dependency.
 
@@ -72,6 +74,7 @@ usable. After opening TCP 443, verify the promoted release directly:
 
 ```bash
 curl -fsS "https://$ONE_STATUS_DOMAIN/health"
+curl -fsS "https://$ONE_STATUS_DOMAIN/install.sh" | head -n 1
 ```
 
 After the copied database is healthy, switch a local installation only after it

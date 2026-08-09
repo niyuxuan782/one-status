@@ -1,0 +1,10 @@
+{
+  "name": "One Status",
+  "short_name": "One Status",
+  "description": "AI Environment Sync and Handoff",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#111315",
+  "theme_color": "#111315",
+  "icons": []
+}

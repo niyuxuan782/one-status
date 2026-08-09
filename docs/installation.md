@@ -5,12 +5,59 @@
 | 交付物 | 生成命令 | 入口 |
 | --- | --- | --- |
 | 单文件 CLI | `pnpm build` | `dist/one-status.js` |
-| npm tarball | `pnpm pack:local` | `dist/one-status-0.2.0.tgz` |
+| npm tarball | `pnpm pack:local` | `dist/one-status-0.3.0.tgz` |
+| Desktop App | `pnpm --filter @one-status/desktop dist` | `apps/desktop/release` |
 | Homebrew Formula | `pnpm release:prepare` | `Formula/one-status.rb` |
-| Docker image | `docker build -t one-status:0.2.0 .` | `one-status` |
+| Homebrew Cask | Release workflow | `Casks/one-status.rb` 与公开 tap |
+| 校验和 | Release workflow | `SHA256SUMS.txt` |
+| Docker image | `docker build -t one-status:0.3.0 .` | `one-status` |
 
 单文件 CLI 将业务包、Fastify、MCP SDK 与 Zod 打入同一个 ESM 文件。运行时只要求 Node.js 22+，安装阶段无需下载 JavaScript 依赖。
 构建过程会生成 `dist/THIRD_PARTY_NOTICES.txt`；npm 包、Homebrew 安装和 Docker 镜像都会携带该文件。
+
+## 官网与一键安装
+
+官网：<https://os.furesta.top>
+
+macOS、Linux 桌面版：
+
+```bash
+curl -fsSL https://os.furesta.top/install.sh | bash
+```
+
+Windows 桌面版：
+
+```powershell
+irm https://os.furesta.top/install.ps1 | iex
+```
+
+CLI：
+
+```bash
+curl -fsSL https://os.furesta.top/install.sh | bash -s -- --cli
+```
+
+安装器读取 GitHub latest Release，下载平台附件和 `SHA256SUMS.txt`，校验成功后再安装。macOS App 安装到 `~/Applications`，Linux AppImage 安装到 `~/.local/bin/one-status-app`，Windows 运行已校验的 NSIS Setup。CLI 模式要求 Node.js 22+。
+
+## Desktop App
+
+开发启动：
+
+```bash
+pnpm --filter @one-status/desktop dev
+```
+
+原生构建：
+
+```bash
+pnpm --filter @one-status/desktop dist:mac
+pnpm --filter @one-status/desktop dist:win
+pnpm --filter @one-status/desktop dist:linux
+```
+
+Release workflow 在对应操作系统 runner 生成 macOS arm64/x64 DMG 与 ZIP、Windows x64 NSIS 与 portable EXE、Linux x64 AppImage 与 DEB。Desktop App 内嵌本机 API，并在健康检查确认后复用已有 `127.0.0.1:8787` One Status 服务。
+
+Preview 构建尚未完成 Apple Developer ID notarization 和 Windows Authenticode 签名。Release Notes 与 Homebrew Cask 会明确显示该状态，不会自动绕过 Gatekeeper 或 SmartScreen。
 
 ## 本地安装
 
@@ -32,7 +79,7 @@ ONE_STATUS_INSTALL_PREFIX=/usr/local ./scripts/install-local.sh
 
 ```bash
 pnpm pack:local
-npm install -g ./dist/one-status-0.2.0.tgz
+npm install -g ./dist/one-status-0.3.0.tgz
 one-status version
 ```
 
@@ -53,6 +100,15 @@ pnpm brew:install:local
 ```
 
 公开安装入口：
+
+Desktop App：
+
+```bash
+brew tap niyuxuan782/tap
+brew install --cask niyuxuan782/tap/one-status
+```
+
+CLI 与后台服务：
 
 ```bash
 brew tap niyuxuan782/tap
@@ -122,9 +178,11 @@ brew install one-status
 3. 执行 `pnpm release:prepare`。
 4. 检查 Formula 版本和 SHA。
 5. 创建 `v<version>` tag。
-6. GitHub Actions 发布 GitHub Release artifact 与 GHCR image。
-7. 配置 `NPM_TOKEN` 时同步发布 npm。
-8. 配置 `HOMEBREW_TAP_TOKEN` 时同步更新 Homebrew tap。
+6. GitHub Actions 在原生 runner 构建桌面附件。
+7. 汇总 CLI、DMG、ZIP、EXE、AppImage、DEB 并生成 SHA-256 校验和与 Cask。
+8. GitHub Actions 发布 GitHub Release artifact 与 GHCR image。
+9. 配置 `NPM_TOKEN` 时同步发布 npm。
+10. 配置 `HOMEBREW_TAP_TOKEN` 时同步更新 Formula 与 Cask。
 
 Release workflow 权限：
 
@@ -135,7 +193,7 @@ Release workflow 权限：
 
 ## 已验证
 
-- npm tarball 全局安装后 `one-status version` 返回 `0.2.0`。
-- Formula 安装到 `/opt/homebrew/Cellar/one-status/0.2.0`。
+- npm tarball 全局安装后 `one-status version` 返回 `0.3.0`。
+- Formula 安装到 `/opt/homebrew/Cellar/one-status/0.3.0`。
 - `brew test one-status/local/one-status` 通过版本与帮助检查。
 - 单文件产物启动同步 API 和 HTTP MCP 后，官方 MCP Client 成功列出 Status 与 Tool Gateway 工具并调用 `status_get_profile`。

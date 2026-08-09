@@ -10,17 +10,36 @@
 		max_size 2MB
 	}
 
-	reverse_proxy api:8787 {
-		health_uri /health
-		health_interval 30s
-		health_timeout 5s
+	handle /health {
+		reverse_proxy api:8787 {
+			health_uri /health
+			health_interval 30s
+			health_timeout 5s
+		}
+	}
+
+	@api path /v1 /v1/*
+	handle @api {
+		reverse_proxy api:8787 {
+			health_uri /health
+			health_interval 30s
+			health_timeout 5s
+		}
+	}
+
+	handle {
+		root * /srv
+		try_files {path} /index.html
+		file_server
 	}
 
 	header {
 		-Server
+		Content-Security-Policy "default-src 'self'; base-uri 'self'; connect-src 'self' https://api.github.com; font-src 'self'; form-action 'self'; frame-ancestors 'none'; img-src 'self' data:; object-src 'none'; script-src 'self'; style-src 'self'"
 		Strict-Transport-Security "max-age=31536000; includeSubDomains"
 		X-Content-Type-Options "nosniff"
-		Referrer-Policy "no-referrer"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), geolocation=(), microphone=()"
 	}
 
 	log {

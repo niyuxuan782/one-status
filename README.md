@@ -4,7 +4,7 @@
 
 One Status 是桌面优先的 AI Environment Sync 与 Handoff 系统。它发现本机项目、记忆、Skills、工具和权限，通过加密状态云与 GitHub，让用户跨设备、跨 Agent 继续工作。
 
-完整产品边界见 [产品架构](docs/product-architecture.md)。
+完整产品边界见 [产品架构](docs/product-architecture.md)，开源与托管边界见 [Open Core](docs/open-core.md)。
 
 当前仓库实现了 Phase 1 的第一个可运行闭环：
 
@@ -33,6 +33,8 @@ One Status 是桌面优先的 AI Environment Sync 与 Handoff 系统。它发现
 - Task State 图形化管理与本机扫描项目的显式导入
 - 脱敏工具审计 Activity 与 Security / Agent Permission Firewall 页面
 - 密文 Sync API、Caddy HTTPS 与 SQLite 备份生产栈
+- Electron 桌面应用与 macOS、Windows、Linux 原生安装包
+- 官网、一键安装器、Homebrew Cask 和跨平台 Release 校验和
 
 Google Calendar、GitHub 和 Slack 均已完成真实账号授权、Codex/Claude Code grant 与 Provider API 调用验收。Slack 使用 Workspace App、PKCE 和 Token Rotation；GitHub 首版支持安全导入本机 `gh` OAuth 会话。腾讯云同步服务已在 `https://os.furesta.top` 启用公网 HTTPS。
 
@@ -58,47 +60,46 @@ Demo 会在临时目录中完成以下流程：
 
 ## 安装
 
-当前仓库可以直接生成并安装完整 CLI：
+官网提供当前版本与平台下载入口：<https://os.furesta.top>
+
+macOS、Linux 一键安装桌面应用：
 
 ```bash
-pnpm install
-pnpm build
-./dist/one-status.js version
+curl -fsSL https://os.furesta.top/install.sh | bash
 ```
 
-Homebrew 本地 tap：
+Windows PowerShell 一键安装：
 
-```bash
-pnpm brew:install:local
-one-status version
+```powershell
+irm https://os.furesta.top/install.ps1 | iex
 ```
 
-该命令会生成 npm tarball、更新 Formula、创建 `one-status/local` tap 并执行 `brew install`。当前机器已经通过 `brew test one-status/local/one-status`。
+安装器从 [GitHub Releases](https://github.com/niyuxuan782/one-status/releases/latest) 下载对应平台附件，并强制使用同一 Release 的 `SHA256SUMS.txt` 校验。当前桌面版属于未签名 Preview，操作系统会执行正常的安全检查。
 
-Homebrew 公开安装：
+Homebrew 桌面 App：
 
 ```bash
 brew tap niyuxuan782/tap
-brew trust --formula niyuxuan782/tap/one-status 2>/dev/null || true
-brew install niyuxuan782/tap/one-status
-brew services start niyuxuan782/tap/one-status
+brew install --cask niyuxuan782/tap/one-status
 ```
 
-npm 本地 tarball：
+CLI / MCP 一键安装：
 
 ```bash
-pnpm pack:local
-npm install -g ./dist/one-status-0.2.0.tgz
+curl -fsSL https://os.furesta.top/install.sh | bash -s -- --cli
+one-status app
 ```
 
-无需 Homebrew 的本地安装：
+从源码运行：
 
 ```bash
-./scripts/install-local.sh
-~/.local/bin/one-status version
+git clone https://github.com/niyuxuan782/one-status.git
+cd one-status
+pnpm install
+pnpm --filter @one-status/desktop dev
 ```
 
-GitHub Release、npm 与远程 Homebrew tap 的流程见 [安装与发布](docs/installation.md)。
+Homebrew Formula、npm、本地构建与发布流程见 [安装与发布](docs/installation.md)。
 
 ## 本地使用
 
@@ -167,7 +168,9 @@ macOS 默认 profile 只保存设备和 Keychain 引用等非敏感元数据，�
 
 ## 图形界面
 
-Homebrew service 或 `one-status server` 在回环地址运行时会启用本地工作台：
+桌面 App 会启动本机后台服务并在独立窗口显示工作台。CLI 用户可以运行 `one-status app`；该命令优先打开已安装 App，缺少 App 时会启动本机服务并打开浏览器工作台。
+
+Homebrew service 或 `one-status server` 在回环地址运行时也会启用工作台：
 
 ```text
 http://127.0.0.1:8787/

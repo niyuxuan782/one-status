@@ -20,6 +20,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm check
       - run: pnpm build
+      - run: pnpm --filter @one-status/desktop build
+      - run: bash -n apps/site/public/install.sh
       - run: ./dist/one-status.js version
       - run: pnpm demo
 
@@ -33,4 +35,3 @@ jobs:
           context: .
           load: true
           tags: one-status:ci
-

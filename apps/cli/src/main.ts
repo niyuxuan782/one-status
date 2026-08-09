@@ -1,5 +1,9 @@
 #!/usr/bin/env node
+import { spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { OneStatusClient } from "@one-status/client";
 import {
   exportStatusKey,
@@ -18,7 +22,7 @@ import {
 } from "@one-status/local-config";
 import type { MemoryScope, StatusDocument } from "@one-status/protocol";
 
-const VERSION = "0.2.0";
+const VERSION = "0.3.0";
 
 interface ParsedArguments {
   command: string;
@@ -73,6 +77,9 @@ async function main(): Promise<void> {
       break;
     case "server":
       await runServer(arguments_.flags);
+      break;
+    case "app":
+      await openDesktopApp();
       break;
     case "version":
     case "--version":
@@ -370,6 +377,109 @@ async function runServer(flags: Map<string, string>): Promise<void> {
   });
 }
 
+async function openDesktopApp(): Promise<void> {
+  if (launchInstalledDesktop()) return;
+
+  const dashboardUrl = "http://127.0.0.1:8787/";
+  if (!(await isHealthyLocalService(dashboardUrl))) {
+    const scriptPath = process.argv[1];
+    if (!scriptPath) throw new Error("Unable to locate the One Status CLI entrypoint.");
+    const child = spawn(process.execPath, [scriptPath, "server"], {
+      detached: true,
+      env: process.env,
+      stdio: "ignore",
+    });
+    child.unref();
+
+    let healthy = false;
+    for (let attempt = 0; attempt < 80; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 125));
+      if (await isHealthyLocalService(dashboardUrl)) {
+        healthy = true;
+        break;
+      }
+    }
+    if (!healthy) {
+      throw new Error(
+        "The local dashboard did not start. Run `one-status server` to inspect the startup error.",
+      );
+    }
+  }
+
+  if (!openExternalApplicationUrl(dashboardUrl)) {
+    console.log(`One Status is running at ${dashboardUrl}`);
+  }
+}
+
+function launchInstalledDesktop(): boolean {
+  if (process.platform === "darwin") {
+    const candidates = [
+      "/Applications/One Status.app",
+      join(homedir(), "Applications", "One Status.app"),
+    ];
+    const installed = candidates.find((candidate) => existsSync(candidate));
+    const result = installed
+      ? spawnSync("open", [installed], { stdio: "ignore" })
+      : spawnSync("open", ["-a", "One Status"], { stdio: "ignore" });
+    return result.status === 0;
+  }
+
+  if (process.platform === "win32") {
+    const candidates = [
+      process.env.LOCALAPPDATA
+        ? join(process.env.LOCALAPPDATA, "Programs", "One Status", "One Status.exe")
+        : "",
+      process.env.ProgramFiles
+        ? join(process.env.ProgramFiles, "One Status", "One Status.exe")
+        : "",
+      process.env["ProgramFiles(x86)"]
+        ? join(process.env["ProgramFiles(x86)"]!, "One Status", "One Status.exe")
+        : "",
+    ].filter(Boolean);
+    const installed = candidates.find((candidate) => existsSync(candidate));
+    if (!installed) return false;
+    spawn(installed, [], { detached: true, stdio: "ignore" }).unref();
+    return true;
+  }
+
+  const candidates = [
+    join(homedir(), ".local", "bin", "one-status-app"),
+    join(homedir(), ".local", "bin", "one-status-desktop"),
+    "/usr/local/bin/one-status-desktop",
+  ];
+  const installed = candidates.find((candidate) => existsSync(candidate));
+  if (!installed) return false;
+  spawn(installed, [], { detached: true, stdio: "ignore" }).unref();
+  return true;
+}
+
+async function isHealthyLocalService(baseUrl: string): Promise<boolean> {
+  try {
+    const response = await fetch(new URL("/health", baseUrl), {
+      signal: AbortSignal.timeout(1_000),
+    });
+    if (!response.ok) return false;
+    const body = (await response.json()) as Record<string, unknown>;
+    return body.status === "ok" && body.service === "one-status-api";
+  } catch {
+    return false;
+  }
+}
+
+function openExternalApplicationUrl(url: string): boolean {
+  if (process.platform === "darwin") {
+    return spawnSync("open", [url], { stdio: "ignore" }).status === 0;
+  }
+  if (process.platform === "win32") {
+    return (
+      spawnSync("cmd", ["/d", "/s", "/c", "start", "", url], {
+        stdio: "ignore",
+      }).status === 0
+    );
+  }
+  return spawnSync("xdg-open", [url], { stdio: "ignore" }).status === 0;
+}
+
 function startHeartbeatLoop(): () => void {
   const heartbeat = async () => {
     try {
@@ -537,6 +647,7 @@ Usage:
   one-status mcp --transport stdio
   one-status mcp --transport http [--host <host>] [--port <port>] [--endpoint </mcp>]
   one-status server [--host <host>] [--port <port>] [--db <path>] [--workspace-db <path>] [--public-url <url>] [--trust-proxy true]
+  one-status app
   one-status version
 
 Environment:

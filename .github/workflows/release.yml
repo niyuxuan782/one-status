@@ -34,29 +34,119 @@ jobs:
       - run: pnpm release:prepare
       - uses: actions/upload-artifact@v4
         with:
-          name: one-status-release
+          name: one-status-cli
           path: |
             dist/one-status-*.tgz
             Formula/one-status.rb
 
+  desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            platform: mac
+            arch: arm64
+          - os: macos-14
+            platform: mac
+            arch: x64
+          - os: windows-latest
+            platform: windows
+            arch: x64
+          - os: ubuntu-latest
+            platform: linux
+            arch: x64
+    runs-on: ${{ matrix.os }}
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @one-status/desktop test
+      - name: Build macOS desktop
+        if: matrix.platform == 'mac'
+        shell: bash
+        run: |
+          pnpm --dir apps/desktop build
+          pnpm --dir apps/desktop exec electron-builder \
+            --mac --${{ matrix.arch }} --publish never \
+            --config.artifactName='One-Status-${version}-mac-${arch}.${ext}'
+      - name: Build Windows desktop
+        if: matrix.platform == 'windows'
+        shell: bash
+        run: |
+          pnpm --dir apps/desktop build
+          pnpm --dir apps/desktop exec electron-builder \
+            --win nsis --x64 --publish never \
+            --config.artifactName='One-Status-Setup-${version}-windows-${arch}.${ext}'
+          pnpm --dir apps/desktop exec electron-builder \
+            --win portable --x64 --publish never \
+            --config.artifactName='One-Status-Portable-${version}-windows-${arch}.${ext}'
+      - name: Build Linux desktop
+        if: matrix.platform == 'linux'
+        shell: bash
+        run: |
+          pnpm --dir apps/desktop build
+          pnpm --dir apps/desktop exec electron-builder \
+            --linux AppImage deb --x64 --publish never \
+            --config.artifactName='One-Status-${version}-linux-${arch}.${ext}'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: one-status-desktop-${{ matrix.platform }}-${{ matrix.arch }}
+          if-no-files-found: error
+          path: |
+            apps/desktop/release/One-Status-*.dmg
+            apps/desktop/release/One-Status-*.zip
+            apps/desktop/release/One-Status-*.exe
+            apps/desktop/release/One-Status-*.AppImage
+            apps/desktop/release/One-Status-*.deb
+
   release:
-    needs: verify
+    needs: [verify, desktop]
     runs-on: ubuntu-latest
     env:
       HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
       - uses: actions/download-artifact@v4
         with:
-          name: one-status-release
-          path: .
+          path: artifacts
+      - name: Assemble release assets
+        run: |
+          mkdir -p release-assets Casks
+          find artifacts -type f \
+            \( -name 'one-status-*.tgz' \
+            -o -name 'one-status.rb' \
+            -o -name 'One-Status-*.dmg' \
+            -o -name 'One-Status-*.zip' \
+            -o -name 'One-Status-*.exe' \
+            -o -name 'One-Status-*.AppImage' \
+            -o -name 'One-Status-*.deb' \) \
+            -exec cp {} release-assets/ \;
+          node scripts/generate-homebrew-cask.mjs \
+            release-assets Casks/one-status.rb
+          cp Casks/one-status.rb release-assets/one-status-cask.rb
+          (cd release-assets && sha256sum * | sort -k2 > SHA256SUMS.txt)
+          test -f release-assets/One-Status-${GITHUB_REF_NAME#v}-mac-arm64.dmg
+          test -f release-assets/One-Status-${GITHUB_REF_NAME#v}-mac-x64.dmg
+          test -f release-assets/One-Status-Setup-${GITHUB_REF_NAME#v}-windows-x64.exe
+          test -f release-assets/One-Status-${GITHUB_REF_NAME#v}-linux-x64.AppImage
+          test -f release-assets/one-status-${GITHUB_REF_NAME#v}.tgz
       - name: Publish npm package when configured
         run: |
           if [[ -n "$NODE_AUTH_TOKEN" ]]; then
-            npm publish dist/one-status-*.tgz
+            npm publish release-assets/one-status-*.tgz
           else
             echo "NPM_TOKEN is not configured; skipping npm publish."
           fi
@@ -64,9 +154,13 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - uses: softprops/action-gh-release@v2
         with:
-          files: |
-            dist/one-status-*.tgz
-            Formula/one-status.rb
+          body: |
+            Cross-platform Desktop Preview with the local One Status GUI, CLI,
+            MCP server, encrypted sync, OAuth Permission Vault and Handoff.
+
+            Preview desktop builds are not yet signed. Verify downloads with
+            `SHA256SUMS.txt` before installation.
+          files: release-assets/*
       - name: Update Homebrew tap when configured
         if: ${{ env.HOMEBREW_TAP_TOKEN != '' }}
         env:
@@ -74,11 +168,12 @@ jobs:
         run: |
           gh auth setup-git
           gh repo clone niyuxuan782/homebrew-tap tap
-          mkdir -p tap/Formula
-          cp Formula/one-status.rb tap/Formula/one-status.rb
+          mkdir -p tap/Formula tap/Casks
+          cp release-assets/one-status.rb tap/Formula/one-status.rb
+          cp Casks/one-status.rb tap/Casks/one-status.rb
           git -C tap config user.name github-actions[bot]
           git -C tap config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git -C tap add Formula/one-status.rb
+          git -C tap add Formula/one-status.rb Casks/one-status.rb
           git -C tap diff --cached --quiet || git -C tap commit -m "one-status ${GITHUB_REF_NAME#v}"
           git -C tap push origin main
 

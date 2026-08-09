@@ -145,7 +145,7 @@ export async function startHttpMcpServer(
           endpoint,
           name: "One Status MCP",
           transport: "streamable-http",
-          version: "0.2.0",
+          version: "0.3.0",
         });
         return;
       }

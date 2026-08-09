@@ -1,6 +1,6 @@
 {
   "name": "one-status",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Portable identity, context, memory, and permission layer for AI agents",
   "private": false,
   "type": "module",

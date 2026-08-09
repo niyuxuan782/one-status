@@ -1,0 +1,78 @@
+{
+  "name": "@one-status/desktop",
+  "version": "0.3.0",
+  "private": true,
+  "type": "module",
+  "description": "One Status desktop control center",
+  "license": "Apache-2.0",
+  "homepage": "https://os.furesta.top",
+  "author": {
+    "name": "One Status",
+    "email": "niyuxuan782@gmail.com"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/niyuxuan782/one-status.git"
+  },
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "dev": "pnpm build && electron .",
+    "start": "electron .",
+    "test": "vitest run --root ../.. apps/desktop/src/service-runtime.test.ts",
+    "dist": "pnpm build && electron-builder",
+    "dist:mac": "pnpm build && electron-builder --mac",
+    "dist:win": "pnpm build && electron-builder --win",
+    "dist:linux": "pnpm build && electron-builder --linux"
+  },
+  "dependencies": {
+    "@one-status/api": "workspace:*",
+    "@one-status/client": "workspace:*",
+    "@one-status/local-config": "workspace:*"
+  },
+  "devDependencies": {
+    "electron": "^37.2.6",
+    "electron-builder": "^26.0.12",
+    "esbuild": "^0.28.0",
+    "typescript": "^5.9.2",
+    "vitest": "^4.0.0"
+  },
+  "build": {
+    "appId": "top.furesta.onestatus",
+    "productName": "One Status",
+    "asar": true,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "package.json"
+    ],
+    "npmRebuild": false,
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "icon": "build/icon.png",
+      "target": ["dmg", "zip"]
+    },
+    "dmg": {
+      "sign": false
+    },
+    "win": {
+      "icon": "build/icon.png",
+      "target": ["nsis", "portable"]
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "One Status"
+    },
+    "linux": {
+      "category": "Development",
+      "icon": "build/icon.png",
+      "synopsis": "Personal Agent control center",
+      "target": ["AppImage", "deb"]
+    }
+  }
+}

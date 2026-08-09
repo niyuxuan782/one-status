@@ -7,7 +7,10 @@
 .pnpmrc
 .yarnrc*
 dist
+**/dist
+**/release
 node_modules
+**/node_modules
 coverage
 *.log
 *.key

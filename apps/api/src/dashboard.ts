@@ -92,7 +92,7 @@ export function registerDashboardRoutes(
       if (path === "/" && !request.headers.accept?.includes("text/html")) {
         return {
           name: "One Status",
-          version: "0.2.0",
+          version: "0.3.0",
           tagline: "One user. One status. Every AI. Private by design.",
           dashboard: "/",
           health: "/health",
