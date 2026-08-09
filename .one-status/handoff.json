@@ -1,11 +1,11 @@
 {
   "format": "one-status.handoff",
   "version": 1,
-  "generatedAt": "2026-08-09T17:51:55.963Z",
+  "generatedAt": "2026-08-09T17:53:38.240Z",
   "projectId": "one-status",
-  "statusVersion": 125,
+  "statusVersion": 131,
   "repository": {
-    "commit": "493f24f3119ecb61af8e5e2867120321b52b9b1a",
+    "commit": "1d04e0a9a74c2db02020cabe7e0b6962015c9d7e",
     "branch": "main",
     "dirty": false,
     "changedFiles": [],
@@ -67,6 +67,7 @@
       "31 test files and 252 tests passed",
       "Two-device encrypted Demo passed",
       "Codex and Claude Code adapters installed locally",
+      "Publish One Status v0.7.0",
       "Implemented the v0.7 device, AI tool, model source, configuration intent, and Persona product scope.",
       "Added the CC Switch-derived Rust Device Sidecar with pinned MIT provenance, atomic apply, backup, rollback, and bounded recovery.",
       "Passed 37 TypeScript test files with 302 tests, the encrypted two-device Demo, Rust fmt, Clippy, and 14 Sidecar tests.",
@@ -77,18 +78,11 @@
       "Updated main to 493f24f3119ecb61af8e5e2867120321b52b9b1a with final Formula, product metadata, and App/CLI coexistence guidance."
     ],
     "next": [
-      "Complete Apple Developer ID signing and notarization",
-      "Validate Windows and Linux installers on native devices",
       "Validate Open and Continue on a second physical device",
-      "Monitor post-release regression reports; ship patch v0.4.x if needed",
-      "Reauthorize the existing Slack connection for history, search, and chat scopes",
-      "Choose additional read actions for Codex and Claude Code in Connections",
-      "Install One Status 0.6.0 on Mac B",
-      "Login with recovery key",
-      "Open published Handoff at exact Git commit",
-      "Confirm Codex restores current context",
-      "Complete One Status v0.7.0 rollout and second-device acceptance",
-      "Install One Status 0.7.0 on a second physical device and run Open and Continue at the published exact Handoff commit."
+      "Install One Status 0.7.0 on a second physical device.",
+      "Login with the recovery key and verify encrypted Status decryption.",
+      "Open the latest published Handoff at its exact Git commit.",
+      "Confirm Codex or Claude Code restores the v0.7 context and reports the local tool inventory."
     ],
     "blocked": []
   },
