@@ -1,5 +1,5 @@
 const releaseFallback = {
-  tag_name: "v0.6.0",
+  tag_name: "v0.7.0",
   assets: [],
   html_url: "https://github.com/niyuxuan782/one-status/releases/latest",
 };
@@ -38,19 +38,36 @@ async function loadRelease() {
 function installTabs() {
   const tabs = [...document.querySelectorAll("[data-install-tab]")];
   const panels = [...document.querySelectorAll("[data-install-panel]")];
+
+  function activateTab(tab) {
+    const selected = tab.dataset.installTab;
+    for (const candidate of tabs) {
+      const active = candidate === tab;
+      candidate.classList.toggle("active", active);
+      candidate.setAttribute("aria-selected", String(active));
+      candidate.tabIndex = active ? 0 : -1;
+    }
+    for (const panel of panels) {
+      const active = panel.dataset.installPanel === selected;
+      panel.classList.toggle("active", active);
+      panel.hidden = !active;
+    }
+  }
+
   for (const tab of tabs) {
-    tab.addEventListener("click", () => {
-      const selected = tab.dataset.installTab;
-      for (const candidate of tabs) {
-        const active = candidate === tab;
-        candidate.classList.toggle("active", active);
-        candidate.setAttribute("aria-selected", String(active));
-      }
-      for (const panel of panels) {
-        const active = panel.dataset.installPanel === selected;
-        panel.classList.toggle("active", active);
-        panel.hidden = !active;
-      }
+    tab.addEventListener("click", () => activateTab(tab));
+    tab.addEventListener("keydown", (event) => {
+      const current = tabs.indexOf(tab);
+      let next = current;
+      if (event.key === "ArrowRight") next = (current + 1) % tabs.length;
+      else if (event.key === "ArrowLeft") next = (current - 1 + tabs.length) % tabs.length;
+      else if (event.key === "Home") next = 0;
+      else if (event.key === "End") next = tabs.length - 1;
+      else return;
+
+      event.preventDefault();
+      tabs[next].focus();
+      activateTab(tabs[next]);
     });
   }
 }

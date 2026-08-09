@@ -74,13 +74,15 @@ export function renderDashboardPage(csrfToken: string): string {
     <aside class="sidebar" id="sidebar">
       <div class="brand"><span class="brand-mark"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="12" fill="#8edab9"/><path d="M18 24c0-5 4-9 10-9h8c6 0 10 4 10 9v16c0 5-4 9-10 9h-8c-6 0-10-4-10-9V24Zm9-2c-2 0-3 1-3 3v14c0 2 1 3 3 3h10c2 0 3-1 3-3V25c0-2-1-3-3-3H27Z" fill="#15271f"/></svg></span><span>One Status</span></div>
       <nav class="nav" aria-label="主导航">
-        ${navLink("/", "overview", "概览")}
+        ${navLink("/", "devices", "设备与工具")}
+        ${navLink("/models", "database", "模型与来源")}
         ${navLink("/status", "status", "状态")}
         ${navLink("/projects", "projects", "项目")}
         ${navLink("/handoffs", "cloud", "Handoff")}
         ${navLink("/environment", "settings", "Agents 与工具")}
         ${navLink("/capabilities", "capabilities", "能力包")}
         ${navLink("/memory", "brain", "记忆")}
+        ${navLink("/persona", "status", "Persona")}
         ${navLink("/integrations", "integrations", "连接与权限")}
         ${navLink("/devices", "devices", "设备")}
         ${navLink("/activity", "activity", "活动")}
@@ -94,7 +96,7 @@ export function renderDashboardPage(csrfToken: string): string {
     <div class="workspace">
       <header class="topbar">
         <button class="icon-button mobile-menu" id="mobile-menu" type="button" title="打开导航">${iconMap.menu}</button>
-        <div><p class="eyebrow">ONE STATUS</p><h1 id="page-title">概览</h1></div>
+        <div><p class="eyebrow">ONE STATUS</p><h1 id="page-title">设备与工具</h1></div>
         <div class="topbar-actions">
           <span class="sync-state" id="sync-state"><span></span>已同步</span>
           <button class="icon-button" id="refresh" type="button" title="刷新">${iconMap.refresh}</button>
@@ -158,7 +160,7 @@ a { color: inherit; }
 .brand-mark { display: grid; place-items: center; width: 30px; height: 30px; }
 .brand-mark svg { width: 100%; height: 100%; border-radius: 7px 4px 8px 5px / 5px 8px 4px 7px; box-shadow: 2px 2px 0 rgba(38,34,27,.12); transition: transform .2s ease; }
 .brand:hover .brand-mark svg { transform: rotate(-6deg); }
-.nav { display: grid; gap: 3px; }
+.nav { display: grid; gap: 3px; min-height: 0; overflow-y: auto; }
 .nav-link { position: relative; display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 0 10px; border-radius: 9px; color: #56625b; text-decoration: none; font-size: 14px; font-weight: 550; transition: color .15s ease, background-color .15s ease; }
 .nav-link::after { content: ""; position: absolute; left: 0; top: 24%; bottom: 24%; width: 3px; border-radius: 3px 1px 3px 1px; background: var(--accent); transform: scaleY(0); transition: transform .18s ease; }
 .nav-link svg { width: 17px; height: 17px; transition: transform .18s ease; }
@@ -212,6 +214,86 @@ a { color: inherit; }
 .metric strong { display: block; margin-top: 13px; font-family: var(--serif); font-size: 32px; line-height: 1; font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; }
 .metric small { display: block; margin-top: 7px; color: var(--faint); font-size: 11px; }
 .layout-2 { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(280px, .8fr); gap: 20px; align-items: start; }
+.header-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.data-section { min-width: 0; }
+.device-matrix { display: grid; gap: 16px; }
+.device-block { overflow: hidden; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); box-shadow: var(--shadow-card); animation: rise .4s cubic-bezier(.2, .7, .3, 1) backwards; }
+.device-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; padding: 17px 18px; border-bottom: 1px solid var(--line); background: var(--surface-2); }
+.device-head h3 { margin: 0; font-family: var(--serif); font-size: 18px; }
+.device-title { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; }
+.device-head p { margin: 5px 0 0; color: var(--muted); font-size: 11px; }
+.device-head-side { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px 14px; color: var(--muted); font-size: 10px; }
+.presence { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 10px; font-weight: 700; }
+.presence i { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); }
+.presence.online { color: var(--ok); }
+.presence.online i { background: var(--ok); box-shadow: 0 0 0 3px rgba(74,124,89,.12); }
+.presence.offline i { background: var(--faint); }
+.tool-matrix-head, .tool-matrix-row { display: grid; grid-template-columns: minmax(170px, 1.25fr) minmax(150px, 1fr) minmax(155px, 1fr) minmax(110px, .7fr) 78px; gap: 14px; align-items: center; }
+.tool-matrix-head { min-height: 35px; padding: 0 18px; color: var(--muted); background: var(--surface-subtle); font-size: 9px; font-weight: 700; text-transform: uppercase; }
+.tool-matrix-row { min-height: 68px; padding: 11px 18px; border-top: 1px solid var(--line); }
+.tool-matrix-row:first-of-type { border-top: 0; }
+.tool-matrix-row > div { min-width: 0; }
+.tool-matrix-row strong, .tool-matrix-row small { display: block; overflow-wrap: anywhere; }
+.tool-matrix-row strong { font-size: 12px; }
+.tool-matrix-row small { margin-top: 3px; color: var(--muted); font-size: 10px; }
+.tool-name { display: flex; align-items: center; gap: 10px; }
+.tool-glyph { display: grid; place-items: center; width: 32px; height: 32px; flex: 0 0 auto; border-radius: 6px; color: #315f50; background: #dce9e2; }
+.tool-glyph svg { width: 16px; height: 16px; }
+.device-empty { display: flex; min-height: 104px; align-items: center; justify-content: center; gap: 10px; padding: 18px; color: var(--muted); }
+.device-empty > span { display: grid; }
+.device-empty svg { width: 18px; height: 18px; }
+.device-empty p { margin: 0; font-size: 11px; }
+.health-state, .intent-status { display: inline-flex; min-height: 22px; align-items: center; padding: 0 7px; border-radius: 5px; font-size: 9px; font-weight: 750; white-space: nowrap; }
+.health-available, .health-not-required, .intent-healthy, .intent-applied { color: #3f6a4c; background: #e4efe6; }
+.health-missing, .intent-error, .intent-failed, .intent-rollback { color: #8f3527; background: #f7e3de; }
+.health-unverified, .intent-unknown, .intent-unconfigured { color: #6d6553; background: #eee8d9; }
+.intent-pending, .intent-applying { color: #46618f; background: #e5ebf4; }
+.model-table td small { color: var(--muted); }
+.model-table code { overflow-wrap: anywhere; white-space: normal; }
+.result-cell { max-width: 320px; overflow-wrap: anywhere; white-space: normal; }
+.configuration-targets { display: grid; gap: 10px; }
+.configuration-device { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 0; padding: 12px; border: 1px solid var(--line); border-radius: 8px; }
+.configuration-device legend { grid-column: 1 / -1; padding: 0 6px; font-size: 11px; font-weight: 700; }
+.configuration-target { display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 8px; padding: 9px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-2); }
+.configuration-target.disabled { opacity: .45; }
+.configuration-target strong, .configuration-target small { display: block; }
+.configuration-target strong { font-size: 11px; }
+.configuration-target small { margin-top: 3px; color: var(--muted); font-size: 9px; }
+.configuration-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.configuration-summary > div { min-width: 0; padding: 11px; border-left: 1px solid var(--line); }
+.configuration-summary > div:first-child { border-left: 0; }
+.configuration-summary span, .configuration-summary strong, .configuration-summary small { display: block; overflow-wrap: anywhere; }
+.configuration-summary span { color: var(--muted); font-size: 9px; font-weight: 700; text-transform: uppercase; }
+.configuration-summary strong { margin-top: 5px; font-size: 12px; }
+.configuration-summary small { margin-top: 3px; color: var(--muted); font-size: 9px; }
+.persona-toolbar { align-items: center; margin-bottom: 16px; }
+.persona-table .persona-content { min-width: 260px; max-width: 520px; white-space: normal; line-height: 1.55; }
+.persona-events { display: grid; gap: 10px; }
+.persona-event { padding: 15px 16px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); box-shadow: var(--shadow-card); }
+.persona-event-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: var(--muted); font-size: 10px; }
+.persona-event > p { margin: 12px 0; color: var(--ink); font-size: 13px; line-height: 1.6; white-space: pre-wrap; }
+.persona-event footer { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
+.persona-event footer strong, .persona-event footer small { display: block; }
+.persona-event footer strong { font-size: 10px; }
+.persona-event footer small { margin-top: 3px; color: var(--muted); font-size: 9px; }
+.persona-policy { display: grid; border-top: 1px solid var(--line); }
+.policy-section { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 17px 0; border-bottom: 1px solid var(--line); }
+.policy-section h3 { margin: 0; font-size: 13px; }
+.policy-section p { margin: 4px 0 0; color: var(--muted); font-size: 10px; }
+.policy-stack { display: grid; justify-content: stretch; }
+.policy-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; width: 100%; }
+.policy-category-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; width: 100%; }
+.policy-category { display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 8px; padding: 9px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-2); }
+.policy-category strong, .policy-category small { display: block; }
+.policy-category strong { font-size: 11px; }
+.policy-category small { margin-top: 2px; color: var(--muted); font-size: 9px; overflow-wrap: anywhere; }
+.toggle { display: inline-flex; align-items: center; gap: 8px; }
+.toggle input { position: absolute; opacity: 0; pointer-events: none; }
+.toggle span { position: relative; width: 38px; height: 22px; border-radius: 12px; background: var(--line-strong); transition: background .15s ease; }
+.toggle span::after { content: ""; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(31,38,34,.2); transition: transform .15s ease; }
+.toggle input:checked + span { background: var(--ok); }
+.toggle input:checked + span::after { transform: translateX(16px); }
+.toggle strong { font-size: 11px; }
 .notebook { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); padding: 0; margin-bottom: 24px; }
 .notebook-page { padding: 20px 22px; min-width: 0; }
 .notebook-page + .notebook-page { border-left: 1px solid var(--line); }
@@ -424,6 +506,10 @@ a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outlin
   .notebook-page + .notebook-page { border-left: 0; border-top: 1px solid var(--line); }
   .layout-2 { grid-template-columns: 1fr; }
   .card-grid { grid-template-columns: 1fr; }
+  .tool-matrix-head { display: none; }
+  .tool-matrix-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .tool-matrix-row > .row-actions { grid-column: 1 / -1; justify-content: flex-start; }
+  .policy-category-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 720px) {
   .app-shell { grid-template-columns: 1fr; }
@@ -440,6 +526,30 @@ a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outlin
   .preference-row > :first-child, .memory-row > :first-child { grid-column: 1; }
   .preview-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .provider-card .card-actions { flex-wrap: wrap; }
+  .device-head { flex-direction: column; }
+  .device-head-side { justify-content: flex-start; }
+  .configuration-summary { grid-template-columns: 1fr; }
+  .configuration-summary > div { border-top: 1px solid var(--line); border-left: 0; }
+  .configuration-summary > div:first-child { border-top: 0; }
+  .persona-event footer { align-items: flex-start; flex-direction: column; }
+  .model-table, .model-table tbody { display: block; width: 100%; }
+  .model-table thead { display: none; }
+  .model-table tr { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 11px 12px; border-bottom: 1px solid var(--line); }
+  .model-table tr:last-child { border-bottom: 0; }
+  .model-table td { display: block; min-width: 0; padding: 6px; border: 0; white-space: normal; overflow-wrap: anywhere; }
+  .model-table td::before { display: block; margin-bottom: 3px; color: var(--muted); font-size: 8px; font-weight: 700; text-transform: uppercase; }
+  .model-table td:first-child, .model-table td:last-child { grid-column: 1 / -1; }
+  .model-table td:first-child::before { content: "记录"; }
+  .model-table td:last-child .row-actions { justify-content: flex-start; }
+  .source-table td:nth-child(2)::before { content: "类型"; }
+  .source-table td:nth-child(3)::before { content: "协议 / Endpoint"; }
+  .source-table td:nth-child(4)::before { content: "AI 工具"; }
+  .source-table td:nth-child(5)::before { content: "Credential"; }
+  .source-table td:nth-child(6)::before { content: "验证"; }
+  .models-table td:nth-child(2)::before { content: "来源"; }
+  .models-table td:nth-child(3)::before { content: "模型 ID"; }
+  .models-table td:nth-child(4)::before { content: "AI 工具"; }
+  .models-table td:nth-child(5)::before { content: "已配置"; }
 }
 @media (max-width: 430px) {
   .metrics { grid-template-columns: 1fr; }
@@ -459,6 +569,15 @@ a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outlin
   .connection-head { align-items: flex-start; }
   .permission-toolbar { align-items: flex-start; flex-direction: column; }
   .form-actions { display: grid; grid-template-columns: 1fr 1fr; }
+  .header-actions, .header-actions .button { width: 100%; }
+  .header-actions { display: grid; grid-template-columns: 1fr 1fr; }
+  .tool-matrix-row { grid-template-columns: 1fr; gap: 9px; }
+  .tool-matrix-row > .row-actions { grid-column: 1; }
+  .tool-matrix-row .button { width: 100%; }
+  .configuration-device, .policy-options, .policy-category-grid { grid-template-columns: 1fr; }
+  .persona-toolbar { align-items: stretch; }
+  .persona-toolbar .segmented { width: 100%; overflow-x: auto; }
+  .persona-toolbar .segmented button { flex: 1 0 auto; }
   .toast { right: 12px; bottom: 12px; left: 12px; max-width: none; }
 }
 `;
@@ -490,18 +609,22 @@ function dashboardClient(): void {
   let onboarding: any;
   let onboardingMode: "login" | "register" = "register";
   let pendingCapabilityInstall: any;
+  let pendingModelConfiguration: any;
+  let personaView: "profile" | "events" | "policy" = "profile";
   let toastTimer: number | undefined;
 
   gatewayAddress.textContent = location.host;
 
   const routes: Record<string, { label: string; render: () => string }> = {
-    "/": { label: "概览", render: renderOverview },
+    "/": { label: "设备与工具", render: renderOverview },
+    "/models": { label: "模型与来源", render: renderModels },
     "/status": { label: "状态", render: renderStatus },
     "/projects": { label: "项目", render: renderProjects },
     "/handoffs": { label: "Handoff", render: renderHandoffs },
     "/environment": { label: "Agents 与工具", render: renderEnvironment },
     "/capabilities": { label: "能力包", render: renderCapabilities },
     "/memory": { label: "记忆", render: renderMemory },
+    "/persona": { label: "Persona", render: renderPersona },
     "/integrations": { label: "连接与权限", render: renderIntegrations },
     "/devices": { label: "设备", render: renderDevices },
     "/activity": { label: "活动", render: renderActivity },
@@ -545,6 +668,74 @@ function dashboardClient(): void {
       if (action === "copy-value") {
         await copyToClipboard(target.dataset.value || "");
         toast("已复制");
+        return;
+      }
+      if (action === "sync-device-control") {
+        const button = target as HTMLButtonElement;
+        const restore = setButtonBusy(button, "正在扫描");
+        try {
+          await api("/v1/dashboard/device-control/sync", {
+            method: "POST",
+            body: {},
+          });
+          await load(false);
+          toast("当前设备工具与模型状态已更新");
+        } finally {
+          restore();
+        }
+        return;
+      }
+      if (action === "add-model-source") return openModelSourceModal();
+      if (action === "edit-model-source") {
+        return openModelSourceModal(target.dataset.id);
+      }
+      if (action === "delete-model-source") {
+        if (confirm("删除这个模型来源？关联模型和待执行配置也会删除。")) {
+          await api(
+            `/v1/dashboard/model-sources/${encodeURIComponent(target.dataset.id || "")}`,
+            { method: "DELETE" },
+          );
+          await load(false);
+          toast("模型来源已删除");
+        }
+        return;
+      }
+      if (action === "add-model") return openModelModal();
+      if (action === "edit-model") return openModelModal(target.dataset.id);
+      if (action === "delete-model") {
+        if (confirm("删除这个模型？相关待执行配置也会删除。")) {
+          await api(
+            `/v1/dashboard/models/${encodeURIComponent(target.dataset.id || "")}`,
+            { method: "DELETE" },
+          );
+          await load(false);
+          toast("模型已删除");
+        }
+        return;
+      }
+      if (action === "configure-model") {
+        return openModelConfigurationModal(target.dataset.model, {
+          deviceId: target.dataset.device,
+          toolId: target.dataset.tool,
+        });
+      }
+      if (action === "set-persona-view") {
+        personaView = (target.dataset.view || "profile") as typeof personaView;
+        renderRoute();
+        return;
+      }
+      if (action === "edit-persona-event") {
+        return openPersonaEventModal(target.dataset.id!);
+      }
+      if (action === "delete-persona-event") {
+        if (confirm("删除这条 Persona 观察？Profile 会根据剩余记录重新生成。")) {
+          await api(
+            `/v1/dashboard/persona/events/${encodeURIComponent(target.dataset.id || "")}`,
+            { method: "DELETE" },
+          );
+          await load(false);
+          toast("Persona 记录已删除");
+        }
         return;
       }
       if (action === "add-preference") return openPreferenceModal();
@@ -723,10 +914,38 @@ function dashboardClient(): void {
   });
 
   document.addEventListener("change", (event) => {
-    const input = event.target as HTMLInputElement;
-    if (input.name !== "actions") return;
-    const form = input.closest<HTMLFormElement>('form[data-form="grant"]');
-    if (form) updateGrantSummary(form);
+    const input = event.target as HTMLInputElement | HTMLSelectElement;
+    if (input.name === "actions") {
+      const form = input.closest<HTMLFormElement>('form[data-form="grant"]');
+      if (form) updateGrantSummary(form);
+      return;
+    }
+    if (input.name === "modelId") {
+      const form = input.closest<HTMLFormElement>(
+        'form[data-form="model-configuration"]',
+      );
+      if (form) updateModelTargetAvailability(form, input.value);
+      return;
+    }
+    if (input.name === "sourceId") {
+      const form = input.closest<HTMLFormElement>('form[data-form="model"]');
+      const source = snapshot.status.deviceControl.sources[input.value];
+      if (form && source) {
+        form
+          .querySelectorAll<HTMLInputElement>('input[name="supportedTools"]')
+          .forEach((checkbox) => {
+            checkbox.disabled = !source.supportedTools.includes(checkbox.value);
+            if (checkbox.disabled) checkbox.checked = false;
+          });
+      }
+      return;
+    }
+    if (input.name === "protocol") {
+      const form = input.closest<HTMLFormElement>(
+        'form[data-form="model-source"]',
+      );
+      if (form) updateSourceToolAvailability(form, input.value);
+    }
   });
 
   document.addEventListener("submit", async (event) => {
@@ -919,6 +1138,115 @@ function dashboardClient(): void {
         closeModal();
         toast(`${agentLabel(agentId)} 已打开 commit ${result.commit.slice(0, 12)}`);
       }
+      if (form.dataset.form === "model-source") {
+        const id = stringValue(data, "id");
+        await api(`/v1/dashboard/model-sources/${encodeURIComponent(id)}`, {
+          method: "PUT",
+          body: {
+            label: stringValue(data, "label"),
+            kind: stringValue(data, "kind"),
+            protocol: stringValue(data, "protocol"),
+            endpoint: stringValue(data, "endpoint") || undefined,
+            supportedTools: data.getAll("supportedTools").map(String),
+            apiKey: stringValue(data, "apiKey") || undefined,
+            clearCredential: data.get("clearCredential") === "on",
+          },
+        });
+        closeModal();
+        toast("模型来源已保存");
+      }
+      if (form.dataset.form === "model") {
+        const id = stringValue(data, "id");
+        await api(`/v1/dashboard/models/${encodeURIComponent(id)}`, {
+          method: "PUT",
+          body: {
+            sourceId: stringValue(data, "sourceId"),
+            name: stringValue(data, "name"),
+            modelId: stringValue(data, "modelId"),
+            supportedTools: data.getAll("supportedTools").map(String),
+          },
+        });
+        closeModal();
+        toast("模型已保存");
+      }
+      if (form.dataset.form === "model-configuration") {
+        const targets = data.getAll("targets").map(String).map((value) => {
+          const separator = value.indexOf("|");
+          return {
+            deviceId: value.slice(0, separator),
+            toolId: value.slice(separator + 1),
+          };
+        });
+        if (targets.length === 0) throw new Error("至少选择一个设备和 AI 工具。");
+        pendingModelConfiguration = await api(
+          "/v1/dashboard/model-configurations/preview",
+          {
+            method: "POST",
+            body: {
+              modelId: stringValue(data, "modelId"),
+              targets,
+            },
+          },
+        );
+        openModelConfigurationApprovalModal();
+        return;
+      }
+      if (form.dataset.form === "model-configuration-apply") {
+        if (!pendingModelConfiguration) {
+          throw new Error("模型配置预览已失效。");
+        }
+        if (data.get("confirmConfiguration") !== "on") {
+          throw new Error("请确认应用预览中的模型配置。");
+        }
+        await api("/v1/dashboard/model-configurations/apply", {
+          method: "POST",
+          body: {
+            approvalId: pendingModelConfiguration.approvalId,
+            digest: pendingModelConfiguration.digest,
+            confirm: true,
+          },
+        });
+        pendingModelConfiguration = undefined;
+        closeModal();
+        toast("模型配置已提交；离线设备会在上线后应用");
+      }
+      if (form.dataset.form === "persona-event") {
+        const id = stringValue(data, "id");
+        await api(
+          `/v1/dashboard/persona/events/${encodeURIComponent(id)}`,
+          {
+            method: "PUT",
+            body: {
+              category: stringValue(data, "category"),
+              content: stringValue(data, "content"),
+              confidence: stringValue(data, "confidence"),
+            },
+          },
+        );
+        closeModal();
+        toast("Persona 记录已更新");
+      }
+      if (form.dataset.form === "persona-policy") {
+        const customBlocked = csv(stringValue(data, "customBlockedCategories"));
+        const allowedConfidences = data.getAll("allowedConfidences").map(String);
+        if (allowedConfidences.length === 0) {
+          throw new Error("至少保留一种可记录的 Confidence。");
+        }
+        await api("/v1/dashboard/persona/policy", {
+          method: "PUT",
+          body: {
+            enabled: data.get("enabled") === "on",
+            blockedCategories: [
+              ...new Set([
+                ...data.getAll("blockedCategories").map(String),
+                ...customBlocked,
+              ]),
+            ],
+            allowedConfidences,
+          },
+        });
+        toast("Persona 记录策略已保存");
+      }
       if (form.dataset.form === "capability") {
         const packId = stringValue(data, "packId");
         const targets = data.getAll("targets").map(String);
@@ -1078,38 +1406,62 @@ function dashboardClient(): void {
   }
 
   function renderOverview(): string {
-    const activeId = snapshot.status.workspace.activeProjectId;
-    const project = activeId ? snapshot.status.projects[activeId] : null;
-    const connections = snapshot.integrations.connections;
+    const devices = snapshot.account.devices;
     return `
-      <section class="panel notebook">
-        <div class="notebook-page">
-          <div class="panel-title"><h3>当前上下文</h3><span>Version ${snapshot.version}</span></div>
-          <p class="context-quote">${escapeHtml(snapshot.status.workspace.currentContext || "暂无上下文")}</p>
-        </div>
-        <div class="notebook-page project-spotlight">
-          <div class="panel-title"><h3>活动项目</h3><span>${activeId ? "ACTIVE" : "EMPTY"}</span></div>
-          ${project ? `<h3 class="spotlight-name">${escapeHtml(project.name)}</h3><p>${escapeHtml(project.currentGoal || project.summary || "暂无目标")}</p><div class="tag-list">${project.techStack.map((tag: string) => `<span class="tag">${escapeHtml(tag)}</span>`).join("")}</div>` : '<div class="empty"><p>尚未设置活动项目</p></div>'}
-        </div>
+      ${sectionHeader(
+        "设备与 AI 工具",
+        `${devices.length} 台设备 · ${devices.filter((device: any) => device.online).length} 台在线`,
+        `<button class="button secondary" data-action="sync-device-control" type="button">${icon("refresh")}扫描当前设备</button>`,
+      )}
+      <div class="device-matrix">${devices.map((device: any) => renderDeviceBlock(device)).join("")}</div>`;
+  }
+
+  function renderModels(): string {
+    const control = snapshot.status.deviceControl;
+    const sources = Object.values(control.sources) as any[];
+    const models = Object.values(control.models) as any[];
+    const intents = (Object.values(control.intents) as any[]).sort(
+      (left, right) => right.updatedAt.localeCompare(left.updatedAt),
+    );
+    const actions = `<div class="header-actions"><button class="button secondary" data-action="add-model-source" type="button">${icon("plus")}来源</button><button class="button" data-action="add-model" type="button" ${sources.length ? "" : "disabled"}>${icon("plus")}模型</button></div>`;
+    return `
+      ${sectionHeader("模型与来源", `${sources.length} 个来源 · ${models.length} 个模型`, actions)}
+      <section class="data-section">
+        <div class="panel-title"><h3>模型来源</h3><span>${sources.length}</span></div>
+        ${sources.length ? `<div class="table-wrap"><table class="model-table source-table"><thead><tr><th>来源</th><th>类型</th><th>协议 / Endpoint</th><th>AI 工具</th><th>Credential</th><th>验证</th><th></th></tr></thead><tbody>${sources.map((source: any) => {
+          const credential = (snapshot.modelCredentialSources || []).find((entry: any) => entry.sourceId === source.id);
+          return `<tr><td><strong>${escapeHtml(source.label)}</strong><br><small>${escapeHtml(source.id)}</small></td><td>${escapeHtml(modelSourceKindLabel(source.kind))}</td><td><strong>${escapeHtml(modelProtocolLabel(source.protocol))}</strong><br><small>${escapeHtml(endpointHost(source.endpoint) || "默认 Endpoint")}</small></td><td>${renderToolTags(source.supportedTools)}</td><td><span class="health-state health-${escapeHtml(source.credentialStatus)}">${escapeHtml(credentialStatusLabel(source.credentialStatus))}</span></td><td>${formatDate(source.lastVerifiedAt || credential?.updatedAt)}</td><td><div class="row-actions"><button class="button secondary" data-action="edit-model-source" data-id="${escapeHtml(source.id)}" type="button">编辑</button><button class="icon-button" data-action="delete-model-source" data-id="${escapeHtml(source.id)}" type="button" title="删除来源">${icon("trash")}</button></div></td></tr>`;
+        }).join("")}</tbody></table></div>` : emptyState("database", "暂无模型来源", "")}
       </section>
-      <div class="metrics">
-        ${metric("projects", "项目", Object.keys(snapshot.status.projects).length, project ? "当前：" + project.name : "尚未选择")}
-        ${metric("brain", "记忆", snapshot.status.memory.length, "跨 Agent 同步")}
-        ${metric("integrations", "OAuth 连接", connections.length, connections.length ? "凭据已加密" : "等待连接")}
-        ${metric("devices", "设备", snapshot.account.devices.length, snapshot.profile.deviceName)}
-      </div>
-      <div class="layout-2">
-        <section class="panel">
-          <div class="panel-title"><h3>最近记忆</h3><span>${snapshot.status.memory.length} 条</span></div>
-          ${snapshot.status.memory.slice(0, 4).map((entry: any) => `
-            <div class="link-row"><div><strong>${escapeHtml(entry.content)}</strong><small>${scopeLabel(entry.scope)} · ${formatDate(entry.updatedAt)}</small></div>${icon("chevron")}</div>
-          `).join("") || '<div class="empty"><p>暂无记忆</p></div>'}
-        </section>
-        <section class="panel">
-          <div class="panel-title"><h3>连接状态</h3><span>${connections.length} CONNECTED</span></div>
-          ${connections.map((connection: any) => `<div class="link-row"><div><strong>${escapeHtml(connection.label)}</strong><small>${providerLabel(connection.provider)}</small></div><span class="scope">已连接</span></div>`).join("") || '<div class="empty"><p>尚未连接第三方服务</p></div>'}
-        </section>
-      </div>`;
+      <section class="data-section mt-20">
+        <div class="panel-title"><h3>模型</h3><span>${models.length}</span></div>
+        ${models.length ? `<div class="table-wrap"><table class="model-table models-table"><thead><tr><th>模型</th><th>来源</th><th>模型 ID</th><th>AI 工具</th><th>已配置</th><th></th></tr></thead><tbody>${models.map((model: any) => {
+          const source = control.sources[model.sourceId];
+          const configured = Object.values(control.reports).flatMap((report: any) => report.tools).filter((tool: any) => tool.currentModelRef === model.id).length;
+          return `<tr><td><strong>${escapeHtml(model.name)}</strong><br><small>${escapeHtml(model.id)}</small></td><td>${escapeHtml(source?.label || model.sourceId)}</td><td><code>${escapeHtml(model.modelId)}</code></td><td>${renderToolTags(model.supportedTools)}</td><td>${configured} 个工具</td><td><div class="row-actions"><button class="button" data-action="configure-model" data-model="${escapeHtml(model.id)}" type="button">配置</button><button class="button secondary" data-action="edit-model" data-id="${escapeHtml(model.id)}" type="button">编辑</button><button class="icon-button" data-action="delete-model" data-id="${escapeHtml(model.id)}" type="button" title="删除模型">${icon("trash")}</button></div></td></tr>`;
+        }).join("")}</tbody></table></div>` : emptyState("database", "暂无模型", "")}
+      </section>
+      <section class="data-section mt-20">
+        <div class="panel-title"><h3>配置状态</h3><span>${intents.length}</span></div>
+        ${intents.length ? `<div class="table-wrap"><table><thead><tr><th>设备</th><th>AI 工具</th><th>模型</th><th>状态</th><th>更新时间</th><th>结果</th></tr></thead><tbody>${intents.slice(0, 30).map((intent: any) => {
+          const device = snapshot.account.devices.find((entry: any) => entry.id === intent.deviceId);
+          const model = control.models[intent.modelId];
+          return `<tr><td>${escapeHtml(device?.name || intent.deviceId)}</td><td>${escapeHtml(agentLabel(intent.toolId))}</td><td>${escapeHtml(model?.name || intent.modelId)}</td><td><span class="intent-status intent-${escapeHtml(intent.status)}">${escapeHtml(intentStatusLabel(intent.status))}</span></td><td>${formatDate(intent.updatedAt)}</td><td class="result-cell">${escapeHtml(intent.error || (intent.status === "applied" ? "已应用" : intent.status === "rollback" ? "已恢复原配置" : "—"))}</td></tr>`;
+        }).join("")}</tbody></table></div>` : emptyState("activity", "暂无配置任务", "")}
+      </section>`;
+  }
+
+  function renderPersona(): string {
+    const persona = snapshot.status.persona;
+    const views = [
+      { id: "profile", label: "Profile" },
+      { id: "events", label: `Events ${persona.events.length}` },
+      { id: "policy", label: "Policy" },
+    ];
+    return `
+      ${sectionHeader("Persona", `${Object.keys(persona.profile).length} 项当前偏好 · ${persona.events.length} 条观察`)}
+      <div class="section-header persona-toolbar"><div class="segmented" role="tablist">${views.map((view) => `<button class="${personaView === view.id ? "active" : ""}" data-action="set-persona-view" data-view="${view.id}" type="button">${view.label}</button>`).join("")}</div><p>${persona.policy.enabled ? "记录已启用" : "记录已暂停"}</p></div>
+      ${personaView === "events" ? renderPersonaEvents(persona.events) : personaView === "policy" ? renderPersonaPolicy(persona) : renderPersonaProfile(persona)}`;
   }
 
   function renderStatus(): string {
@@ -1316,10 +1668,68 @@ function dashboardClient(): void {
     }).join("")}<div class="grant-row"><span>断开后，该账号的所有 Agent 授权会一并删除</span><button class="button danger" data-action="disconnect-connection" data-id="${connection.id}" type="button">断开</button></div></div>`;
   }
 
+  function renderDeviceBlock(device: any, management = false): string {
+    const control = snapshot.status.deviceControl;
+    const report = control.reports[device.id];
+    const installedTools = report?.tools.filter((tool: any) => tool.installed) || [];
+    const current = device.id === snapshot.profile.deviceId;
+    const online = current || device.online;
+    const managementAction = management && !current
+      ? `<button class="button danger" data-action="revoke-device" data-id="${escapeHtml(device.id)}" type="button">撤销设备</button>`
+      : "";
+    return `<article class="device-block">
+      <header class="device-head"><div><div class="device-title"><h3>${escapeHtml(device.name)}</h3>${current ? '<span class="scope">当前设备</span>' : ""}<span class="presence ${online ? "online" : "offline"}"><i></i>${online ? "在线" : "离线"}</span></div><p>${report ? `${escapeHtml(operatingSystemLabel(report.operatingSystem))} ${escapeHtml(report.osVersion)} · ${escapeHtml(report.architecture)}` : "等待设备后台上报"}</p></div><div class="device-head-side"><span>后台 ${escapeHtml(report?.backgroundVersion || "—")}</span><span>最后在线 ${formatDate(device.lastSeenAt)}</span>${managementAction}</div></header>
+      ${installedTools.length ? `<div class="tool-matrix"><div class="tool-matrix-head"><span>AI 工具</span><span>当前模型</span><span>模型来源</span><span>配置状态</span><span></span></div>${installedTools.map((tool: any) => {
+        const source = tool.sourceId ? control.sources[tool.sourceId] : undefined;
+        const model = tool.currentModelRef ? control.models[tool.currentModelRef] : undefined;
+        const intent = latestConfigurationIntent(device.id, tool.toolId);
+        const health = intent && ["pending", "applying", "failed", "rollback"].includes(intent.status)
+          ? intent.status
+          : tool.health;
+        const compatible = (Object.values(control.models) as any[]).filter((entry: any) => entry.supportedTools.includes(tool.toolId));
+        return `<div class="tool-matrix-row"><div class="tool-name"><span class="tool-glyph">${icon(tool.toolId === "cursor" ? "projects" : "terminal")}</span><div><strong>${escapeHtml(tool.name || agentLabel(tool.toolId))}</strong><small>${escapeHtml(tool.version || "版本未知")}</small></div></div><div><strong>${escapeHtml(model?.name || tool.currentModelId || "未配置")}</strong><small>${escapeHtml(tool.currentModelId || "")}</small></div><div><strong>${escapeHtml(source?.label || tool.sourceLabel || "—")}</strong><small>${escapeHtml(modelSourceKindLabel(source?.kind || tool.sourceKind))}${tool.endpointHost ? ` · ${escapeHtml(tool.endpointHost)}` : ""}</small></div><div><span class="intent-status intent-${escapeHtml(health)}">${escapeHtml(toolHealthLabel(health))}</span>${intent ? `<small>${formatDate(intent.updatedAt)}</small>` : ""}</div><div class="row-actions"><button class="button secondary" data-action="configure-model" data-device="${escapeHtml(device.id)}" data-tool="${escapeHtml(tool.toolId)}" data-model="${escapeHtml(tool.currentModelRef || "")}" type="button" ${compatible.length ? "" : "disabled"}>${tool.currentModelId ? "切换" : "配置"}</button></div></div>`;
+      }).join("")}</div>` : `<div class="device-empty"><span>${icon("terminal")}</span><p>${report ? "未检测到已安装的 AI 工具" : online ? "等待首次环境扫描" : "设备上线后获取工具清单"}</p>${current ? `<button class="button secondary" data-action="sync-device-control" type="button">${icon("refresh")}扫描</button>` : ""}</div>`}
+    </article>`;
+  }
+
+  function renderPersonaProfile(persona: any): string {
+    const entries = Object.values(persona.profile) as any[];
+    return entries.length
+      ? `<div class="table-wrap"><table class="persona-table"><thead><tr><th>类别</th><th>当前偏好</th><th>Confidence</th><th>观察</th><th>最近观察</th><th></th></tr></thead><tbody>${entries.sort((left, right) => left.category.localeCompare(right.category)).map((entry: any) => `<tr><td><span class="scope">${escapeHtml(personaCategoryLabel(entry.category))}</span><br><small>${escapeHtml(entry.category)}</small></td><td class="persona-content">${escapeHtml(entry.content)}</td><td>${escapeHtml(confidenceLabel(entry.confidence))}</td><td>${entry.observationCount} 次</td><td>${formatDate(entry.lastObservedAt)}</td><td><button class="button secondary" data-action="edit-persona-event" data-id="${escapeHtml(entry.sourceEventIds[0])}" type="button">编辑记录</button></td></tr>`).join("")}</tbody></table></div>`
+      : emptyState("status", "暂无 Persona Profile", "");
+  }
+
+  function renderPersonaEvents(eventsValue: any[]): string {
+    const events = [...eventsValue].sort(
+      (left, right) => right.lastObservedAt.localeCompare(left.lastObservedAt),
+    );
+    return events.length
+      ? `<div class="persona-events">${events.map((entry: any) => {
+          const agents = [...new Set(entry.observations.map((observation: any) => agentLabel(observation.sourceAgent)))];
+          const projects = [...new Set(entry.observations.map((observation: any) => observation.sourceProject).filter(Boolean))];
+          return `<article class="persona-event"><div class="persona-event-meta"><span class="scope">${escapeHtml(personaCategoryLabel(entry.category))}</span><span>${escapeHtml(confidenceLabel(entry.confidence))}</span><span>${entry.observationCount} 次</span></div><p>${escapeHtml(entry.content)}</p><footer><div><strong>${escapeHtml(agents.join("、"))}</strong><small>${projects.length ? `项目 ${escapeHtml(projects.join("、"))} · ` : ""}${formatDate(entry.observedAt)} → ${formatDate(entry.lastObservedAt)}</small></div><div class="row-actions"><button class="button secondary" data-action="edit-persona-event" data-id="${escapeHtml(entry.id)}" type="button">编辑</button><button class="icon-button" data-action="delete-persona-event" data-id="${escapeHtml(entry.id)}" type="button" title="删除 Persona 记录">${icon("trash")}</button></div></footer></article>`;
+        }).join("")}</div>`
+      : emptyState("status", "暂无 Persona Events", "");
+  }
+
+  function renderPersonaPolicy(persona: any): string {
+    const categories = personaPolicyCategories(persona);
+    const blocked = new Set(persona.policy.blockedCategories || []);
+    const allowed = new Set(persona.policy.allowedConfidences || []);
+    const standard = new Set(defaultPersonaCategories());
+    const customBlocked = [...blocked].filter((category) => !standard.has(String(category)));
+    return `<form class="persona-policy" data-form="persona-policy">
+      <section class="policy-section"><div><h3>自动记录</h3><p>${persona.policy.updatedAt ? `更新于 ${formatDate(persona.policy.updatedAt)}` : "使用默认策略"}</p></div><label class="toggle"><input type="checkbox" name="enabled" ${persona.policy.enabled ? "checked" : ""}><span></span><strong>${persona.policy.enabled ? "启用" : "暂停"}</strong></label></section>
+      <section class="policy-section policy-stack"><div><h3>允许的 Confidence</h3></div><div class="policy-options">${["explicit", "observed", "inferred"].map((confidence) => `<label class="check-row"><input type="checkbox" name="allowedConfidences" value="${confidence}" ${allowed.has(confidence) ? "checked" : ""}><span><strong>${escapeHtml(confidenceLabel(confidence))}</strong></span></label>`).join("")}</div></section>
+      <section class="policy-section policy-stack"><div><h3>类别策略</h3><p>${blocked.size} 个类别已停止记录</p></div><div class="policy-category-grid">${categories.map((category) => `<label class="policy-category"><input type="checkbox" name="blockedCategories" value="${escapeHtml(category)}" ${blocked.has(category) ? "checked" : ""}><span><strong>${escapeHtml(personaCategoryLabel(category))}</strong><small>${escapeHtml(category)}</small></span></label>`).join("")}</div><div class="field full"><label for="customBlockedCategories">其他禁用类别</label><input id="customBlockedCategories" name="customBlockedCategories" type="text" value="${escapeHtml(customBlocked.join(", "))}"></div></section>
+      <div class="form-actions"><button class="button" type="submit">${icon("save")}保存 Policy</button></div>
+    </form>`;
+  }
+
   function renderDevices(): string {
     return `
-      ${sectionHeader("设备", `${snapshot.account.devices.length} 台已注册设备`)}
-      <div class="table-wrap"><table><thead><tr><th>设备</th><th>创建时间</th><th>最近活动</th><th>状态</th><th></th></tr></thead><tbody>${snapshot.account.devices.map((device: any) => `<tr><td><strong>${escapeHtml(device.name)}</strong></td><td>${formatDate(device.createdAt)}</td><td>${formatDate(device.lastSeenAt)}</td><td>${device.id === snapshot.profile.deviceId ? '<span class="current-device">当前设备</span>' : device.online ? '<span class="current-device">在线</span>' : "离线"}</td><td>${device.id === snapshot.profile.deviceId ? "" : `<button class="button danger" data-action="revoke-device" data-id="${device.id}" type="button">撤销</button>`}</td></tr>`).join("")}</tbody></table></div>`;
+      ${sectionHeader("设备", `${snapshot.account.devices.length} 台已注册设备`, `<button class="button secondary" data-action="sync-device-control" type="button">${icon("refresh")}同步当前设备</button>`)}
+      <div class="device-matrix">${snapshot.account.devices.map((device: any) => renderDeviceBlock(device, true)).join("")}</div>`;
   }
 
   function renderActivity(): string {
@@ -1501,6 +1911,119 @@ function dashboardClient(): void {
     const memory = id ? snapshot.status.memory.find((entry: any) => entry.id === id) : null;
     if (id && !memory) throw new Error("记忆已变化，请刷新后重试。");
     openModal(memory ? "编辑记忆" : "添加记忆", `<form data-form="memory"><input type="hidden" name="id" value="${escapeHtml(memory?.id || "")}"><div class="form-grid"><div class="field"><label>范围</label><select name="scope">${["user", "project", "session"].map((scope) => `<option value="${scope}" ${scope === (memory?.scope || "user") ? "selected" : ""}>${scopeLabel(scope)}</option>`).join("")}</select></div><div class="field"><label>项目</label><select name="projectId"><option value="">无</option>${Object.values(snapshot.status.projects).map((project: any) => `<option value="${escapeHtml(project.id)}" ${project.id === memory?.projectId ? "selected" : ""}>${escapeHtml(project.name)}</option>`).join("")}</select></div>${textareaField("内容", "content", memory?.content || "")}${field("标签", "tags", memory?.tags?.join(", ") || "", "text", "full")}${memory ? `<div class="field full"><label>来源</label><code class="handoff-path">${escapeHtml(memoryOriginLabel(memory))}</code><small>编辑会保留原始来源和创建时间。</small></div>` : ""}</div>${modalActions()}</form>`);
+  }
+
+  function openModelSourceModal(id?: string): void {
+    const source = id ? snapshot.status.deviceControl.sources[id] : undefined;
+    if (id && !source) throw new Error("模型来源已变化，请刷新后重试。");
+    const protocol = source?.protocol || "openai";
+    const availableTools = supportedToolsForProtocol(protocol);
+    const selectedTools = new Set<string>(
+      source?.supportedTools || ["codex"],
+    );
+    const credentialStored = (snapshot.modelCredentialSources || []).some(
+      (entry: any) => entry.sourceId === id,
+    );
+    openModal(
+      source ? "编辑模型来源" : "添加模型来源",
+      `<form data-form="model-source"><div class="form-grid">
+        ${field("来源 ID", "id", source?.id || "", "text", "full", source ? "readonly" : 'required pattern="[A-Za-z0-9][A-Za-z0-9._:-]*"')}
+        ${field("显示名称", "label", source?.label || "", "text", "full", "required")}
+        <div class="field"><label for="kind">来源类型</label><select id="kind" name="kind">${["official-account", "official-api", "compatible-api", "local-service", "custom-endpoint"].map((kind) => `<option value="${kind}" ${kind === (source?.kind || "official-api") ? "selected" : ""}>${modelSourceKindLabel(kind)}</option>`).join("")}</select></div>
+        <div class="field"><label for="protocol">API 协议</label><select id="protocol" name="protocol">${["openai", "anthropic", "ollama", "azure-openai", "custom"].map((protocol) => `<option value="${protocol}" ${protocol === (source?.protocol || "openai") ? "selected" : ""}>${modelProtocolLabel(protocol)}</option>`).join("")}</select></div>
+        ${field("Endpoint", "endpoint", source?.endpoint || "", "url", "full", 'placeholder="https://api.example.com/v1"')}
+        <div class="field full"><label>支持的 AI 工具</label><div class="capability-targets">${agentToolChoices(selectedTools, "supportedTools", availableTools)}</div></div>
+        <div class="field full"><label for="apiKey">API Key</label><input id="apiKey" name="apiKey" type="password" autocomplete="new-password" placeholder="${credentialStored ? "已保存；留空继续使用" : "按来源类型填写"}"><small>Credential 只写入 Permission Vault。</small></div>
+        ${credentialStored ? '<label class="check-row full"><input type="checkbox" name="clearCredential"><span><strong>清除已保存的 Credential</strong></span></label>' : ""}
+      </div>${modalActions()}</form>`,
+    );
+  }
+
+  function openModelModal(id?: string): void {
+    const model = id ? snapshot.status.deviceControl.models[id] : undefined;
+    if (id && !model) throw new Error("模型已变化，请刷新后重试。");
+    const sources = Object.values(snapshot.status.deviceControl.sources) as any[];
+    if (sources.length === 0) throw new Error("请先添加模型来源。");
+    const source = snapshot.status.deviceControl.sources[model?.sourceId] || sources[0];
+    const selectedTools = new Set<string>(
+      model?.supportedTools || source.supportedTools,
+    );
+    openModal(
+      model ? "编辑模型" : "添加模型",
+      `<form data-form="model"><div class="form-grid">
+        ${field("模型记录 ID", "id", model?.id || "", "text", "full", model ? "readonly" : 'required pattern="[A-Za-z0-9][A-Za-z0-9._:-]*"')}
+        <div class="field full"><label for="sourceId">模型来源</label><select id="sourceId" name="sourceId">${sources.map((entry: any) => `<option value="${escapeHtml(entry.id)}" ${entry.id === source.id ? "selected" : ""}>${escapeHtml(entry.label)} · ${escapeHtml(modelProtocolLabel(entry.protocol))}</option>`).join("")}</select></div>
+        ${field("模型名称", "name", model?.name || "", "text", "full", "required")}
+        ${field("模型 ID", "modelId", model?.modelId || "", "text", "full", "required")}
+        <div class="field full"><label>支持的 AI 工具</label><div class="capability-targets">${agentToolChoices(selectedTools, "supportedTools", new Set(source.supportedTools))}</div></div>
+      </div>${modalActions()}</form>`,
+    );
+  }
+
+  function openModelConfigurationModal(
+    requestedModelId?: string,
+    initialTarget: { deviceId?: string; toolId?: string } = {},
+  ): void {
+    const control = snapshot.status.deviceControl;
+    const allModels = Object.values(control.models) as any[];
+    const compatibleModels = initialTarget.toolId
+      ? allModels.filter((model: any) => model.supportedTools.includes(initialTarget.toolId))
+      : allModels;
+    if (compatibleModels.length === 0) throw new Error("没有可用于该 AI 工具的模型。");
+    const selectedModel = compatibleModels.find((model: any) => model.id === requestedModelId) || compatibleModels[0];
+    const targetGroups = snapshot.account.devices.map((device: any) => {
+      const report = control.reports[device.id];
+      const tools = report?.tools.filter((tool: any) => tool.installed) || [];
+      const rows = tools.map((tool: any) => {
+        const supportedModels = compatibleModels.filter((model: any) => model.supportedTools.includes(tool.toolId));
+        if (supportedModels.length === 0) return "";
+        const checked = device.id === initialTarget.deviceId && tool.toolId === initialTarget.toolId;
+        const available = supportedModels.some((model: any) => model.id === selectedModel.id);
+        return `<label class="configuration-target" data-model-target data-models="${escapeHtml(supportedModels.map((model: any) => model.id).join(","))}"><input type="checkbox" name="targets" value="${escapeHtml(device.id)}|${escapeHtml(tool.toolId)}" ${checked && available ? "checked" : ""} ${available ? "" : "disabled"}><span><strong>${escapeHtml(agentLabel(tool.toolId))}</strong><small>${escapeHtml(tool.currentModelId || "未配置")} · ${escapeHtml(toolHealthLabel(tool.health))}</small></span></label>`;
+      }).join("");
+      return rows ? `<fieldset class="configuration-device"><legend>${escapeHtml(device.name)} <span class="presence ${device.online || device.id === snapshot.profile.deviceId ? "online" : "offline"}"><i></i>${device.online || device.id === snapshot.profile.deviceId ? "在线" : "离线"}</span></legend>${rows}</fieldset>` : "";
+    }).join("");
+    openModal(
+      "配置模型到设备",
+      `<form data-form="model-configuration"><div class="form-grid"><div class="field full"><label for="configuration-model">模型</label><select id="configuration-model" name="modelId">${compatibleModels.map((model: any) => {
+        const source = control.sources[model.sourceId];
+        return `<option value="${escapeHtml(model.id)}" ${model.id === selectedModel.id ? "selected" : ""}>${escapeHtml(model.name)} · ${escapeHtml(source?.label || model.sourceId)}</option>`;
+      }).join("")}</select></div><div class="field full"><label>目标设备与工具</label><div class="configuration-targets">${targetGroups || '<div class="empty"><p>没有可配置的已安装工具</p></div>'}</div></div></div>${modalActions("预览变更")}</form>`,
+      true,
+    );
+  }
+
+  function openModelConfigurationApprovalModal(): void {
+    if (!pendingModelConfiguration) throw new Error("模型配置预览已失效。");
+    const preview = pendingModelConfiguration;
+    const changes = preview.changes.map((change: any) => `<tr><td><strong>${escapeHtml(change.deviceName)}</strong></td><td>${escapeHtml(agentLabel(change.toolId))}</td><td><code>${escapeHtml(change.previousModelId || "未配置")}</code></td><td><code>${escapeHtml(change.nextModelId)}</code></td><td><span class="intent-status intent-${change.execution === "immediate" ? "applying" : "pending"}">${change.execution === "immediate" ? "立即应用" : "设备上线后应用"}</span></td></tr>`).join("");
+    const localPlans = preview.changes.filter((change: any) => change.localPlan).map((change: any) => {
+      const plan = change.localPlan;
+      const targets = plan.targets.map((target: any) => `<tr><td><code>${escapeHtml(target.path)}</code></td><td>${escapeHtml(target.purpose)}</td><td>${target.existed ? "更新" : "新建"}</td><td><code>${escapeHtml(fileModeLabel(target.beforeMode))} → ${escapeHtml(fileModeLabel(target.afterMode))}</code></td></tr>`).join("");
+      const fieldChanges = plan.changes.map((entry: any) => `<tr><td><code>${escapeHtml(entry.path)}</code></td><td>${escapeHtml(configurationOperationLabel(entry.operation))}</td><td><code>${escapeHtml(entry.before === undefined ? "—" : formatValue(entry.before))}</code></td><td><code>${escapeHtml(entry.after === undefined ? "—" : formatValue(entry.after))}</code></td></tr>`).join("");
+      return `<section class="approval-section mt-12"><div class="panel-title"><h3>${escapeHtml(change.deviceName)} · ${escapeHtml(agentLabel(change.toolId))}</h3><span>Plan ${escapeHtml(plan.planId.slice(5, 17))}</span></div><div class="table-wrap"><table><thead><tr><th>本机文件</th><th>用途</th><th>动作</th><th>权限</th></tr></thead><tbody>${targets}</tbody></table></div>${fieldChanges ? `<div class="table-wrap mt-12"><table><thead><tr><th>配置字段</th><th>动作</th><th>当前</th><th>变更后</th></tr></thead><tbody>${fieldChanges}</tbody></table></div>` : ""}${plan.warnings.length ? `<div class="scan-result blocked mt-12">${plan.warnings.map((warning: string) => `<p>${escapeHtml(warning)}</p>`).join("")}</div>` : ""}${plan.requiresRestart ? '<p class="oauth-help">应用后需要重启对应 AI 工具。</p>' : ""}</section>`;
+    }).join("");
+    const pendingFilePlans = preview.changes.some(
+      (change: any) => change.execution === "pending" && !change.localPlan,
+    )
+      ? '<p class="oauth-help mt-12">离线设备会在上线后根据当时的本机配置生成原子写入计划；文件发生冲突时任务会失败并保留原配置。</p>'
+      : "";
+    openModal(
+      "确认模型配置",
+      `<form data-form="model-configuration-apply"><div class="configuration-summary"><div><span>模型</span><strong>${escapeHtml(preview.model.name)}</strong><small>${escapeHtml(preview.model.modelId)}</small></div><div><span>来源</span><strong>${escapeHtml(preview.source.label)}</strong><small>${escapeHtml(modelSourceKindLabel(preview.source.kind))}</small></div><div><span>预览有效期</span><strong>${formatDate(preview.expiresAt)}</strong></div></div><div class="table-wrap mt-12"><table><thead><tr><th>设备</th><th>AI 工具</th><th>当前</th><th>变更后</th><th>执行</th></tr></thead><tbody>${changes}</tbody></table></div>${localPlans}${pendingFilePlans}<label class="check-row mt-12"><input type="checkbox" name="confirmConfiguration"><span><strong>确认应用以上配置</strong><small>写入失败时设备后台会恢复原配置并报告结果。</small></span></label>${modalActions("确认应用")}</form>`,
+      true,
+    );
+  }
+
+  function openPersonaEventModal(id: string): void {
+    const entry = snapshot.status.persona.events.find((event: any) => event.id === id);
+    if (!entry) throw new Error("Persona 记录已变化，请刷新后重试。");
+    const sources = entry.observations.map((observation: any) => `${agentLabel(observation.sourceAgent)}${observation.sourceProject ? ` · ${observation.sourceProject}` : ""} · ${formatDate(observation.observedAt)} · ${confidenceLabel(observation.confidence)}`).join("\n");
+    openModal(
+      "编辑 Persona Event",
+      `<form data-form="persona-event"><input type="hidden" name="id" value="${escapeHtml(entry.id)}"><div class="form-grid">${field("类别", "category", entry.category, "text", "full", 'required pattern="[a-z][a-z0-9_]*"')}${textareaField("内容", "content", entry.content)}<div class="field full"><label for="confidence">Confidence</label><select id="confidence" name="confidence">${["explicit", "observed", "inferred"].map((confidence) => `<option value="${confidence}" ${confidence === entry.confidence ? "selected" : ""}>${confidenceLabel(confidence)}</option>`).join("")}</select></div><div class="field full"><label>观察来源</label><pre class="handoff-markdown">${escapeHtml(sources)}</pre><small>${entry.observationCount} 次观察 · 首次 ${formatDate(entry.observedAt)} · 最近 ${formatDate(entry.lastObservedAt)}</small></div></div>${modalActions()}</form>`,
+      true,
+    );
   }
 
   function openCapabilityModal(packId: string): void {
@@ -1731,6 +2254,148 @@ function dashboardClient(): void {
   }
   function agentLabel(agentId: string): string {
     return agentId === "claude-code" ? "Claude Code" : agentId === "codex" ? "Codex" : agentId;
+  }
+  function agentToolChoices(
+    selected: Set<string>,
+    name: string,
+    available = new Set(["codex", "claude-code", "cursor"]),
+  ): string {
+    return ["codex", "claude-code", "cursor"].map((tool) =>
+      `<label class="capability-target"><input type="checkbox" name="${name}" value="${tool}" ${selected.has(tool) ? "checked" : ""} ${available.has(tool) ? "" : "disabled"}><span><strong>${agentLabel(tool)}</strong></span></label>`,
+    ).join("");
+  }
+  function renderToolTags(tools: string[]): string {
+    return `<div class="tag-list">${tools.map((tool) => `<span class="tag">${escapeHtml(agentLabel(tool))}</span>`).join("")}</div>`;
+  }
+  function latestConfigurationIntent(deviceId: string, toolId: string): any {
+    return (Object.values(snapshot.status.deviceControl.intents) as any[])
+      .filter((intent: any) => intent.deviceId === deviceId && intent.toolId === toolId)
+      .sort((left: any, right: any) => right.updatedAt.localeCompare(left.updatedAt))[0];
+  }
+  function updateModelTargetAvailability(form: HTMLFormElement, modelId: string): void {
+    form.querySelectorAll<HTMLElement>("[data-model-target]").forEach((row) => {
+      const supported = (row.dataset.models || "").split(",").includes(modelId);
+      const checkbox = row.querySelector<HTMLInputElement>('input[name="targets"]');
+      row.classList.toggle("disabled", !supported);
+      if (!checkbox) return;
+      checkbox.disabled = !supported;
+      if (!supported) checkbox.checked = false;
+    });
+  }
+  function supportedToolsForProtocol(protocol: string): Set<string> {
+    if (protocol === "anthropic") return new Set(["claude-code", "cursor"]);
+    if (protocol === "custom") {
+      return new Set(["codex", "claude-code", "cursor"]);
+    }
+    return new Set(["codex", "cursor"]);
+  }
+  function updateSourceToolAvailability(
+    form: HTMLFormElement,
+    protocol: string,
+  ): void {
+    const available = supportedToolsForProtocol(protocol);
+    form
+      .querySelectorAll<HTMLInputElement>('input[name="supportedTools"]')
+      .forEach((checkbox) => {
+        checkbox.disabled = !available.has(checkbox.value);
+        if (checkbox.disabled) checkbox.checked = false;
+      });
+  }
+  function endpointHost(value?: string): string {
+    if (!value) return "";
+    try {
+      return new URL(value).host;
+    } catch {
+      return value;
+    }
+  }
+  function operatingSystemLabel(value: string): string {
+    if (value === "macos") return "macOS";
+    if (value === "windows") return "Windows";
+    if (value === "linux") return "Linux";
+    return "Other OS";
+  }
+  function modelSourceKindLabel(value?: string): string {
+    if (value === "official-account") return "官方账号";
+    if (value === "official-api") return "官方 API";
+    if (value === "compatible-api") return "第三方兼容 API";
+    if (value === "local-service") return "本地模型服务";
+    if (value === "custom-endpoint") return "自定义 Endpoint";
+    return value || "来源未知";
+  }
+  function modelProtocolLabel(value: string): string {
+    if (value === "openai") return "OpenAI";
+    if (value === "anthropic") return "Anthropic";
+    if (value === "ollama") return "Ollama";
+    if (value === "azure-openai") return "Azure OpenAI";
+    return value === "custom" ? "Custom" : value;
+  }
+  function fileModeLabel(value?: number): string {
+    return value === undefined ? "—" : `0${value.toString(8).padStart(3, "0")}`;
+  }
+  function configurationOperationLabel(value: string): string {
+    if (value === "add") return "新增";
+    if (value === "remove") return "移除";
+    return "更新";
+  }
+  function credentialStatusLabel(value: string): string {
+    if (value === "available") return "可用";
+    if (value === "missing") return "缺失";
+    if (value === "not-required") return "无需 Credential";
+    return "未验证";
+  }
+  function toolHealthLabel(value: string): string {
+    if (value === "healthy") return "正常";
+    if (value === "unconfigured") return "未配置";
+    if (value === "pending") return "待应用";
+    if (value === "applying") return "应用中";
+    if (value === "applied") return "已应用";
+    if (value === "failed") return "失败";
+    if (value === "rollback") return "已回滚";
+    if (value === "error") return "配置异常";
+    return "状态未知";
+  }
+  function intentStatusLabel(value: string): string {
+    return toolHealthLabel(value);
+  }
+  function confidenceLabel(value: string): string {
+    if (value === "explicit") return "明确陈述";
+    if (value === "observed") return "重复观察";
+    return "谨慎推断";
+  }
+  function defaultPersonaCategories(): string[] {
+    return [
+      "personality",
+      "behavior_preference",
+      "language_style",
+      "output_style",
+      "project_work_habit",
+      "technical_habit",
+      "long_term_goal",
+      "future_plan",
+      "personal_info",
+    ];
+  }
+  function personaPolicyCategories(persona: any): string[] {
+    return [...new Set([
+      ...defaultPersonaCategories(),
+      ...persona.events.map((event: any) => event.category),
+      ...persona.policy.blockedCategories,
+    ])].sort((left, right) => String(left).localeCompare(String(right))) as string[];
+  }
+  function personaCategoryLabel(value: string): string {
+    const labels: Record<string, string> = {
+      personality: "性格",
+      behavior_preference: "行为偏好",
+      language_style: "语言风格",
+      output_style: "输出风格",
+      project_work_habit: "项目习惯",
+      technical_habit: "技术习惯",
+      long_term_goal: "长期目标",
+      future_plan: "未来规划",
+      personal_info: "个人信息",
+    };
+    return labels[value] || value;
   }
   function capabilityTargetLabel(target: string): string {
     if (target === "chatgpt") return "ChatGPT";

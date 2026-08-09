@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { githubWorkflowCapabilityPack } from "@one-status/capability-pack/fixtures/github-workflow";
+import { personaCapabilityPack } from "@one-status/capability-pack/fixtures/persona";
 import {
   compileCapabilityPack,
   createCapabilityInstallPreview,
@@ -161,6 +162,30 @@ describe("Capability Pack Adapter Engine", () => {
       '"Authorization": "Bearer ${ONE_STATUS_MCP_TOKEN}"',
     );
   });
+
+  it.each(["codex", "claude-code"] as const)(
+    "generates the unified Persona Skill and instructions for %s",
+    (target) => {
+      const result = compileCapabilityPack(personaCapabilityPack, {
+        target,
+        gateway: { transport: "stdio", command: "one-status" },
+      });
+      const skillPath = target === "codex"
+        ? "skills/persona/SKILL.md"
+        : ".claude/skills/persona/SKILL.md";
+      const instructionPath = target === "codex" ? "AGENTS.md" : "CLAUDE.md";
+      for (const path of [skillPath, instructionPath]) {
+        const content = fileContent(result, path);
+        expect(content).toContain("`persona.record`");
+        expect(content).toContain("`persona.get_policy`");
+        expect(content).toContain("long-term goal");
+        expect(content).toContain("full transcripts");
+        expect(content).not.toContain("Call `tools_list` first");
+      }
+      expect(fileContent(result, skillPath)).toContain("name: persona");
+      expect(result.warnings).toEqual([]);
+    },
+  );
 
   it("only copies skill files declared by the manifest", () => {
     const manifest = {

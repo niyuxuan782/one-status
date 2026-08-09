@@ -1,0 +1,32 @@
+[package]
+name = "one-status-device-sidecar"
+version = "0.7.0"
+description = "Local AI tool inventory and atomic model configuration sidecar for One Status"
+edition = "2021"
+rust-version = "1.85"
+license = "Apache-2.0 AND MIT"
+repository = "https://github.com/niyuxuan782/one-status"
+
+[dependencies]
+clap = { version = "4.5", features = ["derive"] }
+dirs = "6"
+fs2 = "0.4"
+hex = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+thiserror = "2"
+toml_edit = "0.22"
+url = "2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+opt-level = "s"
+strip = "symbols"

@@ -176,7 +176,9 @@ function decryptBundle(
       decipher.update(Buffer.from(envelope.ciphertext, "base64url")),
       decipher.final(),
     ]).toString("utf8");
-    return JSON.parse(plaintext) as PermissionVaultBundle;
+    return normalizePermissionBundle(
+      JSON.parse(plaintext) as Partial<PermissionVaultBundle>,
+    );
   } catch {
     throw new PermissionVaultSyncError();
   }
@@ -209,6 +211,7 @@ function emptyBundle(): PermissionVaultBundle {
     connections: [],
     format: "one-status.permission-vault-bundle",
     grants: [],
+    modelCredentials: [],
     providers: [],
     updatedAt: EMPTY_UPDATED_AT,
     version: 1,
@@ -236,6 +239,12 @@ function mergePermissionBundles(
       remote.grants,
       (entry) => `${entry.connectionId}\u0000${entry.agentId}`,
     ).filter((entry) => connectionIds.has(entry.connectionId)),
+    modelCredentials: mergeRecords(
+      base.modelCredentials,
+      local.modelCredentials,
+      remote.modelCredentials,
+      (entry) => entry.sourceId,
+    ),
     providers: mergeRecords(
       base.providers,
       local.providers,
@@ -247,6 +256,20 @@ function mergePermissionBundles(
       local.updatedAt,
       remote.updatedAt,
     ),
+    version: 1,
+  };
+}
+
+function normalizePermissionBundle(
+  value: Partial<PermissionVaultBundle>,
+): PermissionVaultBundle {
+  return {
+    connections: value.connections ?? [],
+    format: "one-status.permission-vault-bundle",
+    grants: value.grants ?? [],
+    modelCredentials: value.modelCredentials ?? [],
+    providers: value.providers ?? [],
+    updatedAt: value.updatedAt ?? EMPTY_UPDATED_AT,
     version: 1,
   };
 }

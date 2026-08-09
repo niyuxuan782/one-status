@@ -4,6 +4,7 @@ import { join } from "node:path";
 import type { FastifyInstance } from "fastify";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createEmptyStatus, type StatusDocument } from "@one-status/protocol";
+import { recordPersonaEvent } from "@one-status/protocol/persona-operations";
 import type { LocalProfile } from "@one-status/local-config";
 import { encryptStatus, generateStatusKey } from "@one-status/crypto";
 import { createApp } from "./app.js";
@@ -116,6 +117,7 @@ describe("local dashboard", () => {
         (entry: { manifest: { name: string } }) => entry.manifest.name,
       ),
     ).toEqual([
+      "persona",
       "google-workspace",
       "github-workflow",
       "slack-workspace",
@@ -357,6 +359,78 @@ describe("local dashboard", () => {
     });
     expect(deleted.statusCode).toBe(200);
     expect(backend.status.tasks["phase:oauth"]).toBeUndefined();
+  });
+
+  it("edits Persona events and recording policy through the dashboard", async () => {
+    recordPersonaEvent(
+      backend.status,
+      {
+        category: "language_style",
+        content: "Prefer concise Chinese answers",
+        confidence: "explicit",
+        sourceProject: "one-status",
+      },
+      "codex",
+      "2026-08-09T14:30:00.000Z",
+      "persona-event-1",
+    );
+    const page = await app.inject({
+      method: "GET",
+      url: "/persona",
+      headers: { accept: "text/html", host: "127.0.0.1:8787" },
+    });
+    const setCookie = page.headers["set-cookie"]!;
+    const cookie = (Array.isArray(setCookie) ? setCookie[0]! : setCookie).split(
+      ";",
+    )[0]!;
+    const csrf = page.body.match(/name="one-status-csrf" content="([^"]+)"/)?.[1];
+    const headers = {
+      cookie,
+      host: "127.0.0.1:8787",
+      origin: "http://127.0.0.1:8787",
+      "x-one-status-csrf": csrf!,
+    };
+
+    const updated = await app.inject({
+      method: "PUT",
+      url: "/v1/dashboard/persona/events/persona-event-1",
+      headers,
+      payload: {
+        content: "Prefer direct Chinese technical answers",
+        confidence: "explicit",
+      },
+    });
+    expect(updated.statusCode).toBe(200);
+    expect(backend.status.persona.profile.language_style).toMatchObject({
+      content: "Prefer direct Chinese technical answers",
+      sourceEventIds: ["persona-event-1"],
+    });
+
+    const policy = await app.inject({
+      method: "PUT",
+      url: "/v1/dashboard/persona/policy",
+      headers,
+      payload: {
+        enabled: true,
+        blockedCategories: ["personal_info"],
+        allowedConfidences: ["explicit", "observed"],
+      },
+    });
+    expect(policy.statusCode).toBe(200);
+    expect(backend.status.persona.policy).toMatchObject({
+      enabled: true,
+      blockedCategories: ["personal_info"],
+      allowedConfidences: ["explicit", "observed"],
+    });
+
+    const deleted = await app.inject({
+      method: "DELETE",
+      url: "/v1/dashboard/persona/events/persona-event-1",
+      headers,
+    });
+    expect(deleted.statusCode).toBe(200);
+    expect(backend.status.persona.events).toEqual([]);
+    expect(backend.status.persona.profile).toEqual({});
   });
 
   it("preserves an OAuth secret while updating the public client ID", async () => {

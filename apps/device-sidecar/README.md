@@ -1,0 +1,59 @@
+# One Status Device Sidecar
+
+`one-status-device-sidecar` is the local, privilege-limited configuration process for One Status v0.7. It scans Codex, Claude Code, and Cursor model state, then previews and applies narrow model-routing changes with atomic writes and rollback records.
+
+## JSON protocol
+
+All responses use one JSON object on stdout. Errors also use stdout so callers never need to expose stderr. Requests can be piped through stdin or passed with `--input PATH`.
+
+```bash
+cargo run --manifest-path apps/device-sidecar/Cargo.toml -- scan <<<'{}'
+```
+
+The write flow is mandatory:
+
+1. Run `preview` with a model profile.
+2. Show `changes`, `warnings`, and target hashes to the user.
+3. Run `apply` with the same request plus the returned `expectedPlanId`.
+4. Store the returned `transactionId` for an explicit `rollback` operation.
+
+Example profile:
+
+```json
+{
+  "tool": "codex",
+  "profile": {
+    "id": "third-party-a",
+    "displayName": "Third-party A",
+    "modelId": "gpt-5.4",
+    "source": "third-party-compatible-api",
+    "apiProtocol": "openai-responses",
+    "endpoint": "https://api.example.test/v1",
+    "credentialEnvVar": "ONE_STATUS_MODEL_A_API_KEY"
+  }
+}
+```
+
+Plaintext fields such as `apiKey`, `accessToken`, `password`, and `secret` are rejected before command deserialization. One Status resolves `credentialEnvVar` from Permission Vault into the sidecar process environment. The value never enters JSON, command-line arguments, stdout, logs, synchronized intent, or active-profile state.
+
+Codex and Claude Code connect directly to their model providers, so they require a local tool-native credential projection when no protocol gateway is enabled. The sidecar writes that projection only during confirmed `apply`; Permission Vault remains the synchronized source of truth. Credential-bearing temporary files are created as `0600`, fully written and synced while private, then atomically renamed. A prior broader mode is never applied to the temporary credential file. Newly projected credential targets, manifests, and backups use `0600`, while transaction directories use `0700`. Rollback may restore an older target's recorded mode, but applies it only after the private temporary file has replaced the target. Cursor receives only a credential reference for its One Status extension.
+
+## Adapter boundaries
+
+- Codex: syntax-preserving edits to top-level `model`, `model_provider`, and the selected `model_providers.one-status-*` table. `mcp_servers`, projects, rules, comments, and unrelated provider tables remain intact.
+- Claude Code: field-preserving JSON edits to `model` and model-routing keys in `env`. The Vault value is projected into Claude Code's native credential field without appearing in sidecar responses.
+- Cursor: writes `~/.cursor/one-status/model-profile.json` for the One Status Cursor extension. Cursor has no public native setting for direct model switching, so user settings, Rules, and MCP files remain untouched.
+
+Transaction backups live under `~/.one-status/device-sidecar/transactions` with owner-only permissions. Rollback restores both bytes and the recorded pre-transaction permissions, and refuses to overwrite files whose hash or expected applied mode changed after apply.
+
+`apply` also performs bounded crash recovery while holding the sidecar operation lock. It recovers at most 16 `Prepared` transactions per invocation. Before any recovery write, the sidecar validates the manifest schema, exact target paths, mutation order, backup names, backup SHA-256 values, and private backup permissions. Every current target must match either its recorded before hash or after hash. A valid transaction is restored to its before bytes and permissions and marked `RolledBack`; any unknown content stops recovery without modifying that transaction's targets.
+
+## Development
+
+```bash
+cargo fmt --manifest-path apps/device-sidecar/Cargo.toml --check
+cargo clippy --manifest-path apps/device-sidecar/Cargo.toml --all-targets -- -D warnings
+cargo test --manifest-path apps/device-sidecar/Cargo.toml
+```
+
+See `SOURCES.md` and `THIRD_PARTY_NOTICES.md` for CC Switch provenance.

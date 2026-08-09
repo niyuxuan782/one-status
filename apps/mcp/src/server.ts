@@ -6,6 +6,8 @@ import type {
 import { listBuiltInCapabilityPacks } from "@one-status/capability-pack";
 import {
   ONE_STATUS_VERSION,
+  personaCategorySchema,
+  personaConfidenceSchema,
   type StatusDocument,
 } from "@one-status/protocol";
 import { z } from "zod";
@@ -14,6 +16,15 @@ import {
   digestStatusMutation,
   statusMutationSchema,
 } from "./operations.js";
+import {
+  deletePersonaEvent,
+  personaPolicyInputSchema,
+  personaRecordInputSchema,
+  personaUpdateInputSchema,
+  recordPersonaEvent,
+  setPersonaPolicy,
+  updatePersonaEvent,
+} from "./persona.js";
 import type { RuntimeToolGateway } from "./tool-gateway.js";
 
 type Vault = Pick<SyncedStatusVault, "read" | "mutate">;
@@ -36,6 +47,8 @@ export function createMcpServer(
         "Use the focused status tools for profile, memory, project, and context requests. " +
         "For every request involving email, calendar, files, collaboration, project management, design, or another connected service, call tools_list first and prefer the One Status Gateway over direct provider APIs, shell CLIs, or asking the user for a token. " +
         "Use capabilities_get to discover installed Capability Packs and the built-in cross-Agent capability catalog. " +
+        "When the user states a durable personal preference, behavior, work habit, technical habit, long-term goal, future plan, or explicitly asks you to remember personal information, call persona.record with a concise structured observation. " +
+        "Use persona.profile to load the current effective Persona. Respect persona.get_policy, never record blocked categories or secrets, and never send raw messages, transcripts, credentials, or unrelated conversation text to Persona tools. " +
         "Only call a connection and action returned by the latest tools_list result, and construct arguments from that action's inputSchema; then use tools_execute so provider credentials remain inside One Status. " +
         "Read-only actions may run immediately. For an action marked requiresConfirmation, call tools_request_approval and ask the user to approve the exact request in the One Status Dashboard before calling tools_execute with the returned approvalId. " +
         "When no eligible action is returned, tell the user which service or action must be connected, granted, or reauthorized in One Status instead of requesting provider credentials.",
@@ -58,6 +71,7 @@ export function createMcpServer(
             "permissions",
             "tools",
             "capabilities",
+            "persona",
             "tasks",
           ])
           .default("all"),
@@ -69,11 +83,18 @@ export function createMcpServer(
       const visibleMemory = includeCandidates
         ? snapshot.status.memory
         : snapshot.status.memory.filter((entry) => entry.state === "confirmed");
+      const visiblePersona = filterPersonaForAgent(snapshot.status.persona);
       const data = section === "all"
-        ? { ...snapshot.status, memory: visibleMemory }
+        ? {
+            ...snapshot.status,
+            memory: visibleMemory,
+            persona: visiblePersona,
+          }
         : section === "memory"
           ? visibleMemory
-          : snapshot.status[section];
+          : section === "persona"
+            ? visiblePersona
+            : snapshot.status[section];
       return toolResult({ version: snapshot.version, section, data });
     },
   );
@@ -123,6 +144,7 @@ export function createMcpServer(
         version: snapshot.version,
         identity: snapshot.status.identity,
         preferences: snapshot.status.preferences,
+        personaProfile: filterPersonaProfileForAgent(snapshot.status.persona),
       });
     },
   );
@@ -298,6 +320,230 @@ export function createMcpServer(
   );
 
   server.registerTool(
+    "persona.record",
+    {
+      title: "Record a structured Persona observation",
+      description:
+        "Record one concise, durable observation about the user's personality, behavior, language or output style, work or technical habits, long-term goals, future plans, or explicitly requested personal memory. Duplicate category/content observations update timestamps, sources, and counts. Send only the structured observation; never send raw chat messages, transcripts, secrets, credentials, or unrelated conversation text.",
+      inputSchema: personaRecordInputSchema,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+    },
+    async (input) => {
+      const now = new Date().toISOString();
+      let result: ReturnType<typeof recordPersonaEvent> | undefined;
+      const snapshot = await vault.mutate((status) => {
+        result = recordPersonaEvent(status, input, agentId, now);
+      });
+      if (!result) throw new Error("Persona observation was not recorded.");
+      const event = snapshot.status.persona.events.find(
+        (candidate) => candidate.id === result?.event.id,
+      );
+      return toolResult({
+        version: snapshot.version,
+        created: result.created,
+        observationAdded: result.observationAdded,
+        event: event ?? result.event,
+        profile: snapshot.status.persona.profile[input.category],
+      });
+    },
+  );
+
+  server.registerTool(
+    "persona.list",
+    {
+      title: "List Persona events",
+      description:
+        "List encrypted Persona observations with their source Agent, source project, confidence, observation timestamps, and duplicate count. Raw conversations are not stored here.",
+      inputSchema: {
+        category: personaCategorySchema.optional(),
+        sourceAgent: z.string().min(1).max(120).optional(),
+        sourceProject: z.string().min(1).max(200).optional(),
+        confidence: personaConfidenceSchema.optional(),
+        limit: z.number().int().min(1).max(500).default(100),
+      },
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async ({ category, sourceAgent, sourceProject, confidence, limit }) => {
+      const snapshot = await vault.read();
+      const blockedCategories = new Set(
+        snapshot.status.persona.policy.blockedCategories,
+      );
+      const events = snapshot.status.persona.events
+        .filter(
+          (event) =>
+            !blockedCategories.has(event.category) &&
+            (!category || event.category === category) &&
+            (!sourceAgent ||
+              event.observations.some(
+                (observation) => observation.sourceAgent === sourceAgent,
+              )) &&
+            (!sourceProject ||
+              event.observations.some(
+                (observation) => observation.sourceProject === sourceProject,
+              )) &&
+            (!confidence ||
+              event.observations.some(
+                (observation) => observation.confidence === confidence,
+              )),
+        )
+        .sort(
+          (left, right) =>
+            right.lastObservedAt.localeCompare(left.lastObservedAt) ||
+            right.id.localeCompare(left.id),
+        )
+        .slice(0, limit);
+      return toolResult({ version: snapshot.version, events });
+    },
+  );
+
+  server.registerTool(
+    "persona.profile",
+    {
+      title: "Get the current Persona profile",
+      description:
+        "Read the current effective Persona profile derived from timestamped Persona events. Optionally select one category.",
+      inputSchema: {
+        category: personaCategorySchema.optional(),
+      },
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async ({ category }) => {
+      const snapshot = await vault.read();
+      const profile = filterPersonaProfileForAgent(snapshot.status.persona);
+      return toolResult({
+        version: snapshot.version,
+        profile: category
+          ? profile[category] ?? null
+          : profile,
+      });
+    },
+  );
+
+  server.registerTool(
+    "persona.update",
+    {
+      title: "Update a Persona event",
+      description:
+        "Edit the category, concise content, or confidence of one Persona event. Provenance and observation timestamps remain attached; matching events are merged.",
+      inputSchema: personaUpdateInputSchema,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async (input) => {
+      let eventId = input.id;
+      const snapshot = await vault.mutate((status) => {
+        eventId = updatePersonaEvent(status, input).id;
+      });
+      return toolResult({
+        version: snapshot.version,
+        event: snapshot.status.persona.events.find(
+          (event) => event.id === eventId,
+        ),
+        profile: snapshot.status.persona.profile,
+      });
+    },
+  );
+
+  server.registerTool(
+    "persona.delete",
+    {
+      title: "Delete a Persona event",
+      description:
+        "Delete one Persona event and rebuild the affected current profile. This does not touch local raw conversation history.",
+      inputSchema: {
+        id: z.string().min(1).max(200),
+      },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+    },
+    async ({ id }) => {
+      let deletedCategory: string | undefined;
+      const snapshot = await vault.mutate((status) => {
+        deletedCategory = deletePersonaEvent(status, id).category;
+      });
+      return toolResult({
+        version: snapshot.version,
+        deleted: true,
+        id,
+        profile: deletedCategory
+          ? snapshot.status.persona.profile[deletedCategory] ?? null
+          : null,
+      });
+    },
+  );
+
+  server.registerTool(
+    "persona.get_policy",
+    {
+      title: "Get Persona recording policy",
+      description:
+        "Read whether Persona recording is enabled and which categories or confidence levels the user permits.",
+      inputSchema: {},
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async () => {
+      const snapshot = await vault.read();
+      return toolResult({
+        version: snapshot.version,
+        policy: snapshot.status.persona.policy,
+      });
+    },
+  );
+
+  server.registerTool(
+    "persona.set_policy",
+    {
+      title: "Set Persona recording policy",
+      description:
+        "Update the user's Persona recording switch, blocked categories, or allowed confidence levels. Existing events remain available until deleted explicitly.",
+      inputSchema: personaPolicyInputSchema,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async (input) => {
+      const snapshot = await vault.mutate((status) => {
+        setPersonaPolicy(status, input);
+      });
+      return toolResult({
+        version: snapshot.version,
+        policy: snapshot.status.persona.policy,
+      });
+    },
+  );
+
+  server.registerTool(
     "status_update_context",
     {
       description: "Update the handoff context after meaningful task progress.",
@@ -395,6 +641,30 @@ export function createMcpServer(
   }
 
   return server;
+}
+
+function filterPersonaForAgent(
+  persona: StatusDocument["persona"],
+): StatusDocument["persona"] {
+  const blockedCategories = new Set(persona.policy.blockedCategories);
+  return {
+    ...persona,
+    events: persona.events.filter(
+      (event) => !blockedCategories.has(event.category),
+    ),
+    profile: filterPersonaProfileForAgent(persona),
+  };
+}
+
+function filterPersonaProfileForAgent(
+  persona: StatusDocument["persona"],
+): StatusDocument["persona"]["profile"] {
+  const blockedCategories = new Set(persona.policy.blockedCategories);
+  return Object.fromEntries(
+    Object.entries(persona.profile).filter(
+      ([category]) => !blockedCategories.has(category),
+    ),
+  );
 }
 
 function projectView(snapshot: DecryptedStatusSnapshot, projectId: string) {

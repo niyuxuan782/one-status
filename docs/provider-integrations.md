@@ -1,6 +1,6 @@
 # Provider 集成
 
-One Status v0.6.0 内置 14 个 Provider、14 个 Capability Packs 和 69 个固定 actions。所有连接共用以下执行链：
+One Status v0.7.0 内置 14 个 Provider、15 个 Capability Packs（含 Persona）、69 个固定 Gateway actions 和 7 个 Persona MCP tools。所有第三方连接共用以下执行链：
 
 ```text
 Agent

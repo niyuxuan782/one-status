@@ -1,13 +1,14 @@
 {
   "name": "@one-status/capability-pack",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "private": true,
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
     "./document": "./src/document.ts",
     "./manifest": "./src/manifest.ts",
-    "./fixtures/github-workflow": "./src/fixtures/github-workflow.ts"
+    "./fixtures/github-workflow": "./src/fixtures/github-workflow.ts",
+    "./fixtures/persona": "./src/fixtures/persona.ts"
   },
   "dependencies": {
     "yaml": "^2.9.0",

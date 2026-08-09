@@ -40,12 +40,18 @@ describe("Permission Vault encrypted sync", () => {
     first.setGrant("user-1", connection.id, "codex", [
       "calendar.events.list",
     ]);
+    first.setModelCredential(
+      "user-1",
+      "third-party-a",
+      "third-party-model-secret",
+    );
     await firstSync.run(() => undefined);
 
     const persisted = JSON.stringify(backend.status.permissions.vault);
     expect(persisted).not.toContain("google-client-secret");
     expect(persisted).not.toContain("google-access-token");
     expect(persisted).not.toContain("google-refresh-token");
+    expect(persisted).not.toContain("third-party-model-secret");
 
     await secondSync.run(() => undefined);
     expect(second.getProviderConfig("user-1", "google")).toMatchObject({
@@ -57,6 +63,9 @@ describe("Permission Vault encrypted sync", () => {
     ).toMatchObject({ refreshToken: "google-refresh-token" });
     expect(second.getAllowedActions("user-1", connection.id, "codex")).toEqual(
       ["calendar.events.list"],
+    );
+    expect(second.getModelCredential("user-1", "third-party-a")).toBe(
+      "third-party-model-secret",
     );
 
     await secondSync.run(() => {

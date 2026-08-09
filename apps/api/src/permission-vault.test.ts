@@ -19,6 +19,56 @@ describe("Permission Vault", () => {
     );
   });
 
+  it("encrypts model source API keys and exposes only availability metadata", () => {
+    const vault = new PermissionVault({
+      path: ":memory:",
+      key: new Uint8Array(32).fill(21),
+    });
+    vault.setModelCredential("user-1", "third-party-a", "model-secret-key");
+
+    expect(vault.hasModelCredential("user-1", "third-party-a")).toBe(true);
+    expect(vault.getModelCredential("user-1", "third-party-a")).toBe(
+      "model-secret-key",
+    );
+    expect(vault.listModelCredentialStatus("user-1")).toEqual([
+      expect.objectContaining({ sourceId: "third-party-a" }),
+    ]);
+    expect(vault.exportBundle("user-1").modelCredentials).toEqual([
+      expect.objectContaining({
+        sourceId: "third-party-a",
+        apiKey: "model-secret-key",
+      }),
+    ]);
+    expect(vault.deleteModelCredential("user-1", "third-party-a")).toBe(true);
+    expect(vault.hasModelCredential("user-1", "third-party-a")).toBe(false);
+    vault.close();
+  });
+
+  it("encrypts model source API keys and exposes availability metadata", () => {
+    const vault = new PermissionVault({
+      key: new Uint8Array(32).fill(31),
+      path: ":memory:",
+    });
+    vault.setModelCredential("user-1", "third-party-a", "model-secret-key");
+
+    expect(vault.hasModelCredential("user-1", "third-party-a")).toBe(true);
+    expect(vault.getModelCredential("user-1", "third-party-a")).toBe(
+      "model-secret-key",
+    );
+    expect(vault.listModelCredentialStatus("user-1")).toEqual([
+      expect.objectContaining({ sourceId: "third-party-a" }),
+    ]);
+    expect(vault.exportBundle("user-1").modelCredentials).toEqual([
+      expect.objectContaining({
+        sourceId: "third-party-a",
+        apiKey: "model-secret-key",
+      }),
+    ]);
+    expect(vault.deleteModelCredential("user-1", "third-party-a")).toBe(true);
+    expect(vault.hasModelCredential("user-1", "third-party-a")).toBe(false);
+    vault.close();
+  });
+
   it("encrypts provider secrets, OAuth state, and credentials at rest", async () => {
     const directory = await mkdtemp(join(tmpdir(), "one-status-permissions-"));
     directories.push(directory);

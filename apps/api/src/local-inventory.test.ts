@@ -39,7 +39,7 @@ describe("local inventory", () => {
     await symlink(project, linkedProject);
     await writeFile(
       join(home, ".codex", "config.toml"),
-      `[projects.${JSON.stringify(project)}]\ntrust_level = "trusted"\n[projects.${JSON.stringify(linkedProject)}]\ntrust_level = "trusted"\n`,
+      `model = "gpt-test"\nmodel_provider = "custom-openai"\n[model_providers.custom-openai]\nname = "Third-party A"\nbase_url = "https://api.example.test/v1?secret=query"\nenv_key = "CODEX_API_KEY"\n[projects.${JSON.stringify(project)}]\ntrust_level = "trusted"\n[projects.${JSON.stringify(linkedProject)}]\ntrust_level = "trusted"\n`,
     );
     await writeFile(
       join(home, ".claude.json"),
@@ -69,6 +69,7 @@ describe("local inventory", () => {
         HOME: home,
         PATH: [bin].join(delimiter),
         CODEX_HOME: join(home, ".codex"),
+        CODEX_API_KEY: "CODEX_MODEL_KEY_SECRET",
         ONE_STATUS_INVENTORY_RUN_AGENT_COMMANDS: "true",
         ONE_STATUS_SCAN_ROOTS: [project, linkedProject].join(delimiter),
       },
@@ -108,6 +109,20 @@ describe("local inventory", () => {
     expect(snapshot.skills).toEqual([
       expect.objectContaining({ name: "sample-skill", agent: "codex" }),
     ]);
+    expect(snapshot.agents[0]).toMatchObject({
+      id: "codex",
+      model: {
+        modelId: "gpt-test",
+        providerId: "custom-openai",
+        providerLabel: "Third-party A",
+        sourceKind: "compatible-api",
+        protocol: "openai",
+        endpoint: "https://api.example.test/v1",
+        endpointHost: "api.example.test",
+        credentialStatus: "available",
+        health: "healthy",
+      },
+    });
     expect(snapshot.mcpServers).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -126,6 +141,72 @@ describe("local inventory", () => {
     expect(serialized).not.toContain("CLAUDE_QUERY_SECRET");
     expect(serialized).not.toContain("CLAUDE_ENV_SECRET");
     expect(serialized).not.toContain("CODEX_ENV_SECRET");
+    expect(serialized).not.toContain("CODEX_MODEL_KEY_SECRET");
+    expect(serialized).not.toContain("secret=query");
     expect(serialized).not.toContain("TOP_SECRET_SKILL_BODY");
+  });
+
+  it("reports a Sidecar-managed Codex bearer credential without exposing it", async () => {
+    directory = await mkdtemp(join(tmpdir(), "one-status-inventory-"));
+    const home = join(directory, "home");
+    const bin = join(directory, "bin");
+    await mkdir(join(home, ".codex"), { recursive: true });
+    await mkdir(bin, { recursive: true });
+    await writeFile(join(bin, "codex"), "#!/bin/sh\nexit 0\n");
+    await chmod(join(bin, "codex"), 0o755);
+    await writeFile(
+      join(home, ".codex", "config.toml"),
+      `model = "gpt-managed"\nmodel_provider = "managed"\n[model_providers.managed]\nname = "Managed provider"\nbase_url = "https://api.example.test/v1"\nexperimental_bearer_token = "SIDECAR_MANAGED_SECRET"\n`,
+    );
+
+    const snapshot = await scanLocalInventory({
+      homeDir: home,
+      environment: {
+        HOME: home,
+        PATH: bin,
+        CODEX_HOME: join(home, ".codex"),
+      },
+    });
+
+    expect(snapshot.agents[0]).toMatchObject({
+      id: "codex",
+      model: {
+        modelId: "gpt-managed",
+        credentialStatus: "available",
+        health: "healthy",
+      },
+    });
+    expect(JSON.stringify(snapshot)).not.toContain("SIDECAR_MANAGED_SECRET");
+  });
+
+  it("keeps a shell-owned Codex environment credential unverified", async () => {
+    directory = await mkdtemp(join(tmpdir(), "one-status-inventory-"));
+    const home = join(directory, "home");
+    const bin = join(directory, "bin");
+    await mkdir(join(home, ".codex"), { recursive: true });
+    await mkdir(bin, { recursive: true });
+    await writeFile(join(bin, "codex"), "#!/bin/sh\nexit 0\n");
+    await chmod(join(bin, "codex"), 0o755);
+    await writeFile(
+      join(home, ".codex", "config.toml"),
+      `model = "gpt-shell"\nmodel_provider = "shell-provider"\n[model_providers.shell-provider]\nbase_url = "https://api.example.test/v1"\nenv_key = "CODEX_API_KEY"\n`,
+    );
+
+    const snapshot = await scanLocalInventory({
+      homeDir: home,
+      environment: {
+        HOME: home,
+        PATH: bin,
+        CODEX_HOME: join(home, ".codex"),
+      },
+    });
+
+    expect(snapshot.agents[0]).toMatchObject({
+      id: "codex",
+      model: {
+        credentialStatus: "unverified",
+        health: "unknown",
+      },
+    });
   });
 });

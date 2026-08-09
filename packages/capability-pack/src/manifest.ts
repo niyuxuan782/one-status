@@ -15,6 +15,15 @@ const VERSION_RANGE_PATTERN = new RegExp(
 const CAPABILITY_PACK_ID_PATTERN =
   /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?)*$/;
 const MEMBER_ID_PATTERN = /^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/;
+const DIRECT_ONE_STATUS_MCP_TOOL_IDS = new Set([
+  "persona.record",
+  "persona.list",
+  "persona.profile",
+  "persona.update",
+  "persona.delete",
+  "persona.get_policy",
+  "persona.set_policy",
+]);
 
 export const semanticVersionSchema = z
   .string()
@@ -393,7 +402,20 @@ function validateManifestSemantics(
   const eventById = new Map(manifest.events.map((event) => [event.id, event]));
 
   manifest.tools.forEach((tool, index) => {
-    if (tool.readOnly === false && tool.requiresConfirmation !== true) {
+    const directOneStatusMcp =
+      tool.metadata?.execution === "one-status-mcp";
+    if (directOneStatusMcp && !DIRECT_ONE_STATUS_MCP_TOOL_IDS.has(tool.id)) {
+      addIssue(
+        context,
+        ["tools", index, "metadata", "execution"],
+        `direct One Status MCP execution is not available for ${tool.id}`,
+      );
+    }
+    if (
+      tool.readOnly === false &&
+      tool.requiresConfirmation !== true &&
+      !directOneStatusMcp
+    ) {
       addIssue(
         context,
         ["tools", index, "requiresConfirmation"],

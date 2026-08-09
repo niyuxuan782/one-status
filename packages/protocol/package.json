@@ -1,10 +1,11 @@
 {
   "name": "@one-status/protocol",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./persona-operations": "./src/persona-operations.ts"
   },
   "dependencies": {
     "zod": "^4.0.0"

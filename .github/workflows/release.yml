@@ -21,6 +21,7 @@ jobs:
           node-version: 22
           cache: pnpm
           registry-url: https://registry.npmjs.org
+      - uses: dtolnay/rust-toolchain@stable
       - name: Verify tag matches package version
         run: |
           expected="v$(node -p 'require("./package.json").version')"
@@ -29,15 +30,16 @@ jobs:
             exit 1
           fi
       - run: pnpm install --frozen-lockfile
+      - run: cargo fmt --manifest-path apps/device-sidecar/Cargo.toml -- --check
+      - run: cargo clippy --manifest-path apps/device-sidecar/Cargo.toml --all-targets -- -D warnings
+      - run: cargo test --manifest-path apps/device-sidecar/Cargo.toml --locked
       - run: pnpm check
       - run: pnpm demo
       - run: pnpm release:prepare
       - uses: actions/upload-artifact@v4
         with:
           name: one-status-cli
-          path: |
-            dist/one-status-*.tgz
-            Formula/one-status.rb
+          path: dist/one-status-*.tgz
 
   desktop:
     strategy:
@@ -47,18 +49,23 @@ jobs:
           - os: macos-14
             platform: mac
             arch: arm64
+            rustTarget: aarch64-apple-darwin
           - os: macos-14
             platform: mac
             arch: x64
+            rustTarget: x86_64-apple-darwin
           - os: windows-latest
             platform: windows
             arch: x64
+            rustTarget: x86_64-pc-windows-msvc
           - os: ubuntu-latest
             platform: linux
             arch: x64
+            rustTarget: x86_64-unknown-linux-gnu
     runs-on: ${{ matrix.os }}
     env:
       CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      ONE_STATUS_SIDECAR_TARGET: ${{ matrix.rustTarget }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -68,8 +75,26 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rustTarget }}
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @one-status/desktop test
+      - name: Validate Windows installer syntax
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path 'apps/site/public/install.ps1'),
+            [ref]$tokens,
+            [ref]$errors
+          ) | Out-Null
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Error $_.Message }
+            exit 1
+          }
       - name: Build macOS desktop
         if: matrix.platform == 'mac'
         shell: bash
@@ -97,6 +122,18 @@ jobs:
           pnpm --dir apps/desktop exec electron-builder \
             --linux AppImage deb --x64 --publish never \
             --config.artifactName='One-Status-${version}-linux-x64.${ext}'
+      - name: Package standalone Device Sidecar
+        shell: bash
+        run: |
+          executable='one-status-device-sidecar'
+          if [[ '${{ matrix.platform }}' == 'windows' ]]; then
+            executable='one-status-device-sidecar.exe'
+          fi
+          node scripts/package-device-sidecar.mjs \
+            --platform '${{ matrix.platform }}' \
+            --arch '${{ matrix.arch }}' \
+            --binary "apps/desktop/dist/resources/bin/$executable" \
+            --output apps/desktop/release
       - uses: actions/upload-artifact@v4
         with:
           name: one-status-desktop-${{ matrix.platform }}-${{ matrix.arch }}
@@ -107,6 +144,7 @@ jobs:
             apps/desktop/release/One-Status-*.exe
             apps/desktop/release/One-Status-*.AppImage
             apps/desktop/release/One-Status-*.deb
+            apps/desktop/release/one-status-device-sidecar-*.tar.gz
 
   release:
     needs: [verify, desktop]
@@ -127,13 +165,15 @@ jobs:
           mkdir -p release-assets Casks
           find artifacts -type f \
             \( -name 'one-status-*.tgz' \
-            -o -name 'one-status.rb' \
             -o -name 'One-Status-*.dmg' \
             -o -name 'One-Status-*.zip' \
             -o -name 'One-Status-*.exe' \
             -o -name 'One-Status-*.AppImage' \
-            -o -name 'One-Status-*.deb' \) \
+            -o -name 'One-Status-*.deb' \
+            -o -name 'one-status-device-sidecar-*.tar.gz' \) \
             -exec cp {} release-assets/ \;
+          node scripts/generate-homebrew-formula.mjs \
+            release-assets release-assets/one-status.rb
           node scripts/generate-homebrew-cask.mjs \
             release-assets Casks/one-status.rb
           cp Casks/one-status.rb release-assets/one-status-cask.rb
@@ -147,6 +187,18 @@ jobs:
           test -f release-assets/One-Status-Setup-${GITHUB_REF_NAME#v}-windows-x64.exe
           test -f release-assets/One-Status-${GITHUB_REF_NAME#v}-linux-x64.AppImage
           test -f release-assets/one-status-${GITHUB_REF_NAME#v}.tgz
+          for target in mac-arm64 mac-x64 windows-x64 linux-x64; do
+            artifact="release-assets/one-status-device-sidecar-${GITHUB_REF_NAME#v}-$target.tar.gz"
+            test -f "$artifact"
+            tar -tzf "$artifact" | grep -Eq '(^|/)THIRD_PARTY_NOTICES\.device-sidecar\.md$'
+            tar -tzf "$artifact" | grep -Eq '(^|/)licenses/cc-switch/LICENSE$'
+          done
+          tar -tzf "release-assets/one-status-device-sidecar-${GITHUB_REF_NAME#v}-windows-x64.tar.gz" |
+            grep -Eq '(^|/)one-status-device-sidecar\.exe$'
+          for target in mac-arm64 mac-x64 linux-x64; do
+            tar -tzf "release-assets/one-status-device-sidecar-${GITHUB_REF_NAME#v}-$target.tar.gz" |
+              grep -Eq '(^|/)one-status-device-sidecar$'
+          done
       - name: Publish npm package when configured
         run: |
           if [[ -n "$NODE_AUTH_TOKEN" ]]; then
@@ -159,14 +211,14 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           body: |
-            This release adds 14 Capability Packs, cross-Agent adapter outputs,
-            and 69 controlled actions across Google Workspace, GitHub, Slack,
-            Microsoft 365, Notion, Dropbox, Zoom, Canva, Asana, Trello,
-            Airtable, Linear, Figma and Box.
+            One Status v0.7 introduces the device and AI tool control center,
+            model sources, confirmed model configuration intents, the Persona
+            Skill, and updated Codex and Claude Code adapters.
 
-            The cross-platform Desktop Preview also includes the local GUI,
-            encrypted sync, OAuth Permission Vault, confirmed writes,
-            synchronized installation intent and Agent adapters.
+            Every Desktop package embeds the native Device Sidecar. Separate
+            Sidecar archives for macOS arm64/x64, Windows x64 and Linux x64
+            support the CLI installer and Homebrew Formula. Release assets and
+            the generated Formula are bound to SHA-256 checksums.
 
             Preview desktop builds are not yet signed. Verify downloads with
             `SHA256SUMS.txt` before installation.

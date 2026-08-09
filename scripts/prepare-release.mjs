@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { deviceSidecarAssetNames } from "./device-sidecar-release.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const packageJson = JSON.parse(await readFile(resolve(root, "package.json"), "utf8"));
@@ -14,17 +15,6 @@ const artifactPath = resolve(root, "dist", artifactName);
 const digest = createHash("sha256")
   .update(await readFile(artifactPath))
   .digest("hex");
-const formulaPath = resolve(root, "Formula", "one-status.rb");
-let formula = await readFile(formulaPath, "utf8");
-formula = formula
-  .replace(/one-status-[\d.]+\.tgz/g, artifactName)
-  .replace(
-    /releases\/download\/v[\d.]+\//g,
-    `releases/download/v${version}/`,
-  )
-  .replace(/sha256 "[a-f0-9]+"/, `sha256 "${digest}"`);
-await writeFile(formulaPath, formula, "utf8");
-
 const releaseAssetNames = [
   `One-Status-${version}-linux-x64.AppImage`,
   `One-Status-${version}-linux-x64.deb`,
@@ -34,6 +24,7 @@ const releaseAssetNames = [
   `One-Status-${version}-mac-x64.zip`,
   `One-Status-Portable-${version}-windows-x64.exe`,
   `One-Status-Setup-${version}-windows-x64.exe`,
+  ...deviceSidecarAssetNames(version),
   `one-status-${version}.tgz`,
   "one-status-cask.rb",
   "one-status.rb",

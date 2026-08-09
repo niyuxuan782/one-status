@@ -1,0 +1,574 @@
+import { createEmptyStatus, type StatusDocument } from "@one-status/protocol";
+import {
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+  type MockedFunction,
+} from "vitest";
+import type {
+  DashboardBackend,
+  DashboardStatusSnapshot,
+} from "./dashboard-backend.js";
+import {
+  DeviceControlService,
+  ModelConfigurationApplyError,
+  type ModelConfigurationAdapter,
+} from "./device-control.js";
+import type { LocalInventorySnapshot } from "./local-inventory.js";
+
+const DEVICE_A = "2e0f24e2-b009-4091-b6d9-5236abe1ff00";
+const DEVICE_B = "f541fe2b-9302-4185-b5c1-82b5d2bba96f";
+const SOURCE_ID = "third-party-a";
+const MODEL_ID = "third-party-a:model:gpt-5-4";
+const API_KEY = "private-model-credential-value";
+
+describe("DeviceControlService", () => {
+  let backend: MemoryDeviceBackend;
+  let inventory: LocalInventorySnapshot;
+  let configurator: ModelConfigurationAdapter;
+  let apply: MockedFunction<ModelConfigurationAdapter["apply"]>;
+  let service: DeviceControlService;
+
+  beforeEach(() => {
+    backend = new MemoryDeviceBackend();
+    inventory = inventoryFor("gpt-5.4", "third-party-a");
+    apply = vi.fn<ModelConfigurationAdapter["apply"]>(async () => ({
+      appliedAt: "2026-08-09T15:30:00.000Z",
+    }));
+    configurator = { apply };
+    service = createService(backend, () => inventory, configurator);
+    seedCatalog(backend.status);
+  });
+
+  it("publishes the current device inventory without exposing credentials", async () => {
+    const snapshot = await service.synchronizeCurrentDevice();
+
+    expect(snapshot.status.deviceControl.reports[DEVICE_A]).toMatchObject({
+      deviceId: DEVICE_A,
+      deviceName: "Ryan's MacBook Pro",
+      backgroundVersion: expect.any(String),
+      tools: [
+        {
+          toolId: "codex",
+          installed: true,
+          currentModelId: "gpt-5.4",
+          sourceId: SOURCE_ID,
+          endpointHost: "api.example.test",
+          health: "healthy",
+        },
+      ],
+    });
+    expect(JSON.stringify(snapshot.status)).not.toContain(API_KEY);
+  });
+
+  it("reports model credentials from Permission Vault availability", async () => {
+    service = new DeviceControlService(
+      backend,
+      { async refresh() { return inventory; } },
+      {
+        getModelCredential() {
+          return undefined;
+        },
+        hasModelCredential() {
+          return false;
+        },
+      },
+      configurator,
+    );
+
+    const snapshot = await service.synchronizeCurrentDevice();
+
+    expect(snapshot.status.deviceControl.sources[SOURCE_ID]).toMatchObject({
+      credentialRef: `model-source:${SOURCE_ID}`,
+      credentialStatus: "missing",
+    });
+    await expect(
+      service.previewConfiguration({
+        modelId: MODEL_ID,
+        targets: [{ deviceId: DEVICE_A, toolId: "codex" }],
+      }),
+    ).rejects.toThrow("Add a model source credential");
+  });
+
+  it("applies a confirmed configuration immediately on the current device", async () => {
+    await service.synchronizeCurrentDevice();
+    const preview = await service.previewConfiguration({
+      modelId: MODEL_ID,
+      targets: [{ deviceId: DEVICE_A, toolId: "codex" }],
+    });
+    expect(preview.changes[0]).toMatchObject({
+      execution: "immediate",
+      online: true,
+      nextModelId: "gpt-5.4",
+    });
+
+    const snapshot = await service.queueConfiguration({
+      approvalId: preview.approvalId,
+      digest: preview.digest,
+      confirm: true,
+    });
+
+    expect(apply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        apiKey: API_KEY,
+        toolId: "codex",
+        model: expect.objectContaining({ id: MODEL_ID }),
+        source: expect.objectContaining({ id: SOURCE_ID }),
+      }),
+    );
+    expect(Object.values(snapshot.status.deviceControl.intents)).toEqual([
+      expect.objectContaining({
+        deviceId: DEVICE_A,
+        status: "applied",
+        attempts: 1,
+      }),
+    ]);
+    expect(JSON.stringify(snapshot.status)).not.toContain(API_KEY);
+
+    inventory = inventoryFor("gpt-5.4", "one-status-source-opaque");
+    const rescanned = await service.synchronizeCurrentDevice();
+    expect(Object.keys(rescanned.status.deviceControl.sources)).toEqual([
+      SOURCE_ID,
+    ]);
+    expect(Object.keys(rescanned.status.deviceControl.models)).toEqual([
+      MODEL_ID,
+    ]);
+    expect(
+      rescanned.status.deviceControl.reports[DEVICE_A]?.tools[0],
+    ).toMatchObject({
+      currentModelRef: MODEL_ID,
+      sourceId: SOURCE_ID,
+      lastConfiguredAt: "2026-08-09T15:30:00.000Z",
+    });
+  });
+
+  it("keeps an offline-device intent pending and applies it after that device starts", async () => {
+    await service.synchronizeCurrentDevice();
+    const preview = await service.previewConfiguration({
+      modelId: MODEL_ID,
+      targets: [{ deviceId: DEVICE_B, toolId: "codex" }],
+    });
+    expect(preview.changes[0]).toMatchObject({
+      execution: "pending",
+      online: false,
+    });
+
+    const pending = await service.queueConfiguration({
+      approvalId: preview.approvalId,
+      digest: preview.digest,
+      confirm: true,
+    });
+    expect(Object.values(pending.status.deviceControl.intents)[0]).toMatchObject({
+      deviceId: DEVICE_B,
+      status: "pending",
+      attempts: 0,
+    });
+    expect(apply).not.toHaveBeenCalled();
+
+    backend.currentDeviceId = DEVICE_B;
+    backend.devices[1]!.online = true;
+    const resumedService = createService(backend, () => inventory, configurator);
+    const applied = await resumedService.synchronizeCurrentDevice();
+
+    expect(apply).toHaveBeenCalledOnce();
+    expect(Object.values(applied.status.deviceControl.intents)[0]).toMatchObject({
+      deviceId: DEVICE_B,
+      status: "applied",
+      attempts: 1,
+    });
+  });
+
+  it("applies the immutable approved snapshot after the catalog changes", async () => {
+    await service.synchronizeCurrentDevice();
+    const preview = await service.previewConfiguration({
+      modelId: MODEL_ID,
+      targets: [{ deviceId: DEVICE_B, toolId: "codex" }],
+    });
+    const pending = await service.queueConfiguration({
+      approvalId: preview.approvalId,
+      digest: preview.digest,
+      confirm: true,
+    });
+    expect(Object.values(pending.status.deviceControl.intents)[0]).toMatchObject({
+      configuration: {
+        model: { modelId: "gpt-5.4" },
+        source: { endpoint: "https://api.example.test/v1" },
+      },
+    });
+
+    await backend.mutateStatus((status) => {
+      status.deviceControl.models[MODEL_ID]!.modelId = "gpt-5.5";
+      status.deviceControl.sources[SOURCE_ID]!.endpoint =
+        "https://changed.example.test/v1";
+    });
+    inventory = inventoryFor("gpt-5.5", SOURCE_ID);
+    inventory.agents[0]!.model!.endpoint = "https://changed.example.test/v1";
+    inventory.agents[0]!.model!.endpointHost = "changed.example.test";
+    backend.currentDeviceId = DEVICE_B;
+    backend.devices[1]!.online = true;
+
+    const resumedService = createService(backend, () => inventory, configurator);
+    await resumedService.synchronizeCurrentDevice();
+
+    expect(apply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: expect.objectContaining({ modelId: "gpt-5.4" }),
+        source: expect.objectContaining({
+          endpoint: "https://api.example.test/v1",
+        }),
+      }),
+    );
+  });
+
+  it("reclaims an expired applying intent and clears its lease", async () => {
+    await service.synchronizeCurrentDevice();
+    const preview = await service.previewConfiguration({
+      modelId: MODEL_ID,
+      targets: [{ deviceId: DEVICE_B, toolId: "codex" }],
+    });
+    await service.queueConfiguration({
+      approvalId: preview.approvalId,
+      digest: preview.digest,
+      confirm: true,
+    });
+    const intent = Object.values(backend.status.deviceControl.intents)[0]!;
+    intent.status = "applying";
+    intent.claimId = "18dcff69-741d-4ea2-9123-b86d02e8d6da";
+    intent.claimedAt = "2026-08-09T12:00:00.000Z";
+    intent.claimExpiresAt = "2026-08-09T12:02:00.000Z";
+    intent.updatedAt = intent.claimedAt;
+    intent.attempts = 1;
+    backend.currentDeviceId = DEVICE_B;
+    backend.devices[1]!.online = true;
+
+    const resumedService = createService(backend, () => inventory, configurator);
+    const applied = await resumedService.synchronizeCurrentDevice();
+    const completed = Object.values(applied.status.deviceControl.intents)[0]!;
+
+    expect(apply).toHaveBeenCalledOnce();
+    expect(completed).toMatchObject({ status: "applied", attempts: 2 });
+    expect(completed).not.toHaveProperty("claimId");
+    expect(completed).not.toHaveProperty("claimedAt");
+    expect(completed).not.toHaveProperty("claimExpiresAt");
+  });
+
+  it("allows only one service instance to execute an active claim", async () => {
+    await service.synchronizeCurrentDevice();
+    const preview = await service.previewConfiguration({
+      modelId: MODEL_ID,
+      targets: [{ deviceId: DEVICE_B, toolId: "codex" }],
+    });
+    await service.queueConfiguration({
+      approvalId: preview.approvalId,
+      digest: preview.digest,
+      confirm: true,
+    });
+    backend.currentDeviceId = DEVICE_B;
+    backend.devices[1]!.online = true;
+
+    let signalStarted!: () => void;
+    let releaseApply!: () => void;
+    const started = new Promise<void>((resolve) => {
+      signalStarted = resolve;
+    });
+    const held = new Promise<void>((resolve) => {
+      releaseApply = resolve;
+    });
+    apply.mockImplementation(async () => {
+      signalStarted();
+      await held;
+      return { appliedAt: "2026-08-09T15:30:00.000Z" };
+    });
+    const firstService = createService(backend, () => inventory, configurator);
+    const secondService = createService(backend, () => inventory, configurator);
+
+    const firstRun = firstService.synchronizeCurrentDevice();
+    await started;
+    const secondSnapshot = await secondService.synchronizeCurrentDevice();
+    expect(apply).toHaveBeenCalledOnce();
+    expect(Object.values(secondSnapshot.status.deviceControl.intents)[0])
+      .toMatchObject({
+        status: "applying",
+        attempts: 1,
+        claimId: expect.any(String),
+      });
+
+    releaseApply();
+    const completed = await firstRun;
+    expect(apply).toHaveBeenCalledOnce();
+    expect(Object.values(completed.status.deviceControl.intents)[0])
+      .toMatchObject({ status: "applied", attempts: 1 });
+  });
+
+  it("fails a legacy pending intent without an approved snapshot", async () => {
+    await service.synchronizeCurrentDevice();
+    const preview = await service.previewConfiguration({
+      modelId: MODEL_ID,
+      targets: [{ deviceId: DEVICE_B, toolId: "codex" }],
+    });
+    await service.queueConfiguration({
+      approvalId: preview.approvalId,
+      digest: preview.digest,
+      confirm: true,
+    });
+    const intent = Object.values(backend.status.deviceControl.intents)[0]!;
+    delete intent.configuration;
+    backend.currentDeviceId = DEVICE_B;
+    backend.devices[1]!.online = true;
+
+    const resumedService = createService(backend, () => inventory, configurator);
+    const failed = await resumedService.synchronizeCurrentDevice();
+    const completed = Object.values(failed.status.deviceControl.intents)[0]!;
+
+    expect(apply).not.toHaveBeenCalled();
+    expect(completed).toMatchObject({
+      status: "failed",
+      error: "The approved model configuration snapshot is unavailable.",
+    });
+    expect(completed).not.toHaveProperty("claimId");
+  });
+
+  it("binds the current-device intent to the redacted local file preview", async () => {
+    const expectedPlanId = `plan_${"d".repeat(64)}`;
+    const preview = vi.fn(async () => ({
+      planId: expectedPlanId,
+      targets: [
+        {
+          purpose: "tool-configuration",
+          path: "/tmp/config.toml",
+          existed: true,
+          beforeSha256: "a".repeat(64),
+          afterSha256: "b".repeat(64),
+          beforeMode: 0o640,
+          afterMode: 0o600,
+        },
+      ],
+      changes: [
+        {
+          path: "model",
+          operation: "update",
+          before: "old",
+          after: "gpt-5.4",
+        },
+      ],
+      warnings: [],
+      requiresRestart: true,
+    }));
+    configurator = { apply, preview };
+    service = createService(backend, () => inventory, configurator);
+    await service.synchronizeCurrentDevice();
+    const configuration = await service.previewConfiguration({
+      modelId: MODEL_ID,
+      targets: [{ deviceId: DEVICE_A, toolId: "codex" }],
+    });
+    expect(configuration.changes[0]?.localPlan).toMatchObject({
+      planId: expectedPlanId,
+      requiresRestart: true,
+      targets: [expect.objectContaining({ afterMode: 0o600 })],
+    });
+
+    const applied = await service.queueConfiguration({
+      approvalId: configuration.approvalId,
+      digest: configuration.digest,
+      confirm: true,
+    });
+    expect(apply).toHaveBeenCalledWith(
+      expect.objectContaining({ expectedPlanId }),
+    );
+    expect(Object.values(applied.status.deviceControl.intents)[0]).toMatchObject({
+      expectedPlanId,
+      status: "applied",
+    });
+  });
+
+  it("reports a restored configuration as rollback and redacts its credential", async () => {
+    apply.mockRejectedValueOnce(
+      new ModelConfigurationApplyError(
+        `Sidecar rejected credential ${API_KEY} and token-secret-value`,
+        true,
+      ),
+    );
+    await service.synchronizeCurrentDevice();
+    const preview = await service.previewConfiguration({
+      modelId: MODEL_ID,
+      targets: [{ deviceId: DEVICE_A, toolId: "codex" }],
+    });
+    const snapshot = await service.queueConfiguration({
+      approvalId: preview.approvalId,
+      digest: preview.digest,
+      confirm: true,
+    });
+
+    const intent = Object.values(snapshot.status.deviceControl.intents)[0]!;
+    expect(intent).toMatchObject({ status: "rollback", attempts: 1 });
+    expect(intent.error).toContain("[redacted]");
+    expect(intent.error).not.toContain(API_KEY);
+    expect(intent.error).not.toContain("token-secret-value");
+    expect(JSON.stringify(snapshot.status)).not.toContain(API_KEY);
+  });
+
+  it("invalidates approval when the model configuration changes after preview", async () => {
+    await service.synchronizeCurrentDevice();
+    const preview = await service.previewConfiguration({
+      modelId: MODEL_ID,
+      targets: [{ deviceId: DEVICE_A, toolId: "codex" }],
+    });
+    await backend.mutateStatus((status) => {
+      status.deviceControl.models[MODEL_ID]!.modelId = "gpt-5.5";
+    });
+
+    await expect(
+      service.queueConfiguration({
+        approvalId: preview.approvalId,
+        digest: preview.digest,
+        confirm: true,
+      }),
+    ).rejects.toThrow("Configuration state changed");
+    expect(apply).not.toHaveBeenCalled();
+    expect(Object.keys(backend.status.deviceControl.intents)).toHaveLength(0);
+  });
+});
+
+function createService(
+  backend: MemoryDeviceBackend,
+  refresh: () => LocalInventorySnapshot,
+  configurator: ModelConfigurationAdapter,
+): DeviceControlService {
+  return new DeviceControlService(
+    backend,
+    { async refresh() { return refresh(); } },
+    {
+      getModelCredential(_userId, sourceId) {
+        return sourceId === SOURCE_ID ? API_KEY : undefined;
+      },
+      hasModelCredential(_userId, sourceId) {
+        return sourceId === SOURCE_ID;
+      },
+    },
+    configurator,
+  );
+}
+
+function seedCatalog(status: StatusDocument): void {
+  const now = "2026-08-09T15:00:00.000Z";
+  status.deviceControl.sources[SOURCE_ID] = {
+    id: SOURCE_ID,
+    label: "Third-party A",
+    kind: "compatible-api",
+    protocol: "openai",
+    endpoint: "https://api.example.test/v1",
+    supportedTools: ["codex"],
+    credentialRef: `model-source:${SOURCE_ID}`,
+    credentialStatus: "available",
+    createdAt: now,
+    updatedAt: now,
+  };
+  status.deviceControl.models[MODEL_ID] = {
+    id: MODEL_ID,
+    sourceId: SOURCE_ID,
+    name: "GPT-5.4",
+    modelId: "gpt-5.4",
+    supportedTools: ["codex"],
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+function inventoryFor(modelId: string, providerId: string): LocalInventorySnapshot {
+  return {
+    schemaVersion: 1,
+    scannedAt: "2026-08-09T15:00:00.000Z",
+    agents: [
+      {
+        id: "codex",
+        name: "Codex",
+        installed: true,
+        model: {
+          modelId,
+          providerId,
+          providerLabel: "Third-party A",
+          sourceKind: "compatible-api",
+          protocol: "openai",
+          endpoint: "https://api.example.test/v1",
+          endpointHost: "api.example.test",
+          credentialStatus: "available",
+          health: "healthy",
+        },
+      },
+    ],
+    projects: [],
+    mcpServers: [],
+    plugins: [],
+    skills: [],
+    rules: [],
+    warnings: [],
+  };
+}
+
+class MemoryDeviceBackend implements DashboardBackend {
+  status = createEmptyStatus();
+  version = 1;
+  currentDeviceId = DEVICE_A;
+  devices = [
+    {
+      id: DEVICE_A,
+      name: "Ryan's MacBook Pro",
+      createdAt: "2026-08-09T14:00:00.000Z",
+      lastSeenAt: "2026-08-09T15:00:00.000Z",
+      online: true,
+    },
+    {
+      id: DEVICE_B,
+      name: "Office Mac mini",
+      createdAt: "2026-08-09T14:00:00.000Z",
+      lastSeenAt: "2026-08-09T14:30:00.000Z",
+      online: false,
+    },
+  ];
+
+  async getSnapshot(): Promise<DashboardStatusSnapshot> {
+    return this.snapshot();
+  }
+
+  async mutateStatus(
+    mutator: (status: StatusDocument) => void,
+  ): Promise<DashboardStatusSnapshot> {
+    const next = structuredClone(this.status);
+    mutator(next);
+    this.status = next;
+    this.version += 1;
+    return this.snapshot();
+  }
+
+  async revokeDevice(): Promise<void> {}
+
+  async userId(): Promise<string> {
+    return "user-1";
+  }
+
+  private snapshot(): DashboardStatusSnapshot {
+    const current = this.devices.find((device) => device.id === this.currentDeviceId)!;
+    return {
+      account: {
+        user: {
+          id: "user-1",
+          email: "ryan@example.test",
+          createdAt: "2026-08-09T14:00:00.000Z",
+        },
+        devices: structuredClone(this.devices),
+      },
+      profile: {
+        baseUrl: "https://os.example.test",
+        deviceId: current.id,
+        deviceName: current.name,
+        tokenExpiresAt: "2026-08-10T14:00:00.000Z",
+        userId: "user-1",
+      },
+      status: structuredClone(this.status),
+      updatedAt: "2026-08-09T15:00:00.000Z",
+      version: this.version,
+    };
+  }
+}

@@ -1,6 +1,6 @@
 {
   "name": "@one-status/desktop",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "private": true,
   "type": "module",
   "description": "One Status desktop control center",
@@ -48,7 +48,14 @@
     },
     "files": [
       "dist/**/*",
+      "!dist/resources{,/**/*}",
       "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "dist/resources",
+        "to": "."
+      }
     ],
     "npmRebuild": false,
     "mac": {

@@ -17,11 +17,15 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
       - run: pnpm install --frozen-lockfile
+      - run: cargo fmt --manifest-path apps/device-sidecar/Cargo.toml -- --check
+      - run: cargo clippy --manifest-path apps/device-sidecar/Cargo.toml --all-targets -- -D warnings
+      - run: cargo test --manifest-path apps/device-sidecar/Cargo.toml --locked
       - run: pnpm check
       - run: pnpm build
       - run: pnpm --filter @one-status/desktop build
-      - run: bash -n apps/site/public/install.sh
+      - run: bash -n apps/site/public/install.sh scripts/install-local.sh scripts/install-homebrew-local.sh
       - run: ./dist/one-status.js version
       - run: pnpm demo
 

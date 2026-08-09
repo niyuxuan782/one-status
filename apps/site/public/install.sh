@@ -255,16 +255,55 @@ if [ "$MODE" = "cli" ]; then
     fail "$ASSET_NAME does not contain package/dist/one-status.js."
   fi
 
+  OPERATING_SYSTEM="$(uname -s 2>/dev/null || true)"
+  ARCHITECTURE="$(normalized_architecture)"
+  case "$OPERATING_SYSTEM" in
+    Darwin) SIDECAR_PLATFORM="mac" ;;
+    Linux) SIDECAR_PLATFORM="linux" ;;
+    *) fail "CLI installation supports macOS and Linux here. On Windows, use install.ps1 -Cli." ;;
+  esac
+  SIDECAR_ASSET_NAME="one-status-device-sidecar-${VERSION}-${SIDECAR_PLATFORM}-${ARCHITECTURE}.tar.gz"
+  SIDECAR_ASSET_URL="$(find_exact_asset "$SIDECAR_ASSET_NAME")"
+  [ -n "$SIDECAR_ASSET_URL" ] || fail "release $TAG does not contain $SIDECAR_ASSET_NAME for this device."
+  SIDECAR_ARCHIVE="$TEMP_DIRECTORY/$SIDECAR_ASSET_NAME"
+  download_file "$SIDECAR_ASSET_URL" "$SIDECAR_ARCHIVE"
+  verify_checksum "$SIDECAR_ARCHIVE" "$SIDECAR_ASSET_NAME" "$CHECKSUM_FILE"
+  if ! tar -tzf "$SIDECAR_ARCHIVE" | sed 's#^\./##' | grep -qx 'one-status-device-sidecar'; then
+    fail "$SIDECAR_ASSET_NAME does not contain one-status-device-sidecar."
+  fi
+  if ! tar -tzf "$SIDECAR_ARCHIVE" | sed 's#^\./##' | grep -qx 'THIRD_PARTY_NOTICES.device-sidecar.md'; then
+    fail "$SIDECAR_ASSET_NAME does not contain its third-party notice."
+  fi
+  if ! tar -tzf "$SIDECAR_ARCHIVE" | sed 's#^\./##' | grep -qx 'licenses/cc-switch/LICENSE'; then
+    fail "$SIDECAR_ASSET_NAME does not contain the CC Switch license."
+  fi
+
   INSTALL_DIRECTORY="${ONE_STATUS_INSTALL_DIR:-$HOME/.local/bin}"
   mkdir -p "$INSTALL_DIRECTORY"
-  INSTALL_STAGING="$INSTALL_DIRECTORY/.one-status.tmp.$$"
-  if ! tar -xOzf "$ARCHIVE" package/dist/one-status.js > "$INSTALL_STAGING"; then
+  INSTALL_STAGING="$INSTALL_DIRECTORY/.one-status-install.tmp.$$"
+  rm -rf -- "$INSTALL_STAGING"
+  mkdir -m 0700 "$INSTALL_STAGING"
+  if ! tar -xOzf "$ARCHIVE" package/dist/one-status.js > "$INSTALL_STAGING/one-status"; then
     fail "could not extract the CLI executable from $ASSET_NAME."
   fi
-  chmod 0755 "$INSTALL_STAGING"
-  mv -f -- "$INSTALL_STAGING" "$INSTALL_DIRECTORY/one-status"
+  if ! tar -xOzf "$SIDECAR_ARCHIVE" one-status-device-sidecar > "$INSTALL_STAGING/one-status-device-sidecar"; then
+    fail "could not extract the Device Sidecar from $SIDECAR_ASSET_NAME."
+  fi
+  chmod 0755 "$INSTALL_STAGING/one-status" "$INSTALL_STAGING/one-status-device-sidecar"
+  mv -f -- "$INSTALL_STAGING/one-status-device-sidecar" "$INSTALL_DIRECTORY/one-status-device-sidecar"
+  mv -f -- "$INSTALL_STAGING/one-status" "$INSTALL_DIRECTORY/one-status"
+  rm -rf -- "$INSTALL_STAGING"
   INSTALL_STAGING=""
-  say "installed CLI $TAG at $INSTALL_DIRECTORY/one-status"
+  SHARE_DIRECTORY="${ONE_STATUS_SHARE_DIR:-$(dirname "$INSTALL_DIRECTORY")/share/one-status}"
+  mkdir -p "$SHARE_DIRECTORY/licenses/cc-switch"
+  tar -xOzf "$SIDECAR_ARCHIVE" THIRD_PARTY_NOTICES.device-sidecar.md > \
+    "$SHARE_DIRECTORY/THIRD_PARTY_NOTICES.device-sidecar.md"
+  tar -xOzf "$SIDECAR_ARCHIVE" licenses/cc-switch/LICENSE > \
+    "$SHARE_DIRECTORY/licenses/cc-switch/LICENSE"
+  chmod 0644 \
+    "$SHARE_DIRECTORY/THIRD_PARTY_NOTICES.device-sidecar.md" \
+    "$SHARE_DIRECTORY/licenses/cc-switch/LICENSE"
+  say "installed CLI $TAG and Device Sidecar at $INSTALL_DIRECTORY"
   case ":$PATH:" in
     *":$INSTALL_DIRECTORY:"*) ;;
     *) say "add $INSTALL_DIRECTORY to PATH before running one-status." ;;

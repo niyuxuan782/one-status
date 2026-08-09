@@ -9,9 +9,19 @@ import type {
   FastifyRequest,
 } from "fastify";
 import {
+  agentToolIdSchema,
   capabilityTargetSchema,
+  modelApiProtocolSchema,
+  modelSourceKindSchema,
   ONE_STATUS_VERSION,
 } from "@one-status/protocol";
+import {
+  deletePersonaEvent,
+  personaPolicyInputSchema,
+  personaUpdateInputSchema,
+  setPersonaPolicy,
+  updatePersonaEvent,
+} from "@one-status/protocol/persona-operations";
 import { z } from "zod";
 import type {
   AuthenticatedAgentSession,
@@ -46,6 +56,7 @@ import type {
   LocalCapabilityTarget,
 } from "./local-capability-manager.js";
 import type { LocalOnboardingService } from "./onboarding.js";
+import type { DeviceControlService } from "./device-control.js";
 
 const dashboardPaths = new Set([
   "/",
@@ -54,7 +65,9 @@ const dashboardPaths = new Set([
   "/handoffs",
   "/memory",
   "/environment",
+  "/models",
   "/capabilities",
+  "/persona",
   "/integrations",
   "/devices",
   "/activity",
@@ -85,6 +98,10 @@ export interface DashboardRuntime {
   >;
   githubCliImporter?: Pick<GitHubCliCredentialImporter, "import">;
   inventory: Pick<LocalInventoryService, "get" | "refresh">;
+  deviceControl?: Pick<
+    DeviceControlService,
+    "previewConfiguration" | "queueConfiguration" | "synchronizeCurrentDevice"
+  >;
   onboarding?: Pick<LocalOnboardingService, "login" | "register" | "status">;
   permissionVault: PermissionVault;
   permissionSync?: Pick<PermissionSyncService, "run">;
@@ -186,6 +203,8 @@ export function registerDashboardRoutes(
           capabilityPacks: listBuiltInCapabilityPacks().map(
             ({ manifest, digest }) => ({ manifest, digest }),
           ),
+          modelCredentialSources:
+            runtime.permissionVault.listModelCredentialStatus(userId),
           integrations: {
             auditEvents: runtime.permissionVault.listAuditEvents(userId),
             approvals: runtime.toolGateway.listApprovals(userId),
@@ -310,6 +329,201 @@ export function registerDashboardRoutes(
     }
     return dashboardCall(reply, () => runtime.inventory.refresh());
   });
+
+  app.post("/v1/dashboard/device-control/sync", async (request, reply) => {
+    if (!authorizeDashboardWrite(request, reply, dashboardSession, csrfToken)) {
+      return;
+    }
+    if (!runtime.deviceControl) {
+      return reply.code(501).send({ error: "device_control_unavailable" });
+    }
+    return dashboardCall(reply, () =>
+      withPermissionVault(runtime, () =>
+        runtime.deviceControl!.synchronizeCurrentDevice(),
+      ),
+    );
+  });
+
+  app.put(
+    "/v1/dashboard/model-sources/:id",
+    async (request, reply) => {
+      if (!authorizeDashboardWrite(request, reply, dashboardSession, csrfToken)) {
+        return;
+      }
+      const { id } = modelControlParameterSchema.parse(request.params);
+      const input = modelSourceInputSchema.parse(request.body);
+      return dashboardCall(reply, () =>
+        withPermissionVault(runtime, async () => {
+          const snapshot = await runtime.backend.getSnapshot();
+          if (input.apiKey) {
+            runtime.permissionVault.setModelCredential(
+              snapshot.profile.userId,
+              id,
+              input.apiKey,
+            );
+          } else if (input.clearCredential) {
+            runtime.permissionVault.deleteModelCredential(
+              snapshot.profile.userId,
+              id,
+            );
+          }
+          const credentialRequired =
+            input.kind !== "official-account" && input.kind !== "local-service";
+          const credentialAvailable = credentialRequired
+            ? runtime.permissionVault.hasModelCredential(
+                snapshot.profile.userId,
+                id,
+              )
+            : false;
+          return runtime.backend.mutateStatus((status) => {
+            const now = new Date().toISOString();
+            const previous = status.deviceControl.sources[id];
+            status.deviceControl.sources[id] = {
+              id,
+              label: input.label,
+              kind: input.kind,
+              protocol: input.protocol,
+              ...(input.endpoint ? { endpoint: input.endpoint } : {}),
+              supportedTools: [...new Set(input.supportedTools)],
+              ...(credentialRequired
+                ? { credentialRef: `model-source:${id}` }
+                : {}),
+              credentialStatus: credentialRequired
+                ? credentialAvailable
+                  ? "available"
+                  : "missing"
+                : "not-required",
+              ...(credentialAvailable ? { lastVerifiedAt: now } : {}),
+              createdAt: previous?.createdAt ?? now,
+              updatedAt: now,
+            };
+          });
+        }),
+      );
+    },
+  );
+
+  app.delete(
+    "/v1/dashboard/model-sources/:id",
+    async (request, reply) => {
+      if (!authorizeDashboardWrite(request, reply, dashboardSession, csrfToken)) {
+        return;
+      }
+      const { id } = modelControlParameterSchema.parse(request.params);
+      return dashboardCall(reply, () =>
+        withPermissionVault(runtime, async () => {
+          const snapshot = await runtime.backend.getSnapshot();
+          runtime.permissionVault.deleteModelCredential(
+            snapshot.profile.userId,
+            id,
+          );
+          return runtime.backend.mutateStatus((status) => {
+            const modelIds = Object.values(status.deviceControl.models)
+              .filter((model) => model.sourceId === id)
+              .map((model) => model.id);
+            const modelIdSet = new Set(modelIds);
+            for (const modelId of modelIds) {
+              delete status.deviceControl.models[modelId];
+            }
+            for (const [intentId, intent] of Object.entries(
+              status.deviceControl.intents,
+            )) {
+              if (intent.sourceId === id || modelIdSet.has(intent.modelId)) {
+                delete status.deviceControl.intents[intentId];
+              }
+            }
+            delete status.deviceControl.sources[id];
+          });
+        }),
+      );
+    },
+  );
+
+  app.put("/v1/dashboard/models/:id", async (request, reply) => {
+    if (!authorizeDashboardWrite(request, reply, dashboardSession, csrfToken)) {
+      return;
+    }
+    const { id } = modelControlParameterSchema.parse(request.params);
+    const input = modelInputSchema.parse(request.body);
+    return dashboardCall(reply, async () => {
+      const snapshot = await runtime.backend.getSnapshot();
+      const source = snapshot.status.deviceControl.sources[input.sourceId];
+      if (!source) throw new Error("Model source was not found.");
+      if (
+        input.supportedTools.some(
+          (tool) => !source.supportedTools.includes(tool),
+        )
+      ) {
+        throw new Error("Model tools must be supported by its source.");
+      }
+      return runtime.backend.mutateStatus((status) => {
+        const now = new Date().toISOString();
+        const previous = status.deviceControl.models[id];
+        status.deviceControl.models[id] = {
+          id,
+          sourceId: input.sourceId,
+          name: input.name,
+          modelId: input.modelId,
+          supportedTools: [...new Set(input.supportedTools)],
+          createdAt: previous?.createdAt ?? now,
+          updatedAt: now,
+        };
+      });
+    });
+  });
+
+  app.delete("/v1/dashboard/models/:id", async (request, reply) => {
+    if (!authorizeDashboardWrite(request, reply, dashboardSession, csrfToken)) {
+      return;
+    }
+    const { id } = modelControlParameterSchema.parse(request.params);
+    return dashboardCall(reply, () =>
+      runtime.backend.mutateStatus((status) => {
+        for (const [intentId, intent] of Object.entries(
+          status.deviceControl.intents,
+        )) {
+          if (intent.modelId === id) delete status.deviceControl.intents[intentId];
+        }
+        delete status.deviceControl.models[id];
+      }),
+    );
+  });
+
+  app.post(
+    "/v1/dashboard/model-configurations/preview",
+    async (request, reply) => {
+      if (!authorizeDashboardWrite(request, reply, dashboardSession, csrfToken)) {
+        return;
+      }
+      if (!runtime.deviceControl) {
+        return reply.code(501).send({ error: "device_control_unavailable" });
+      }
+      const input = modelConfigurationPreviewSchema.parse(request.body);
+      return dashboardCall(reply, () =>
+        withPermissionVault(runtime, () =>
+          runtime.deviceControl!.previewConfiguration(input),
+        ),
+      );
+    },
+  );
+
+  app.post(
+    "/v1/dashboard/model-configurations/apply",
+    async (request, reply) => {
+      if (!authorizeDashboardWrite(request, reply, dashboardSession, csrfToken)) {
+        return;
+      }
+      if (!runtime.deviceControl) {
+        return reply.code(501).send({ error: "device_control_unavailable" });
+      }
+      const input = modelConfigurationApplySchema.parse(request.body);
+      return dashboardCall(reply, () =>
+        withPermissionVault(runtime, () =>
+          runtime.deviceControl!.queueConfiguration(input),
+        ),
+      );
+    },
+  );
 
   app.get("/v1/dashboard/handoffs", async (request, reply) => {
     if (!authorizeDashboard(request, reply, dashboardSession)) return;
@@ -441,6 +655,46 @@ export function registerDashboardRoutes(
       const body = identityInputSchema.parse(request.body);
       return runtime.backend.mutateStatus((status) => {
         status.identity = stripEmpty(body);
+      });
+    });
+  });
+
+  app.put("/v1/dashboard/persona/events/:id", async (request, reply) => {
+    if (!authorizeDashboardWrite(request, reply, dashboardSession, csrfToken)) {
+      return;
+    }
+    return dashboardCall(reply, async () => {
+      const { id } = personaEventParameterSchema.parse(request.params);
+      const body = personaUpdateInputSchema.parse({
+        ...(request.body as Record<string, unknown>),
+        id,
+      });
+      return runtime.backend.mutateStatus((status) => {
+        updatePersonaEvent(status, body);
+      });
+    });
+  });
+
+  app.delete("/v1/dashboard/persona/events/:id", async (request, reply) => {
+    if (!authorizeDashboardWrite(request, reply, dashboardSession, csrfToken)) {
+      return;
+    }
+    return dashboardCall(reply, async () => {
+      const { id } = personaEventParameterSchema.parse(request.params);
+      return runtime.backend.mutateStatus((status) => {
+        deletePersonaEvent(status, id);
+      });
+    });
+  });
+
+  app.put("/v1/dashboard/persona/policy", async (request, reply) => {
+    if (!authorizeDashboardWrite(request, reply, dashboardSession, csrfToken)) {
+      return;
+    }
+    return dashboardCall(reply, async () => {
+      const body = personaPolicyInputSchema.parse(request.body);
+      return runtime.backend.mutateStatus((status) => {
+        setPersonaPolicy(status, body);
       });
     });
   });
@@ -1450,6 +1704,123 @@ const localCapabilityInstallInputSchema = localCapabilityTargetInputSchema
   .extend({
     approvalId: z.string().regex(/^[a-f0-9]{64}$/),
     confirmed: z.literal(true),
+  })
+  .strict();
+const modelControlParameterSchema = z.object({
+  id: z
+    .string()
+    .min(1)
+    .max(200)
+    .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/),
+});
+const personaEventParameterSchema = z.object({
+  id: z.string().min(1).max(200),
+});
+const modelEndpointInputSchema = z
+  .url()
+  .max(2_000)
+  .superRefine((value, context) => {
+    const endpoint = new URL(value);
+    if (
+      endpoint.username ||
+      endpoint.password ||
+      endpoint.search ||
+      endpoint.hash
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "Endpoint cannot include user info, query, or fragment.",
+      });
+    }
+  });
+const modelSourceInputSchema = z
+  .object({
+    label: z.string().trim().min(1).max(200),
+    kind: modelSourceKindSchema,
+    protocol: modelApiProtocolSchema,
+    endpoint: modelEndpointInputSchema.optional(),
+    supportedTools: z
+      .array(agentToolIdSchema)
+      .min(1)
+      .max(agentToolIdSchema.options.length)
+      .refine((tools) => new Set(tools).size === tools.length, {
+        message: "supportedTools must be unique",
+      }),
+    apiKey: z.string().min(1).max(32_000).optional(),
+    clearCredential: z.boolean().default(false),
+  })
+  .strict()
+  .refine((input) => !(input.apiKey && input.clearCredential), {
+    message: "apiKey and clearCredential cannot be used together",
+  })
+  .superRefine((input, context) => {
+    if (
+      input.apiKey &&
+      (input.kind === "official-account" || input.kind === "local-service")
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "This model source type does not accept an API key.",
+        path: ["apiKey"],
+      });
+    }
+    if (
+      input.supportedTools.includes("claude-code") &&
+      input.protocol !== "anthropic" &&
+      input.protocol !== "custom"
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "Claude Code requires an Anthropic or custom protocol source.",
+        path: ["supportedTools"],
+      });
+    }
+    if (
+      input.supportedTools.includes("codex") &&
+      input.protocol === "anthropic"
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "Codex cannot use an Anthropic protocol source directly.",
+        path: ["supportedTools"],
+      });
+    }
+  });
+const modelInputSchema = z
+  .object({
+    sourceId: modelControlParameterSchema.shape.id,
+    name: z.string().trim().min(1).max(200),
+    modelId: z.string().trim().min(1).max(500),
+    supportedTools: z
+      .array(agentToolIdSchema)
+      .min(1)
+      .max(agentToolIdSchema.options.length)
+      .refine((tools) => new Set(tools).size === tools.length, {
+        message: "supportedTools must be unique",
+      }),
+  })
+  .strict();
+const modelConfigurationPreviewSchema = z
+  .object({
+    modelId: modelControlParameterSchema.shape.id,
+    targets: z
+      .array(
+        z
+          .object({
+            deviceId: z.uuid(),
+            toolId: agentToolIdSchema,
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(100),
+  })
+  .strict();
+const modelConfigurationApplySchema = z
+  .object({
+    approvalId: z.uuid(),
+    digest: z.string().regex(/^[a-f0-9]{64}$/),
+    confirm: z.literal(true),
   })
   .strict();
 const toolExecuteInputSchema = z

@@ -8,6 +8,7 @@ import {
 describe("built-in Capability Pack catalog", () => {
   it("publishes every live Permission Gateway catalog", () => {
     expect(builtInCapabilityPacks.map((pack) => pack.name)).toEqual([
+      "persona",
       "google-workspace",
       "github-workflow",
       "slack-workspace",
@@ -23,7 +24,18 @@ describe("built-in Capability Pack catalog", () => {
       "figma-design",
       "box-files",
     ]);
-    expect(builtInCapabilityPacks.flatMap((pack) => pack.tools)).toHaveLength(69);
+    expect(builtInCapabilityPacks.flatMap((pack) => pack.tools)).toHaveLength(76);
+    expect(getBuiltInCapabilityPack("persona")).toMatchObject({
+      memory: { scopes: ["user.persona"] },
+      tools: expect.arrayContaining([
+        expect.objectContaining({
+          id: "persona.record",
+          metadata: { execution: "one-status-mcp" },
+          requiresConfirmation: false,
+        }),
+      ]),
+    });
+    expect(getBuiltInCapabilityPack("persona")?.authorization).toBeUndefined();
   });
 
   it("returns stable digests and exact pack lookup", () => {

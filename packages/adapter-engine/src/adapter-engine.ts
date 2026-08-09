@@ -492,21 +492,53 @@ function renderInstructions(
   sourceFiles: CapabilitySourceFiles,
   warnings: string[],
 ): string {
-  const tools = manifest.tools.map((tool) => tool.id);
+  const directMcpTools = manifest.tools.filter(
+    (tool) => tool.metadata?.execution === "one-status-mcp",
+  );
+  const gatewayTools = manifest.tools.filter(
+    (tool) => tool.metadata?.execution !== "one-status-mcp",
+  );
   const memoryScopes = manifest.memory.scopes;
   const authorization = manifest.authorization;
   const lines = [
     `# ${manifest.displayName}`,
     "",
     manifest.description,
-    "",
-    "## One Status Gateway",
-    "",
-    "Use the One Status Gateway for the capabilities listed below. Call `tools_list` first, select an allowed action, then call `tools_execute` with arguments that match its `inputSchema`. For actions marked `requiresConfirmation`, call `tools_request_approval` and wait for Dashboard approval before execution.",
-    "Provider credentials stay in the One Status Permission Vault. Do not ask the user for provider access tokens and do not send tokens to the Agent.",
   ];
-  if (tools.length > 0) {
-    lines.push("", "### Tools", "", ...tools.map((tool) => `- \`${tool}\``));
+  if (gatewayTools.length > 0) {
+    lines.push(
+      "",
+      "## One Status Gateway",
+      "",
+      "Use the One Status Gateway for the capabilities listed below. Call `tools_list` first, select an allowed action, then call `tools_execute` with arguments that match its `inputSchema`. For actions marked `requiresConfirmation`, call `tools_request_approval` and wait for Dashboard approval before execution.",
+      "Provider credentials stay in the One Status Permission Vault. Do not ask the user for provider access tokens and do not send tokens to the Agent.",
+      "",
+      "### Tools",
+      "",
+      ...gatewayTools.map((tool) => `- \`${tool.id}\``),
+    );
+  }
+  if (directMcpTools.length > 0) {
+    lines.push(
+      "",
+      "## One Status MCP",
+      "",
+      "Call these tools directly through the connected One Status MCP server. Do not route them through `tools_execute`.",
+      "",
+      "### Tools",
+      "",
+      ...directMcpTools.map((tool) => `- \`${tool.id}\``),
+    );
+  }
+  if (directMcpTools.some((tool) => tool.id === "persona.record")) {
+    lines.push(
+      "",
+      "### Persona recording",
+      "",
+      "When the user states a durable personality or behavior preference, language or output style, project work habit, technical habit, long-term goal, future plan, or explicitly asks you to remember personal information, call `persona.record` with one concise structured observation.",
+      "Use `explicit` confidence for direct user statements, `observed` for repeated behavior, and `inferred` only for a cautious inference. Call `persona.get_policy` when the current recording policy is unknown and honor every blocked category or confidence level.",
+      "Never record passwords, API keys, access tokens, private keys, payment credentials, raw messages, full transcripts, or unrelated conversation text. Keep source project context minimal. Use `persona.update`, `persona.delete`, and `persona.set_policy` only when the user requests the change.",
+    );
   }
   if (manifest.instructions.length > 0) {
     lines.push("", "### Workflows");

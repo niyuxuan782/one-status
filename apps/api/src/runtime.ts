@@ -5,6 +5,8 @@ import { loadLocalProfile } from "@one-status/local-config";
 import type { FastifyInstance } from "fastify";
 import { createApp } from "./app.js";
 import { LocalDashboardBackend } from "./dashboard-backend.js";
+import { DeviceControlService } from "./device-control.js";
+import { SidecarModelConfigurationAdapter } from "./device-sidecar.js";
 import { PermissionVaultGitHubCredentialProvider } from "./github-git-credentials.js";
 import { HandoffService } from "./handoff.js";
 import { LocalInventoryService } from "./local-inventory.js";
@@ -44,19 +46,47 @@ export async function startApiServer(
       })
     : undefined;
   const backend = dashboardEnabled ? new LocalDashboardBackend() : undefined;
+  const inventory = dashboardEnabled ? new LocalInventoryService() : undefined;
   const workspaceStore = dashboardEnabled
     ? new LocalWorkspaceStore(
         resolve(options.workspaceDbPath ?? `${dbPath}.workspace`),
       )
     : undefined;
+  const permissionSync =
+    permissionVault && backend
+      ? new PermissionSyncService(
+          backend,
+          permissionVault,
+          async () => {
+            const profile = await loadLocalProfile();
+            return {
+              statusKey: importStatusKey(profile.statusKey),
+              userId: profile.userId,
+            };
+          },
+        )
+      : undefined;
+  const deviceControl =
+    backend && inventory && permissionVault
+      ? new DeviceControlService(
+          backend,
+          inventory,
+          permissionVault,
+          new SidecarModelConfigurationAdapter(),
+        )
+      : undefined;
+  let stopDeviceControl: (() => void) | undefined;
   const app = createApp({
     dbPath,
-    ...(permissionVault && backend && workspaceStore
+    ...(permissionVault && backend && inventory && workspaceStore
       ? {
           dashboard: {
             backend,
             capabilityManager: new LocalCapabilityManager(),
-            closeLocalState: () => workspaceStore.close(),
+            closeLocalState: () => {
+              stopDeviceControl?.();
+              workspaceStore.close();
+            },
             handoffs: new HandoffService(backend, workspaceStore, {
               githubCredentialProvider:
                 new PermissionVaultGitHubCredentialProvider(
@@ -64,24 +94,15 @@ export async function startApiServer(
                   permissionVault,
                 ),
             }),
-            inventory: new LocalInventoryService(),
+            inventory,
+            deviceControl: deviceControl!,
             onboarding: new LocalOnboardingService(
               options.defaultSyncUrl ??
                 process.env.ONE_STATUS_DEFAULT_SYNC_URL ??
                 "https://os.furesta.top",
             ),
             permissionVault,
-            permissionSync: new PermissionSyncService(
-              backend,
-              permissionVault,
-              async () => {
-                const profile = await loadLocalProfile();
-                return {
-                  statusKey: importStatusKey(profile.statusKey),
-                  userId: profile.userId,
-                };
-              },
-            ),
+            permissionSync: permissionSync!,
             publicBaseUrl: normalizePublicBaseUrl(options.publicBaseUrl),
             toolGateway: new ToolGateway(permissionVault),
           },
@@ -95,7 +116,38 @@ export async function startApiServer(
     host,
     port: options.port ?? 8787,
   });
+  if (deviceControl && permissionSync) {
+    stopDeviceControl = startDeviceControlLoop(
+      deviceControl,
+      permissionSync,
+    );
+  }
   return app;
+}
+
+function startDeviceControlLoop(
+  deviceControl: DeviceControlService,
+  permissionSync: Pick<PermissionSyncService, "run">,
+): () => void {
+  let stopped = false;
+  const synchronize = async () => {
+    try {
+      await permissionSync.run(() =>
+        deviceControl.synchronizeCurrentDevice(),
+      );
+    } catch {
+      // Onboarding may be incomplete, or the encrypted sync service may be offline.
+    }
+  };
+  void synchronize();
+  const timer = setInterval(() => {
+    if (!stopped) void synchronize();
+  }, 30_000);
+  timer.unref();
+  return () => {
+    stopped = true;
+    clearInterval(timer);
+  };
 }
 
 function isLoopbackHost(host: string): boolean {

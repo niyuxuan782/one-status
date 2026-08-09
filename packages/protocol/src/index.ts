@@ -191,9 +191,485 @@ const capabilityInstallationsSchema = z
     }
   });
 
+export const personaCategorySchema = z
+  .string()
+  .min(1)
+  .max(64)
+  .regex(
+    /^[a-z][a-z0-9_]*$/,
+    "persona category must use lowercase letters, numbers, and underscores",
+  );
+
+export const personaConfidenceSchema = z.enum([
+  "explicit",
+  "observed",
+  "inferred",
+]);
+
+export const personaObservationSchema = z
+  .object({
+    observedAt: timestampSchema,
+    sourceAgent: z.string().min(1).max(120),
+    sourceProject: z.string().min(1).max(200).optional(),
+    confidence: personaConfidenceSchema,
+  })
+  .strict();
+
+export const personaEventSchema = z
+  .object({
+    id: z.string().min(1).max(200),
+    category: personaCategorySchema,
+    content: z.string().trim().min(1).max(10_000),
+    observedAt: timestampSchema,
+    lastObservedAt: timestampSchema,
+    observationCount: z.number().int().positive(),
+    observations: z.array(personaObservationSchema).min(1).max(10_000),
+    sourceAgent: z.string().min(1).max(120),
+    sourceProject: z.string().min(1).max(200).optional(),
+    confidence: personaConfidenceSchema,
+    updatedAt: timestampSchema,
+  })
+  .strict()
+  .superRefine((event, context) => {
+    if (event.observationCount !== event.observations.length) {
+      context.addIssue({
+        code: "custom",
+        message: "observationCount must match observations length",
+        path: ["observationCount"],
+      });
+    }
+    const first = event.observations[0];
+    const last = event.observations[event.observations.length - 1];
+    if (first?.observedAt !== event.observedAt) {
+      context.addIssue({
+        code: "custom",
+        message: "observedAt must match the first observation",
+        path: ["observedAt"],
+      });
+    }
+    if (last?.observedAt !== event.lastObservedAt) {
+      context.addIssue({
+        code: "custom",
+        message: "lastObservedAt must match the last observation",
+        path: ["lastObservedAt"],
+      });
+    }
+    if (
+      first &&
+      (first.sourceAgent !== event.sourceAgent ||
+        first.sourceProject !== event.sourceProject ||
+        first.confidence !== event.confidence)
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "event provenance must match the first observation",
+        path: ["observations", 0],
+      });
+    }
+    for (let index = 1; index < event.observations.length; index += 1) {
+      const previous = event.observations[index - 1];
+      const current = event.observations[index];
+      if (
+        previous &&
+        current &&
+        Date.parse(current.observedAt) < Date.parse(previous.observedAt)
+      ) {
+        context.addIssue({
+          code: "custom",
+          message: "observations must be ordered by observedAt",
+          path: ["observations", index, "observedAt"],
+        });
+      }
+    }
+  });
+
+export const personaProfileEntrySchema = z
+  .object({
+    category: personaCategorySchema,
+    content: z.string().trim().min(1).max(10_000),
+    confidence: personaConfidenceSchema,
+    sourceEventIds: z
+      .array(z.string().min(1).max(200))
+      .min(1)
+      .max(10_000)
+      .refine((ids) => new Set(ids).size === ids.length, {
+        message: "sourceEventIds must be unique",
+      }),
+    firstObservedAt: timestampSchema,
+    lastObservedAt: timestampSchema,
+    observationCount: z.number().int().positive(),
+    updatedAt: timestampSchema,
+  })
+  .strict()
+  .superRefine((entry, context) => {
+    if (Date.parse(entry.lastObservedAt) < Date.parse(entry.firstObservedAt)) {
+      context.addIssue({
+        code: "custom",
+        message: "lastObservedAt cannot precede firstObservedAt",
+        path: ["lastObservedAt"],
+      });
+    }
+  });
+
+const personaProfileSchema = z
+  .record(z.string(), personaProfileEntrySchema)
+  .superRefine((profile, context) => {
+    for (const [category, entry] of Object.entries(profile)) {
+      if (entry.category !== category) {
+        context.addIssue({
+          code: "custom",
+          message: "persona profile key must match category",
+          path: [category, "category"],
+        });
+      }
+    }
+  });
+
+export const personaPolicySchema = z
+  .object({
+    enabled: z.boolean(),
+    blockedCategories: z
+      .array(personaCategorySchema)
+      .max(200)
+      .refine((categories) => new Set(categories).size === categories.length, {
+        message: "blockedCategories must be unique",
+      }),
+    allowedConfidences: z
+      .array(personaConfidenceSchema)
+      .min(1)
+      .max(personaConfidenceSchema.options.length)
+      .refine((values) => new Set(values).size === values.length, {
+        message: "allowedConfidences must be unique",
+      }),
+    updatedAt: timestampSchema.optional(),
+  })
+  .strict();
+
+export const personaStateSchema = z
+  .object({
+    events: z.array(personaEventSchema),
+    profile: personaProfileSchema,
+    policy: personaPolicySchema,
+  })
+  .strict();
+
+export const agentToolIdSchema = z.enum([
+  "codex",
+  "claude-code",
+  "cursor",
+]);
+
+export const modelSourceKindSchema = z.enum([
+  "official-account",
+  "official-api",
+  "compatible-api",
+  "local-service",
+  "custom-endpoint",
+]);
+
+export const modelApiProtocolSchema = z.enum([
+  "openai",
+  "anthropic",
+  "ollama",
+  "azure-openai",
+  "custom",
+]);
+
+const controlIdSchema = z
+  .string()
+  .min(1)
+  .max(200)
+  .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/);
+
+export const modelSourceSchema = z
+  .object({
+    id: controlIdSchema,
+    label: z.string().trim().min(1).max(200),
+    kind: modelSourceKindSchema,
+    protocol: modelApiProtocolSchema,
+    endpoint: z.url().optional(),
+    supportedTools: z
+      .array(agentToolIdSchema)
+      .min(1)
+      .max(agentToolIdSchema.options.length)
+      .refine((tools) => new Set(tools).size === tools.length, {
+        message: "supportedTools must be unique",
+      }),
+    credentialRef: z.string().min(1).max(240).optional(),
+    credentialStatus: z.enum([
+      "available",
+      "missing",
+      "not-required",
+      "unverified",
+    ]),
+    lastVerifiedAt: timestampSchema.optional(),
+    createdAt: timestampSchema,
+    updatedAt: timestampSchema,
+  })
+  .strict()
+  .superRefine((source, context) => {
+    const requiresEndpoint =
+      source.kind === "compatible-api" ||
+      source.kind === "local-service" ||
+      source.kind === "custom-endpoint";
+    if (requiresEndpoint && !source.endpoint) {
+      context.addIssue({
+        code: "custom",
+        message: "endpoint is required for this model source kind",
+        path: ["endpoint"],
+      });
+    }
+    if (source.endpoint) {
+      const endpoint = new URL(source.endpoint);
+      const protocol = endpoint.protocol;
+      if (protocol !== "https:" && protocol !== "http:") {
+        context.addIssue({
+          code: "custom",
+          message: "model source endpoint must use HTTP or HTTPS",
+          path: ["endpoint"],
+        });
+      }
+      if (
+        endpoint.username ||
+        endpoint.password ||
+        endpoint.search ||
+        endpoint.hash
+      ) {
+        context.addIssue({
+          code: "custom",
+          message:
+            "model source endpoint cannot include user info, query, or fragment",
+          path: ["endpoint"],
+        });
+      }
+    }
+  });
+
+export const modelDefinitionSchema = z
+  .object({
+    id: controlIdSchema,
+    sourceId: controlIdSchema,
+    name: z.string().trim().min(1).max(200),
+    modelId: z.string().trim().min(1).max(500),
+    supportedTools: z
+      .array(agentToolIdSchema)
+      .min(1)
+      .max(agentToolIdSchema.options.length)
+      .refine((tools) => new Set(tools).size === tools.length, {
+        message: "supportedTools must be unique",
+      }),
+    createdAt: timestampSchema,
+    updatedAt: timestampSchema,
+  })
+  .strict();
+
+export const deviceToolReportSchema = z
+  .object({
+    toolId: agentToolIdSchema,
+    name: z.string().min(1).max(120),
+    installed: z.boolean(),
+    version: z.string().max(120).optional(),
+    currentModelRef: controlIdSchema.optional(),
+    currentModelId: z.string().max(500).optional(),
+    sourceId: controlIdSchema.optional(),
+    sourceLabel: z.string().max(200).optional(),
+    sourceKind: modelSourceKindSchema.optional(),
+    protocol: modelApiProtocolSchema.optional(),
+    endpointHost: z.string().max(500).optional(),
+    health: z.enum([
+      "healthy",
+      "unconfigured",
+      "pending",
+      "error",
+      "unknown",
+    ]),
+    lastConfiguredAt: timestampSchema.optional(),
+  })
+  .strict();
+
+export const deviceReportSchema = z
+  .object({
+    deviceId: z.string().min(1).max(200),
+    deviceName: z.string().min(1).max(120),
+    operatingSystem: z.enum(["macos", "windows", "linux", "other"]),
+    osVersion: z.string().min(1).max(200),
+    architecture: z.string().min(1).max(80),
+    backgroundVersion: z.string().min(1).max(64),
+    tools: z.array(deviceToolReportSchema).max(agentToolIdSchema.options.length),
+    reportedAt: timestampSchema,
+  })
+  .strict()
+  .superRefine((report, context) => {
+    if (new Set(report.tools.map((tool) => tool.toolId)).size !== report.tools.length) {
+      context.addIssue({
+        code: "custom",
+        message: "device tools must be unique",
+        path: ["tools"],
+      });
+    }
+  });
+
+export const configurationIntentStatusSchema = z.enum([
+  "pending",
+  "applying",
+  "applied",
+  "failed",
+  "rollback",
+]);
+
+const configurationSnapshotSchema = z
+  .object({
+    model: modelDefinitionSchema,
+    source: modelSourceSchema,
+  })
+  .strict();
+
+export const configurationIntentSchema = z
+  .object({
+    id: z.uuid(),
+    deviceId: z.string().min(1).max(200),
+    toolId: agentToolIdSchema,
+    modelId: controlIdSchema,
+    sourceId: controlIdSchema,
+    status: configurationIntentStatusSchema,
+    requestedAt: timestampSchema,
+    requestedByDeviceId: z.string().min(1).max(200),
+    updatedAt: timestampSchema,
+    attempts: z.number().int().nonnegative(),
+    configuration: configurationSnapshotSchema.optional(),
+    claimId: z.uuid().optional(),
+    claimedAt: timestampSchema.optional(),
+    claimExpiresAt: timestampSchema.optional(),
+    previous: z
+      .object({
+        modelId: z.string().max(500).optional(),
+        sourceId: controlIdSchema.optional(),
+      })
+      .strict()
+      .optional(),
+    appliedAt: timestampSchema.optional(),
+    rollbackAt: timestampSchema.optional(),
+    expectedPlanId: z.string().regex(/^plan_[a-f0-9]{64}$/).optional(),
+    error: z.string().max(2_000).optional(),
+  })
+  .strict()
+  .superRefine((intent, context) => {
+    const claimValues = [
+      intent.claimId,
+      intent.claimedAt,
+      intent.claimExpiresAt,
+    ];
+    const claimFieldCount = claimValues.filter(
+      (value) => value !== undefined,
+    ).length;
+    if (claimFieldCount !== 0 && claimFieldCount !== claimValues.length) {
+      context.addIssue({
+        code: "custom",
+        message: "configuration intent claim fields must be supplied together",
+        path: ["claimId"],
+      });
+    }
+    if (
+      intent.claimedAt &&
+      intent.claimExpiresAt &&
+      Date.parse(intent.claimExpiresAt) <= Date.parse(intent.claimedAt)
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "configuration intent claim must expire after it is acquired",
+        path: ["claimExpiresAt"],
+      });
+    }
+    if (intent.configuration) {
+      if (
+        intent.configuration.model.id !== intent.modelId ||
+        intent.configuration.source.id !== intent.sourceId ||
+        intent.configuration.model.sourceId !== intent.sourceId
+      ) {
+        context.addIssue({
+          code: "custom",
+          message: "configuration snapshot IDs must match the intent",
+          path: ["configuration"],
+        });
+      }
+      if (
+        !intent.configuration.model.supportedTools.includes(intent.toolId) ||
+        !intent.configuration.source.supportedTools.includes(intent.toolId)
+      ) {
+        context.addIssue({
+          code: "custom",
+          message: "configuration snapshot must support the intent tool",
+          path: ["configuration"],
+        });
+      }
+    }
+  });
+
+export const deviceControlStateSchema = z
+  .object({
+    sources: z.record(z.string(), modelSourceSchema),
+    models: z.record(z.string(), modelDefinitionSchema),
+    reports: z.record(z.string(), deviceReportSchema),
+    intents: z.record(z.string(), configurationIntentSchema),
+  })
+  .strict()
+  .superRefine((state, context) => {
+    for (const [id, source] of Object.entries(state.sources)) {
+      if (id !== source.id) {
+        context.addIssue({
+          code: "custom",
+          message: "model source key must match id",
+          path: ["sources", id, "id"],
+        });
+      }
+    }
+    for (const [id, model] of Object.entries(state.models)) {
+      if (id !== model.id) {
+        context.addIssue({
+          code: "custom",
+          message: "model key must match id",
+          path: ["models", id, "id"],
+        });
+      }
+      if (!state.sources[model.sourceId]) {
+        context.addIssue({
+          code: "custom",
+          message: "model source was not found",
+          path: ["models", id, "sourceId"],
+        });
+      }
+    }
+    for (const [deviceId, report] of Object.entries(state.reports)) {
+      if (deviceId !== report.deviceId) {
+        context.addIssue({
+          code: "custom",
+          message: "device report key must match deviceId",
+          path: ["reports", deviceId, "deviceId"],
+        });
+      }
+    }
+    for (const [id, intent] of Object.entries(state.intents)) {
+      if (id !== intent.id) {
+        context.addIssue({
+          code: "custom",
+          message: "configuration intent key must match id",
+          path: ["intents", id, "id"],
+        });
+      }
+      const model = state.models[intent.modelId];
+      if (!model || model.sourceId !== intent.sourceId) {
+        context.addIssue({
+          code: "custom",
+          message: "configuration intent model and source do not match",
+          path: ["intents", id, "modelId"],
+        });
+      }
+    }
+  });
+
 export const statusDocumentSchema = z
   .object({
-    schemaVersion: z.literal(3),
+    schemaVersion: z.literal(4),
     identity: z
       .object({
         displayName: z.string().optional(),
@@ -227,11 +703,22 @@ export const statusDocumentSchema = z
         installations: capabilityInstallationsSchema,
       })
       .strict(),
+    persona: personaStateSchema,
+    deviceControl: deviceControlStateSchema,
     tasks: z.record(z.string(), taskSchema),
   })
   .strict();
 
-const legacyStatusDocumentV2Schema = statusDocumentSchema
+const legacyPersonaStatusDocumentV4Schema = statusDocumentSchema
+  .omit({ deviceControl: true })
+  .strict();
+
+const legacyStatusDocumentV3Schema = statusDocumentSchema
+  .omit({ persona: true, deviceControl: true })
+  .extend({ schemaVersion: z.literal(3) })
+  .strict();
+
+const legacyStatusDocumentV2Schema = legacyStatusDocumentV3Schema
   .omit({ capabilities: true })
   .extend({ schemaVersion: z.literal(2) })
   .strict();
@@ -269,6 +756,25 @@ export type CapabilityTarget = z.infer<typeof capabilityTargetSchema>;
 export type MemoryEntry = z.infer<typeof memoryEntrySchema>;
 export type MemoryOrigin = z.infer<typeof memoryOriginSchema>;
 export type MemoryScope = z.infer<typeof memoryScopeSchema>;
+export type PersonaCategory = z.infer<typeof personaCategorySchema>;
+export type PersonaConfidence = z.infer<typeof personaConfidenceSchema>;
+export type PersonaEvent = z.infer<typeof personaEventSchema>;
+export type PersonaObservation = z.infer<typeof personaObservationSchema>;
+export type PersonaPolicy = z.infer<typeof personaPolicySchema>;
+export type PersonaProfileEntry = z.infer<typeof personaProfileEntrySchema>;
+export type PersonaState = z.infer<typeof personaStateSchema>;
+export type AgentToolId = z.infer<typeof agentToolIdSchema>;
+export type ConfigurationIntent = z.infer<typeof configurationIntentSchema>;
+export type ConfigurationIntentStatus = z.infer<
+  typeof configurationIntentStatusSchema
+>;
+export type DeviceControlState = z.infer<typeof deviceControlStateSchema>;
+export type DeviceReport = z.infer<typeof deviceReportSchema>;
+export type DeviceToolReport = z.infer<typeof deviceToolReportSchema>;
+export type ModelApiProtocol = z.infer<typeof modelApiProtocolSchema>;
+export type ModelDefinition = z.infer<typeof modelDefinitionSchema>;
+export type ModelSource = z.infer<typeof modelSourceSchema>;
+export type ModelSourceKind = z.infer<typeof modelSourceKindSchema>;
 export type Project = z.infer<typeof projectSchema>;
 export type ProjectHandoff = z.infer<typeof projectHandoffSchema>;
 export type Task = z.infer<typeof taskSchema>;
@@ -407,7 +913,7 @@ export type PutStatusRequest = z.infer<typeof putStatusRequestSchema>;
 
 export function createEmptyStatus(): StatusDocument {
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     identity: {},
     preferences: {},
     memory: [],
@@ -416,6 +922,8 @@ export function createEmptyStatus(): StatusDocument {
     permissions: { grants: [] },
     tools: { enabled: [] },
     capabilities: { installations: {} },
+    persona: createEmptyPersonaState(),
+    deviceControl: createEmptyDeviceControlState(),
     tasks: {},
   };
 }
@@ -423,22 +931,58 @@ export function createEmptyStatus(): StatusDocument {
 export function parseStatusDocument(value: unknown): StatusDocument {
   const current = statusDocumentSchema.safeParse(value);
   if (current.success) return current.data;
+  const version4 = legacyPersonaStatusDocumentV4Schema.safeParse(value);
+  if (version4.success) {
+    return {
+      ...version4.data,
+      deviceControl: createEmptyDeviceControlState(),
+    };
+  }
+  const version3 = legacyStatusDocumentV3Schema.safeParse(value);
+  if (version3.success) {
+    return {
+      ...version3.data,
+      schemaVersion: 4,
+      persona: createEmptyPersonaState(),
+      deviceControl: createEmptyDeviceControlState(),
+    };
+  }
   const previous = legacyStatusDocumentV2Schema.safeParse(value);
   if (previous.success) {
     return {
       ...previous.data,
-      schemaVersion: 3,
+      schemaVersion: 4,
       capabilities: { installations: {} },
+      persona: createEmptyPersonaState(),
+      deviceControl: createEmptyDeviceControlState(),
     };
   }
   const legacy = legacyStatusDocumentSchema.parse(value);
   return {
     ...legacy,
-    schemaVersion: 3,
+    schemaVersion: 4,
     capabilities: { installations: {} },
+    persona: createEmptyPersonaState(),
+    deviceControl: createEmptyDeviceControlState(),
     memory: legacy.memory.map((entry) => ({
       ...entry,
       state: "confirmed" as const,
     })),
   };
+}
+
+function createEmptyPersonaState(): PersonaState {
+  return {
+    events: [],
+    profile: {},
+    policy: {
+      enabled: true,
+      blockedCategories: [],
+      allowedConfidences: ["explicit", "observed", "inferred"],
+    },
+  };
+}
+
+function createEmptyDeviceControlState(): DeviceControlState {
+  return { sources: {}, models: {}, reports: {}, intents: {} };
 }

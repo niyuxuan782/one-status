@@ -331,6 +331,30 @@ describe("LocalCapabilityManager", () => {
     expect(runCommand).not.toHaveBeenCalled();
   });
 
+  it("installs the same Persona workflow for Codex and Claude Code", async () => {
+    await confirmInstall("persona", "codex");
+    await confirmInstall("persona", "claude-code");
+
+    const codexSkill = await readFile(
+      join(
+        codexMarketplaceRoot,
+        "plugins/persona/skills/persona/SKILL.md",
+      ),
+      "utf8",
+    );
+    const claudeSkill = await readFile(
+      join(claudeSkillsRoot, "persona/SKILL.md"),
+      "utf8",
+    );
+    for (const skill of [codexSkill, claudeSkill]) {
+      expect(skill).toContain("name: persona");
+      expect(skill).toContain("`persona.record`");
+      expect(skill).toContain("`persona.get_policy`");
+      expect(skill).toContain("full transcripts");
+      expect(skill).not.toContain("Call `tools_list` first");
+    }
+  });
+
   it.each([
     ["markdown", [".one-status/capabilities/github-workflow/manifest.json", "github-workflow.md"]],
     ["local-mcp", [".mcp.json", ".one-status/capabilities/github-workflow/manifest.json", "github-workflow.md"]],

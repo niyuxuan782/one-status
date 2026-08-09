@@ -1,5 +1,6 @@
 import { computeCapabilityPackDigest } from "./document.js";
 import { githubWorkflowCapabilityPack } from "./fixtures/github-workflow.js";
+import { personaCapabilityPack } from "./fixtures/persona.js";
 import {
   capabilityPackManifestSchema,
   type CapabilityPackManifest,
@@ -316,6 +317,7 @@ export const extendedCapabilityPacks = extendedCapabilityPackSpecs.map(
 );
 
 export const builtInCapabilityPacks = [
+  personaCapabilityPack,
   googleWorkspaceCapabilityPack,
   githubWorkflowCapabilityPack,
   slackWorkspaceCapabilityPack,

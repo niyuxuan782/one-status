@@ -93,11 +93,22 @@ describe("One Status MCP", () => {
       "status_get_project",
       "status_get_context",
       "capabilities_get",
+      "persona.record",
+      "persona.list",
+      "persona.profile",
+      "persona.update",
+      "persona.delete",
+      "persona.get_policy",
+      "persona.set_policy",
       "status_update_context",
     ]);
     expect(client.getInstructions()).toContain(
       "call status_get_context before inspecting repository files",
     );
+    expect(client.getInstructions()).toContain(
+      "call persona.record with a concise structured observation",
+    );
+    expect(client.getInstructions()).toContain("never send raw messages");
 
     const contextTool = tools.tools.find(
       (tool) => tool.name === "status_get_context",
@@ -133,6 +144,156 @@ describe("One Status MCP", () => {
 
     await client.close();
     await server.close();
+  });
+
+  it("shares a deduplicated Persona across Agents with editable policy", async () => {
+    const shared = new MemoryVault();
+    await callTool(shared, "codex", "persona.record", {
+      category: "language_style",
+      content: "Prefer concise Chinese technical answers",
+      observedAt: "2026-08-09T14:30:00.000Z",
+      sourceProject: "one-status",
+      confidence: "explicit",
+    });
+    await callTool(shared, "claude-code", "persona.record", {
+      category: "language_style",
+      content: "  PREFER CONCISE CHINESE TECHNICAL ANSWERS ",
+      observedAt: "2026-08-09T15:30:00.000Z",
+      sourceProject: "one-status",
+      confidence: "observed",
+    });
+
+    const profile = await callTool(shared, "codex", "persona.profile", {});
+    expect(profile.structuredContent).toMatchObject({
+      version: 2,
+      profile: {
+        language_style: {
+          content: "Prefer concise Chinese technical answers",
+          observationCount: 2,
+          confidence: "explicit",
+        },
+      },
+    });
+    const events = await callTool(shared, "claude-code", "persona.list", {
+      sourceAgent: "claude-code",
+    });
+    expect(events.structuredContent).toMatchObject({
+      events: [
+        {
+          sourceAgent: "codex",
+          observationCount: 2,
+          lastObservedAt: "2026-08-09T15:30:00.000Z",
+          observations: [
+            { sourceAgent: "codex", confidence: "explicit" },
+            { sourceAgent: "claude-code", confidence: "observed" },
+          ],
+        },
+      ],
+    });
+
+    const eventId = shared.status.persona.events[0]!.id;
+    await callTool(shared, "codex", "persona.update", {
+      id: eventId,
+      content: "Prefer direct Chinese technical answers",
+    });
+    expect(shared.status.persona.profile.language_style?.content).toBe(
+      "Prefer direct Chinese technical answers",
+    );
+
+    const policy = await callTool(shared, "codex", "persona.set_policy", {
+      blockedCategories: ["personal_info"],
+      allowedConfidences: ["explicit", "observed"],
+    });
+    expect(policy.structuredContent).toMatchObject({
+      policy: {
+        enabled: true,
+        blockedCategories: ["personal_info"],
+        allowedConfidences: ["explicit", "observed"],
+      },
+    });
+
+    await callTool(shared, "codex", "persona.delete", { id: eventId });
+    expect(shared.status.persona.events).toEqual([]);
+    expect(shared.status.persona.profile).toEqual({});
+  });
+
+  it("hides user-blocked Persona categories from every Agent read path", async () => {
+    const shared = new MemoryVault();
+    await callTool(shared, "codex", "persona.record", {
+      category: "language_style",
+      content: "Prefer concise Chinese answers",
+      confidence: "explicit",
+    });
+    await callTool(shared, "codex", "persona.record", {
+      category: "personal_info",
+      content: "Preferred display name is Ryan",
+      confidence: "explicit",
+    });
+    await callTool(shared, "codex", "persona.set_policy", {
+      blockedCategories: ["personal_info"],
+    });
+
+    const listed = await callTool(shared, "claude-code", "persona.list", {});
+    const profile = await callTool(shared, "claude-code", "persona.profile", {});
+    const blockedProfile = await callTool(
+      shared,
+      "claude-code",
+      "persona.profile",
+      { category: "personal_info" },
+    );
+    const status = await callTool(shared, "claude-code", "read_status", {
+      section: "persona",
+    });
+    const durableProfile = await callTool(
+      shared,
+      "claude-code",
+      "status_get_profile",
+      {},
+    );
+
+    for (const response of [listed, profile, status, durableProfile]) {
+      expect(JSON.stringify(response.structuredContent)).toContain(
+        "language_style",
+      );
+      expect(JSON.stringify(response.structuredContent)).not.toContain(
+        "Preferred display name is Ryan",
+      );
+    }
+    expect(listed.structuredContent).toMatchObject({
+      events: [expect.objectContaining({ category: "language_style" })],
+    });
+    expect(
+      Object.keys(
+        (profile.structuredContent as {
+          profile: Record<string, unknown>;
+        }).profile,
+      ),
+    ).toEqual(["language_style"]);
+    expect(status.structuredContent).toMatchObject({
+      data: {
+        events: [expect.objectContaining({ category: "language_style" })],
+        policy: { blockedCategories: ["personal_info"] },
+      },
+    });
+    expect(
+      Object.keys(
+        (status.structuredContent as {
+          data: { profile: Record<string, unknown> };
+        }).data.profile,
+      ),
+    ).toEqual(["language_style"]);
+    expect(
+      Object.keys(
+        (durableProfile.structuredContent as {
+          personaProfile: Record<string, unknown>;
+        }).personaProfile,
+      ),
+    ).toEqual(["language_style"]);
+    expect(blockedProfile.structuredContent).toMatchObject({ profile: null });
+    expect(shared.status.persona.events).toHaveLength(2);
+    expect(shared.status.persona.profile.personal_info?.content).toBe(
+      "Preferred display name is Ryan",
+    );
   });
 
   it("exposes approved OAuth actions without exposing credentials", async () => {

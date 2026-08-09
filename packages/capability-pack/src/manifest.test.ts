@@ -179,6 +179,44 @@ adapters:
     ).toThrow(/not declared by authorization\.requiredScopes/);
   });
 
+  it("allows explicit One Status MCP writes without Gateway approval", () => {
+    expect(() =>
+      capabilityPackManifestSchema.parse({
+        ...githubWorkflowCapabilityPack,
+        authorization: undefined,
+        tools: [
+          {
+            id: "persona.record",
+            readOnly: false,
+            requiresConfirmation: false,
+            requiredScopes: [],
+            metadata: { execution: "one-status-mcp" },
+          },
+        ],
+        instructions: [],
+        memory: { scopes: ["user.persona"] },
+        ui: { settings: [], actions: [] },
+      }),
+    ).not.toThrow();
+    expect(() =>
+      capabilityPackManifestSchema.parse({
+        ...githubWorkflowCapabilityPack,
+        tools: [
+          {
+            id: "github.issues.create",
+            readOnly: false,
+            requiresConfirmation: false,
+            requiredScopes: [],
+            metadata: { execution: "one-status-mcp" },
+          },
+        ],
+        instructions: [],
+        authorization: undefined,
+        ui: { settings: [], actions: [] },
+      }),
+    ).toThrow(/direct One Status MCP execution is not available/);
+  });
+
   it("accepts native Google and Slack OAuth scope formats", () => {
     expect(() =>
       capabilityPackManifestSchema.parse({

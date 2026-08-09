@@ -101,6 +101,12 @@ export interface PermissionVaultBundle {
   connections: OAuthConnectionWithCredential[];
   format: "one-status.permission-vault-bundle";
   grants: AgentGrant[];
+  modelCredentials: Array<{
+    apiKey: string;
+    createdAt: string;
+    sourceId: string;
+    updatedAt: string;
+  }>;
   providers: Array<{
     config: OAuthProviderConfig;
     provider: OAuthProvider;
@@ -218,6 +224,15 @@ export class PermissionVault {
         user_id TEXT PRIMARY KEY,
         updated_at TEXT NOT NULL
       );
+
+      CREATE TABLE IF NOT EXISTS model_credentials (
+        user_id TEXT NOT NULL,
+        source_id TEXT NOT NULL,
+        api_key TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (user_id, source_id)
+      );
     `);
     ensureConnectionMetadataColumns(this.#database);
   }
@@ -300,6 +315,75 @@ export class PermissionVault {
         )
         .all(userId) as Array<{ provider: OAuthProvider }>
     ).map((row) => row.provider);
+  }
+
+  setModelCredential(userId: string, sourceIdValue: string, apiKeyValue: string): void {
+    const sourceId = requiredControlId(sourceIdValue, "Model source ID");
+    const apiKey = requiredSecretValue(apiKeyValue, "Model API key", 32_000);
+    const existing = this.#database
+      .prepare(
+        "SELECT created_at FROM model_credentials WHERE user_id = ? AND source_id = ?",
+      )
+      .get(userId, sourceId) as { created_at: string } | undefined;
+    const now = new Date().toISOString();
+    this.#database
+      .prepare(
+        `INSERT INTO model_credentials
+           (user_id, source_id, api_key, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(user_id, source_id) DO UPDATE SET
+           api_key = excluded.api_key,
+           updated_at = excluded.updated_at`,
+      )
+      .run(
+        userId,
+        sourceId,
+        this.#encrypt(apiKey, `model-source:${userId}:${sourceId}`),
+        existing?.created_at ?? now,
+        now,
+      );
+    this.#touch(userId);
+  }
+
+  getModelCredential(userId: string, sourceIdValue: string): string | undefined {
+    const sourceId = requiredControlId(sourceIdValue, "Model source ID");
+    const row = this.#database
+      .prepare(
+        "SELECT api_key FROM model_credentials WHERE user_id = ? AND source_id = ?",
+      )
+      .get(userId, sourceId) as { api_key: string } | undefined;
+    return row
+      ? this.#decrypt(row.api_key, `model-source:${userId}:${sourceId}`)
+      : undefined;
+  }
+
+  hasModelCredential(userId: string, sourceId: string): boolean {
+    return this.getModelCredential(userId, sourceId) !== undefined;
+  }
+
+  deleteModelCredential(userId: string, sourceIdValue: string): boolean {
+    const sourceId = requiredControlId(sourceIdValue, "Model source ID");
+    const result = this.#database
+      .prepare(
+        "DELETE FROM model_credentials WHERE user_id = ? AND source_id = ?",
+      )
+      .run(userId, sourceId);
+    if (Number(result.changes) > 0) this.#touch(userId);
+    return Number(result.changes) > 0;
+  }
+
+  listModelCredentialStatus(userId: string): Array<{
+    sourceId: string;
+    updatedAt: string;
+  }> {
+    return (
+      this.#database
+        .prepare(
+          `SELECT source_id, updated_at FROM model_credentials
+            WHERE user_id = ? ORDER BY source_id`,
+        )
+        .all(userId) as Array<{ source_id: string; updated_at: string }>
+    ).map((row) => ({ sourceId: row.source_id, updatedAt: row.updated_at }));
   }
 
   createFlow(input: {
@@ -671,6 +755,17 @@ export class PermissionVault {
           WHERE user_id = ? ORDER BY provider, label`,
       )
       .all(userId) as unknown as ConnectionRow[];
+    const modelCredentialRows = this.#database
+      .prepare(
+        `SELECT source_id, api_key, created_at, updated_at
+           FROM model_credentials WHERE user_id = ? ORDER BY source_id`,
+      )
+      .all(userId) as Array<{
+      api_key: string;
+      created_at: string;
+      source_id: string;
+      updated_at: string;
+    }>;
 
     return permissionVaultBundleSchema.parse({
       connections: connectionRows.map((row) => ({
@@ -681,6 +776,15 @@ export class PermissionVault {
       })),
       format: "one-status.permission-vault-bundle",
       grants: this.listGrants(userId),
+      modelCredentials: modelCredentialRows.map((row) => ({
+        apiKey: this.#decrypt(
+          row.api_key,
+          `model-source:${userId}:${row.source_id}`,
+        ),
+        createdAt: row.created_at,
+        sourceId: row.source_id,
+        updatedAt: row.updated_at,
+      })),
       providers: providerRows.map((row) => {
         const clientSecret = this.#decrypt(
           row.client_secret,
@@ -730,6 +834,9 @@ export class PermissionVault {
         .run(userId);
       this.#database
         .prepare("DELETE FROM oauth_provider_configs WHERE user_id = ?")
+        .run(userId);
+      this.#database
+        .prepare("DELETE FROM model_credentials WHERE user_id = ?")
         .run(userId);
 
       for (const entry of bundle.providers) {
@@ -802,6 +909,29 @@ export class PermissionVault {
             grant.agentId,
             JSON.stringify(uniqueStrings(grant.actions)),
             grant.updatedAt,
+          );
+      }
+
+      for (const credential of bundle.modelCredentials) {
+        const sourceId = requiredControlId(
+          credential.sourceId,
+          "Model source ID",
+        );
+        this.#database
+          .prepare(
+            `INSERT INTO model_credentials
+               (user_id, source_id, api_key, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?)`,
+          )
+          .run(
+            userId,
+            sourceId,
+            this.#encrypt(
+              requiredSecretValue(credential.apiKey, "Model API key", 32_000),
+              `model-source:${userId}:${sourceId}`,
+            ),
+            credential.createdAt,
+            credential.updatedAt,
           );
       }
 
@@ -901,9 +1031,11 @@ export class PermissionVault {
              SELECT updated_at FROM oauth_connections WHERE user_id = ?
              UNION ALL
              SELECT updated_at FROM agent_grants WHERE user_id = ?
+             UNION ALL
+             SELECT updated_at FROM model_credentials WHERE user_id = ?
            )`,
       )
-      .get(userId, userId, userId, userId) as
+      .get(userId, userId, userId, userId, userId) as
       | { updated_at: string | null }
       | undefined;
     return row?.updated_at ?? "1970-01-01T00:00:00.000Z";
@@ -1000,6 +1132,22 @@ const permissionVaultBundleSchema: z.ZodType<PermissionVaultBundle> = z
         })
         .strict(),
     ),
+    modelCredentials: z
+      .array(
+        z
+          .object({
+            apiKey: z.string().min(1).max(32_000),
+            createdAt: z.iso.datetime({ offset: true }),
+            sourceId: z
+              .string()
+              .min(1)
+              .max(200)
+              .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/),
+            updatedAt: z.iso.datetime({ offset: true }),
+          })
+          .strict(),
+      )
+      .default([]),
     providers: z.array(
       z
         .object({
@@ -1025,6 +1173,9 @@ function normalizePermissionVaultBundle(value: unknown): unknown {
   if (!Array.isArray(bundle.connections)) return value;
   return {
     ...bundle,
+    modelCredentials: Array.isArray(bundle.modelCredentials)
+      ? bundle.modelCredentials
+      : [],
     connections: bundle.connections.map((connection) => {
       if (!connection || typeof connection !== "object") return connection;
       const record = connection as Record<string, unknown>;
@@ -1195,6 +1346,18 @@ function requiredTextValue(
 ): string {
   const normalized = value.trim();
   if (!normalized || normalized.length > maxLength) {
+    throw new Error(`${label} is invalid.`);
+  }
+  return normalized;
+}
+
+function requiredControlId(value: string, label: string): string {
+  const normalized = value.trim();
+  if (
+    normalized.length < 1 ||
+    normalized.length > 200 ||
+    !/^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(normalized)
+  ) {
     throw new Error(`${label} is invalid.`);
   }
   return normalized;

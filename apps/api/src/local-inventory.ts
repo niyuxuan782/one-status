@@ -33,6 +33,24 @@ export interface LocalAgentAsset {
   name: string;
   path?: string;
   version?: string;
+  model?: LocalAgentModelConfiguration;
+}
+
+export interface LocalAgentModelConfiguration {
+  modelId?: string;
+  providerId: string;
+  providerLabel: string;
+  sourceKind:
+    | "official-account"
+    | "official-api"
+    | "compatible-api"
+    | "local-service"
+    | "custom-endpoint";
+  protocol: "openai" | "anthropic" | "ollama" | "azure-openai" | "custom";
+  endpoint?: string;
+  endpointHost?: string;
+  credentialStatus: "available" | "missing" | "not-required" | "unverified";
+  health: "healthy" | "unconfigured" | "error" | "unknown";
 }
 
 export interface LocalProjectAsset {
@@ -137,24 +155,6 @@ export async function scanLocalInventory(
     claude: await findExecutable("claude", environment, home),
     cursor: await findExecutable("cursor", environment, home),
   };
-  const agents = await Promise.all([
-    inspectAgent(
-      "codex",
-      "Codex",
-      executables.codex,
-      runCommand,
-      runAgentCommands,
-    ),
-    inspectAgent(
-      "claude-code",
-      "Claude Code",
-      executables.claude,
-      runCommand,
-      runAgentCommands,
-    ),
-    inspectAgent("cursor", "Cursor", executables.cursor, runCommand, false),
-  ]);
-
   const codexConfig = await readStructuredFile(
     join(environment.CODEX_HOME ?? join(home, ".codex"), "config.toml"),
     "toml",
@@ -165,6 +165,30 @@ export async function scanLocalInventory(
     "json",
     warnings,
   );
+  const claudeSettings = await readStructuredFile(
+    join(home, ".claude", "settings.json"),
+    "json",
+    warnings,
+  );
+  const agents = await Promise.all([
+    inspectAgent(
+      "codex",
+      "Codex",
+      executables.codex,
+      runCommand,
+      runAgentCommands,
+      readCodexModelConfiguration(codexConfig, environment),
+    ),
+    inspectAgent(
+      "claude-code",
+      "Claude Code",
+      executables.claude,
+      runCommand,
+      runAgentCommands,
+      readClaudeModelConfiguration(claudeSettings, environment),
+    ),
+    inspectAgent("cursor", "Cursor", executables.cursor, runCommand, false),
+  ]);
   const projectSources = new Map<string, Set<string>>();
   collectProjectKeys(codexConfig, "codex", projectSources);
   collectProjectKeys(claudeConfig, "claude-code", projectSources);
@@ -226,6 +250,163 @@ export async function scanLocalInventory(
   };
 }
 
+function readCodexModelConfiguration(
+  config: Record<string, unknown>,
+  environment: NodeJS.ProcessEnv,
+): LocalAgentModelConfiguration {
+  const modelId = stringProperty(config, "model");
+  const providerId = stringProperty(config, "model_provider") ?? "openai";
+  const providers = isRecord(config.model_providers)
+    ? config.model_providers
+    : {};
+  const provider = isRecord(providers[providerId]) ? providers[providerId] : {};
+  const endpoint = safeModelEndpoint(stringProperty(provider, "base_url"));
+  const credentialEnvironment = stringProperty(provider, "env_key");
+  const embeddedBearerAvailable = Boolean(
+    stringProperty(provider, "experimental_bearer_token"),
+  );
+  const credentialAvailable = Boolean(
+    embeddedBearerAvailable ||
+      environment[credentialEnvironment ?? "OPENAI_API_KEY"],
+  );
+  const sourceKind = sourceKindForEndpoint(
+    endpoint,
+    credentialAvailable,
+    providerId === "openai",
+  );
+  const credentialStatus = credentialStatusForSource(
+    sourceKind,
+    credentialAvailable,
+    embeddedBearerAvailable,
+  );
+  return {
+    ...(modelId ? { modelId } : {}),
+    providerId,
+    providerLabel:
+      stringProperty(provider, "name") ??
+      (providerId === "openai" ? "OpenAI" : providerId),
+    sourceKind,
+    protocol: "openai",
+    ...(endpoint
+      ? { endpoint, endpointHost: new URL(endpoint).host }
+      : {}),
+    credentialStatus,
+    health: !modelId
+      ? "unconfigured"
+      : credentialStatus === "missing"
+        ? "error"
+        : credentialStatus === "unverified"
+          ? "unknown"
+        : "healthy",
+  };
+}
+
+function readClaudeModelConfiguration(
+  settings: Record<string, unknown>,
+  environment: NodeJS.ProcessEnv,
+): LocalAgentModelConfiguration {
+  const settingsEnvironment = isRecord(settings.env) ? settings.env : {};
+  const modelId =
+    stringProperty(settings, "model") ??
+    stringProperty(settingsEnvironment, "ANTHROPIC_MODEL") ??
+    environment.ANTHROPIC_MODEL ??
+    "default";
+  const endpoint = safeModelEndpoint(
+    stringProperty(settingsEnvironment, "ANTHROPIC_BASE_URL") ??
+      environment.ANTHROPIC_BASE_URL,
+  );
+  const credentialAvailable = Boolean(
+    stringProperty(settingsEnvironment, "ANTHROPIC_API_KEY") ??
+      environment.ANTHROPIC_API_KEY ??
+      stringProperty(settingsEnvironment, "ANTHROPIC_AUTH_TOKEN") ??
+      environment.ANTHROPIC_AUTH_TOKEN,
+  );
+  const sourceKind = sourceKindForEndpoint(
+    endpoint,
+    credentialAvailable,
+    true,
+  );
+  const providerId = endpoint ? `anthropic-${shortHash(endpoint)}` : "anthropic";
+  return {
+    modelId,
+    providerId,
+    providerLabel: endpoint ? "Anthropic compatible" : "Anthropic",
+    sourceKind,
+    protocol: "anthropic",
+    ...(endpoint
+      ? { endpoint, endpointHost: new URL(endpoint).host }
+      : {}),
+    credentialStatus: credentialStatusForSource(
+      sourceKind,
+      credentialAvailable,
+      false,
+    ),
+    health: "healthy",
+  };
+}
+
+function sourceKindForEndpoint(
+  endpoint: string | undefined,
+  credentialAvailable: boolean,
+  official: boolean,
+): LocalAgentModelConfiguration["sourceKind"] {
+  if (endpoint) {
+    const hostname = new URL(endpoint).hostname;
+    return isLoopbackHostname(hostname) ? "local-service" : "compatible-api";
+  }
+  return official && !credentialAvailable ? "official-account" : "official-api";
+}
+
+function credentialStatusForSource(
+  sourceKind: LocalAgentModelConfiguration["sourceKind"],
+  available: boolean,
+  explicitlyConfigured: boolean,
+): LocalAgentModelConfiguration["credentialStatus"] {
+  if (sourceKind === "official-account" || sourceKind === "local-service") {
+    return "not-required";
+  }
+  if (available) return "available";
+  return explicitlyConfigured ? "missing" : "unverified";
+}
+
+function safeModelEndpoint(value?: string): string | undefined {
+  if (!value) return undefined;
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return undefined;
+    url.username = "";
+    url.password = "";
+    url.search = "";
+    url.hash = "";
+    return url.toString().replace(/\/$/, "");
+  } catch {
+    return undefined;
+  }
+}
+
+function isLoopbackHostname(hostname: string): boolean {
+  return (
+    hostname === "127.0.0.1" ||
+    hostname === "localhost" ||
+    hostname === "::1" ||
+    hostname === "0.0.0.0"
+  );
+}
+
+function stringProperty(
+  value: Record<string, unknown>,
+  key: string,
+): string | undefined {
+  const candidate = value[key];
+  return typeof candidate === "string" && candidate.trim()
+    ? candidate.trim()
+    : undefined;
+}
+
+function shortHash(value: string): string {
+  return createHash("sha256").update(value).digest("hex").slice(0, 12);
+}
+
 async function inspectAgent(
   id: LocalAgentAsset["id"],
   name: string,
@@ -234,6 +415,7 @@ async function inspectAgent(
     ? (executable: string, arguments_: string[]) => Promise<string>
     : never,
   readVersion = true,
+  model?: LocalAgentModelConfiguration,
 ): Promise<LocalAgentAsset> {
   if (!path) return { id, name, installed: false };
   let version: string | undefined;
@@ -244,7 +426,14 @@ async function inspectAgent(
       version = undefined;
     }
   }
-  return { id, name, installed: true, path, ...(version ? { version } : {}) };
+  return {
+    id,
+    name,
+    installed: true,
+    path,
+    ...(version ? { version } : {}),
+    ...(model ? { model } : {}),
+  };
 }
 
 async function findExecutable(

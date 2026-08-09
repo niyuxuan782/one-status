@@ -1,24 +1,47 @@
 import { describe, expect, it } from "vitest";
 import {
+  configurationIntentSchema,
   createEmptyStatus,
   memoryEntrySchema,
+  modelSourceSchema,
   parseStatusDocument,
+  personaEventSchema,
   statusDocumentSchema,
 } from "./index.js";
 
 describe("status protocol", () => {
   it("creates a future-ready empty status document", () => {
     expect(statusDocumentSchema.parse(createEmptyStatus())).toMatchObject({
-      schemaVersion: 3,
+      schemaVersion: 4,
       memory: [],
       projects: {},
       permissions: { grants: [] },
       capabilities: { installations: {} },
+      persona: {
+        events: [],
+        profile: {},
+        policy: {
+          enabled: true,
+          blockedCategories: [],
+          allowedConfidences: ["explicit", "observed", "inferred"],
+        },
+      },
+      deviceControl: {
+        sources: {},
+        models: {},
+        reports: {},
+        intents: {},
+      },
     });
   });
 
-  it("migrates schema v1 memory into confirmed schema v3 memory", () => {
-    const { capabilities: _capabilities, ...emptyV1 } = createEmptyStatus();
+  it("migrates schema v1 memory into confirmed schema v4 memory", () => {
+    const {
+      capabilities: _capabilities,
+      persona: _persona,
+      deviceControl: _deviceControl,
+      ...emptyV1
+    } = createEmptyStatus();
     const legacy = {
       ...emptyV1,
       schemaVersion: 1,
@@ -35,26 +58,61 @@ describe("status protocol", () => {
     };
 
     expect(parseStatusDocument(legacy)).toMatchObject({
-      schemaVersion: 3,
+      schemaVersion: 4,
       capabilities: { installations: {} },
+      persona: { events: [], profile: {} },
       memory: [{ id: "legacy-memory", state: "confirmed" }],
     });
   });
 
   it("migrates schema v2 documents without capability installation state", () => {
-    const { capabilities: _capabilities, ...emptyV2 } = createEmptyStatus();
+    const {
+      capabilities: _capabilities,
+      persona: _persona,
+      deviceControl: _deviceControl,
+      ...emptyV2
+    } = createEmptyStatus();
     const previous = {
       ...emptyV2,
       schemaVersion: 2,
     };
 
     expect(parseStatusDocument(previous)).toMatchObject({
-      schemaVersion: 3,
+      schemaVersion: 4,
       capabilities: { installations: {} },
+      persona: { events: [], profile: {} },
     });
   });
 
-  it("requires schema v3 writers to choose a memory state", () => {
+  it("migrates schema v3 documents without Persona state", () => {
+    const {
+      persona: _persona,
+      deviceControl: _deviceControl,
+      ...emptyV3
+    } = createEmptyStatus();
+    const previous = { ...emptyV3, schemaVersion: 3 };
+
+    expect(parseStatusDocument(previous)).toMatchObject({
+      schemaVersion: 4,
+      persona: {
+        events: [],
+        profile: {},
+        policy: { enabled: true, blockedCategories: [] },
+      },
+      deviceControl: { sources: {}, models: {}, reports: {}, intents: {} },
+    });
+  });
+
+  it("migrates early schema v4 documents without device control state", () => {
+    const { deviceControl: _deviceControl, ...earlyV4 } = createEmptyStatus();
+
+    expect(parseStatusDocument(earlyV4)).toMatchObject({
+      schemaVersion: 4,
+      deviceControl: { sources: {}, models: {}, reports: {}, intents: {} },
+    });
+  });
+
+  it("requires schema v4 writers to choose a memory state", () => {
     expect(() =>
       statusDocumentSchema.parse({
         ...createEmptyStatus(),
@@ -70,6 +128,121 @@ describe("status protocol", () => {
         ],
       }),
     ).toThrow(/state/);
+  });
+
+  it("validates Persona event observation provenance and counts", () => {
+    const event = {
+      id: "persona-event-1",
+      category: "language_style",
+      content: "Prefer concise Chinese technical answers",
+      observedAt: "2026-08-09T14:30:00.000Z",
+      lastObservedAt: "2026-08-09T15:30:00.000Z",
+      observationCount: 2,
+      observations: [
+        {
+          observedAt: "2026-08-09T14:30:00.000Z",
+          sourceAgent: "codex",
+          sourceProject: "one-status",
+          confidence: "explicit",
+        },
+        {
+          observedAt: "2026-08-09T15:30:00.000Z",
+          sourceAgent: "claude-code",
+          sourceProject: "one-status",
+          confidence: "observed",
+        },
+      ],
+      sourceAgent: "codex",
+      sourceProject: "one-status",
+      confidence: "explicit",
+      updatedAt: "2026-08-09T15:30:00.000Z",
+    } as const;
+
+    expect(personaEventSchema.parse(event)).toMatchObject({
+      observationCount: 2,
+      lastObservedAt: "2026-08-09T15:30:00.000Z",
+    });
+    expect(() =>
+      personaEventSchema.parse({ ...event, observationCount: 1 }),
+    ).toThrow(/observationCount/);
+  });
+
+  it.each([
+    "https://alice:secret@example.test/v1",
+    "https://example.test/v1?api_key=private",
+    "https://example.test/v1#credential",
+  ])("rejects credential-bearing model source endpoints: %s", (endpoint) => {
+    expect(() =>
+      modelSourceSchema.parse({
+        id: "third-party-a",
+        label: "Third-party A",
+        kind: "compatible-api",
+        protocol: "openai",
+        endpoint,
+        supportedTools: ["codex"],
+        credentialRef: "model-source:third-party-a",
+        credentialStatus: "available",
+        createdAt: "2026-08-09T00:00:00.000Z",
+        updatedAt: "2026-08-09T00:00:00.000Z",
+      }),
+    ).toThrow(/user info, query, or fragment/);
+  });
+
+  it("validates an immutable configuration snapshot and complete claim lease", () => {
+    const source = modelSourceSchema.parse({
+      id: "third-party-a",
+      label: "Third-party A",
+      kind: "compatible-api",
+      protocol: "openai",
+      endpoint: "https://example.test/v1",
+      supportedTools: ["codex"],
+      credentialRef: "model-source:third-party-a",
+      credentialStatus: "available",
+      createdAt: "2026-08-09T00:00:00.000Z",
+      updatedAt: "2026-08-09T00:00:00.000Z",
+    });
+    const model = {
+      id: "third-party-a:model:gpt-5-4",
+      sourceId: source.id,
+      name: "GPT-5.4",
+      modelId: "gpt-5.4",
+      supportedTools: ["codex"],
+      createdAt: "2026-08-09T00:00:00.000Z",
+      updatedAt: "2026-08-09T00:00:00.000Z",
+    } as const;
+    const intent = {
+      id: "95fc096d-6adc-45ec-b1d5-cc3a35d6acde",
+      deviceId: "device-a",
+      toolId: "codex",
+      modelId: model.id,
+      sourceId: source.id,
+      status: "applying",
+      requestedAt: "2026-08-09T00:00:00.000Z",
+      requestedByDeviceId: "device-b",
+      updatedAt: "2026-08-09T00:01:00.000Z",
+      attempts: 1,
+      configuration: { model, source },
+      claimId: "cf54563a-45d8-48d2-b819-a4e846578a4d",
+      claimedAt: "2026-08-09T00:01:00.000Z",
+      claimExpiresAt: "2026-08-09T00:03:00.000Z",
+    } as const;
+
+    expect(configurationIntentSchema.parse(intent)).toMatchObject({
+      configuration: { model: { modelId: "gpt-5.4" } },
+      claimId: intent.claimId,
+    });
+    expect(() =>
+      configurationIntentSchema.parse({ ...intent, claimExpiresAt: undefined }),
+    ).toThrow(/claim fields/);
+    expect(() =>
+      configurationIntentSchema.parse({
+        ...intent,
+        configuration: {
+          ...intent.configuration,
+          model: { ...model, id: "different-model" },
+        },
+      }),
+    ).toThrow(/snapshot IDs/);
   });
 
   it("validates portable capability installation intent", () => {

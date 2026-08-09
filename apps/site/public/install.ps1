@@ -190,6 +190,16 @@ try {
     Save-ReleaseAsset -Asset $Asset -Destination $Archive
     Confirm-ReleaseChecksum -DownloadedFile $Archive -ReleaseName $AssetName -ChecksumFile $ChecksumFile
 
+    $Architecture = Get-NormalizedArchitecture
+    $SidecarAssetName = "one-status-device-sidecar-$Version-windows-$Architecture.tar.gz"
+    $SidecarAsset = Get-ReleaseAsset -Release $Release -Name $SidecarAssetName
+    if ($null -eq $SidecarAsset) {
+      Stop-Installer "release $Tag does not contain $SidecarAssetName for this device."
+    }
+    $SidecarArchive = Join-Path $TemporaryDirectory $SidecarAssetName
+    Save-ReleaseAsset -Asset $SidecarAsset -Destination $SidecarArchive
+    Confirm-ReleaseChecksum -DownloadedFile $SidecarArchive -ReleaseName $SidecarAssetName -ChecksumFile $ChecksumFile
+
     $TarCommand = Get-Command tar.exe -ErrorAction SilentlyContinue
     if ($null -eq $TarCommand) {
       Stop-Installer "tar.exe is required to extract the CLI package. Install a current Windows tar utility and run with -Cli again."
@@ -204,6 +214,19 @@ try {
     if (-not (Test-Path -LiteralPath $ExtractedCli -PathType Leaf)) {
       Stop-Installer "$AssetName does not contain package/dist/one-status.js."
     }
+    $SidecarExtractDirectory = Join-Path $TemporaryDirectory "sidecar"
+    New-Item -ItemType Directory -Path $SidecarExtractDirectory -Force | Out-Null
+    & $TarCommand.Source -xzf $SidecarArchive -C $SidecarExtractDirectory `
+      "one-status-device-sidecar.exe" `
+      "THIRD_PARTY_NOTICES.device-sidecar.md" `
+      "licenses/cc-switch/LICENSE"
+    if ($LASTEXITCODE -ne 0) {
+      Stop-Installer "$SidecarAssetName does not contain one-status-device-sidecar.exe."
+    }
+    $ExtractedSidecar = Join-Path $SidecarExtractDirectory "one-status-device-sidecar.exe"
+    if (-not (Test-Path -LiteralPath $ExtractedSidecar -PathType Leaf)) {
+      Stop-Installer "$SidecarAssetName does not contain one-status-device-sidecar.exe."
+    }
 
     $InstallDirectory = if ($env:ONE_STATUS_INSTALL_DIR) {
       $env:ONE_STATUS_INSTALL_DIR
@@ -211,8 +234,24 @@ try {
       Join-Path $env:LOCALAPPDATA "OneStatus\bin"
     }
     New-Item -ItemType Directory -Path $InstallDirectory -Force | Out-Null
+    Copy-Item -LiteralPath $ExtractedSidecar -Destination (Join-Path $InstallDirectory "one-status-device-sidecar.exe") -Force
     Copy-Item -LiteralPath $ExtractedCli -Destination (Join-Path $InstallDirectory "one-status.js") -Force
-    $CommandShim = "@echo off`r`nnode `"%~dp0one-status.js`" %*`r`n"
+    $ShareDirectory = if ($env:ONE_STATUS_SHARE_DIR) {
+      $env:ONE_STATUS_SHARE_DIR
+    } else {
+      Join-Path (Split-Path -Parent $InstallDirectory) "share"
+    }
+    $LicenseDirectory = Join-Path $ShareDirectory "licenses\cc-switch"
+    New-Item -ItemType Directory -Path $LicenseDirectory -Force | Out-Null
+    Copy-Item `
+      -LiteralPath (Join-Path $SidecarExtractDirectory "THIRD_PARTY_NOTICES.device-sidecar.md") `
+      -Destination (Join-Path $ShareDirectory "THIRD_PARTY_NOTICES.device-sidecar.md") `
+      -Force
+    Copy-Item `
+      -LiteralPath (Join-Path $SidecarExtractDirectory "licenses\cc-switch\LICENSE") `
+      -Destination (Join-Path $LicenseDirectory "LICENSE") `
+      -Force
+    $CommandShim = "@echo off`r`nset `"ONE_STATUS_DEVICE_SIDECAR=%~dp0one-status-device-sidecar.exe`"`r`nnode `"%~dp0one-status.js`" %*`r`n"
     [IO.File]::WriteAllText((Join-Path $InstallDirectory "one-status.cmd"), $CommandShim, [Text.Encoding]::ASCII)
 
     $UserPath = [Environment]::GetEnvironmentVariable("Path", "User")
@@ -224,7 +263,7 @@ try {
     if (-not (($env:Path.Split(";")) | Where-Object { $_.TrimEnd("\") -ieq $InstallDirectory.TrimEnd("\") })) {
       $env:Path = "$env:Path;$InstallDirectory"
     }
-    Write-OneStatus "installed CLI $Tag at $InstallDirectory\one-status.cmd"
+    Write-OneStatus "installed CLI $Tag and Device Sidecar at $InstallDirectory"
     Write-OneStatus "open a new terminal, then run one-status."
     return
   }

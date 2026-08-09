@@ -40,17 +40,55 @@ describe("synced status client", () => {
       key,
     );
     const deviceB = await anonymous.login({ ...account, deviceName: "Mac B" });
-    const vaultA = new OneStatusClient({ baseUrl, token: deviceA.token }).createVault(key);
+    const clientA = new OneStatusClient({ baseUrl, token: deviceA.token });
+    const vaultA = clientA.createVault(key);
     const vaultB = new OneStatusClient({ baseUrl, token: deviceB.token }).createVault(key);
 
     await vaultA.mutate((status) => {
       status.preferences.packageManager = "pnpm";
       status.workspace.currentContext = "Build the One Status MCP Gateway";
+      const observedAt = "2026-08-09T14:30:00.000Z";
+      const observation = {
+        observedAt,
+        sourceAgent: "codex",
+        sourceProject: "one-status",
+        confidence: "explicit" as const,
+      };
+      status.persona.events.push({
+        id: "persona-language-style",
+        category: "language_style",
+        content: "Prefer concise Chinese technical answers",
+        observedAt,
+        lastObservedAt: observedAt,
+        observationCount: 1,
+        observations: [observation],
+        sourceAgent: "codex",
+        sourceProject: "one-status",
+        confidence: "explicit",
+        updatedAt: observedAt,
+      });
+      status.persona.profile.language_style = {
+        category: "language_style",
+        content: "Prefer concise Chinese technical answers",
+        confidence: "explicit",
+        sourceEventIds: ["persona-language-style"],
+        firstObservedAt: observedAt,
+        lastObservedAt: observedAt,
+        observationCount: 1,
+        updatedAt: observedAt,
+      };
     });
 
     const onDeviceB = await vaultB.read();
     expect(onDeviceB.status.preferences.packageManager).toBe("pnpm");
     expect(onDeviceB.status.workspace.currentContext).toContain("MCP Gateway");
+    expect(onDeviceB.status.persona.profile.language_style).toMatchObject({
+      content: "Prefer concise Chinese technical answers",
+      sourceEventIds: ["persona-language-style"],
+    });
+    expect(JSON.stringify(await clientA.getStatusSnapshot())).not.toContain(
+      "Prefer concise Chinese technical answers",
+    );
   });
 
   it("reapplies concurrent mutations after a version conflict", async () => {
@@ -239,7 +277,7 @@ describe("synced status client", () => {
       .createVault(key)
       .read();
     expect(recovered.version).toBe(1);
-    expect(recovered.status).toMatchObject({ schemaVersion: 3 });
+    expect(recovered.status).toMatchObject({ schemaVersion: 4 });
   });
 
   it("deduplicates an explicitly retried append mutation", async () => {
