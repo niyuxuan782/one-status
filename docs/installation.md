@@ -126,11 +126,13 @@ CLI 与后台服务：
 ```bash
 brew tap niyuxuan782/tap
 brew trust --formula niyuxuan782/tap/one-status 2>/dev/null || true
-brew install niyuxuan782/tap/one-status
+brew install --formula niyuxuan782/tap/one-status
+brew link --overwrite --force niyuxuan782/tap/one-status
 brew services start niyuxuan782/tap/one-status
 ```
 
 Homebrew 6 会要求显式信任第三方 tap；这里仅信任 One Status Formula。旧版 Homebrew 没有 `trust` 子命令，命令中的回退会继续执行安装。
+`brew link` 可以重复执行，用于处理同名 Desktop Cask 已经存在时 Homebrew 跳过 Formula 全局命令链接的情况。
 
 它会执行：
 
@@ -183,7 +185,8 @@ https://github.com/niyuxuan782/one-status/releases/download/v<version>/one-statu
 
 ```bash
 brew tap niyuxuan782/tap
-brew install one-status
+brew install --formula niyuxuan782/tap/one-status
+brew link --overwrite --force niyuxuan782/tap/one-status
 ```
 
 ## Release

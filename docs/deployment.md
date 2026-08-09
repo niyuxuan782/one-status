@@ -74,7 +74,7 @@ MCP runtime 在内存中持有 Status Key。Sync API 继续只保存密文。
 构建：
 
 ```bash
-docker build -t one-status:0.6.0 .
+docker build -t one-status:0.7.0 .
 ```
 
 运行：
@@ -90,7 +90,7 @@ docker run --rm -p 127.0.0.1:3000:3000 \
   -e ONE_STATUS_TOKEN \
   -e ONE_STATUS_STATUS_KEY \
   -e ONE_STATUS_MCP_BEARER_TOKEN \
-  one-status:0.6.0
+  one-status:0.7.0
 ```
 
 Compose：

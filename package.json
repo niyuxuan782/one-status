@@ -1,7 +1,7 @@
 {
   "name": "one-status",
   "version": "0.7.0",
-  "description": "Portable identity, context, memory, and permission layer for AI agents",
+  "description": "Manage AI tools, models, Persona, and work state across devices",
   "private": false,
   "type": "module",
   "license": "Apache-2.0",

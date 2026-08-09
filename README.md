@@ -65,9 +65,12 @@ CLI、MCP 与本机后台服务：
 ```bash
 brew tap niyuxuan782/tap
 brew trust --formula niyuxuan782/tap/one-status 2>/dev/null || true
-brew install niyuxuan782/tap/one-status
+brew install --formula niyuxuan782/tap/one-status
+brew link --overwrite --force niyuxuan782/tap/one-status
 brew services start niyuxuan782/tap/one-status
 ```
+
+`brew link` 可以重复执行，并确保已经安装同名 Cask 时，`one-status` CLI 仍会进入 Homebrew 的全局命令目录。
 
 ### CLI
 

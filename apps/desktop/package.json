@@ -81,7 +81,7 @@
     "linux": {
       "category": "Development",
       "icon": "build/icon.png",
-      "synopsis": "Personal Agent control center",
+      "synopsis": "Cross-device AI tool and model control center",
       "syncDesktopName": true,
       "target": ["AppImage", "deb"]
     }

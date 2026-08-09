@@ -286,10 +286,11 @@ secretScan: passed</code></pre>
 brew install --cask niyuxuan782/tap/one-status</code>
               </div>
               <div class="command-block wide">
-                <div><span>CLI + Service</span><button data-copy="brew tap niyuxuan782/tap&#10;brew trust --formula niyuxuan782/tap/one-status 2>/dev/null || true&#10;brew install niyuxuan782/tap/one-status&#10;brew services start niyuxuan782/tap/one-status">复制</button></div>
+                <div><span>CLI + Service</span><button data-copy="brew tap niyuxuan782/tap&#10;brew trust --formula niyuxuan782/tap/one-status 2>/dev/null || true&#10;brew install --formula niyuxuan782/tap/one-status&#10;brew link --overwrite --force niyuxuan782/tap/one-status&#10;brew services start niyuxuan782/tap/one-status">复制</button></div>
                 <code>brew tap niyuxuan782/tap
 brew trust --formula niyuxuan782/tap/one-status 2>/dev/null || true
-brew install niyuxuan782/tap/one-status
+brew install --formula niyuxuan782/tap/one-status
+brew link --overwrite --force niyuxuan782/tap/one-status
 brew services start niyuxuan782/tap/one-status</code>
               </div>
             </div>

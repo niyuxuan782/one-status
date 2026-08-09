@@ -85,7 +85,7 @@ async function main(): Promise<void> {
       type: "upsert_project",
       id: "one-status",
       name: "One Status",
-      summary: "Portable identity, context, memory, and permission layer for AI.",
+      summary: "Cross-device control center for AI tools, models, Persona, and work state.",
       techStack: ["TypeScript", "Rust"],
       currentGoal: "Build the MCP Gateway",
       decisions: ["E2EE", "Open Core"],
