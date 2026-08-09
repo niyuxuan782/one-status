@@ -42,6 +42,9 @@
 		Permissions-Policy "camera=(), geolocation=(), microphone=()"
 	}
 
+	@powershell path /install.ps1
+	header @powershell Content-Type "text/plain; charset=utf-8"
+
 	log {
 		output stdout
 		format json
