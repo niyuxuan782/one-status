@@ -129,7 +129,7 @@ function installSessionSecurity(): void {
 
 async function createMainWindow(baseUrl: string): Promise<void> {
   const window = new BrowserWindow({
-    backgroundColor: "#f5f6f7",
+    backgroundColor: "#f3efe6",
     height: 820,
     minHeight: 640,
     minWidth: 900,

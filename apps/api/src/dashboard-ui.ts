@@ -64,12 +64,13 @@ export function renderDashboardPage(csrfToken: string): string {
   <meta name="color-scheme" content="light">
   <meta name="one-status-csrf" content="${escapeHtml(csrfToken)}">
   <title>One Status</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2064%2064'%3E%3Crect%20width='64'%20height='64'%20rx='12'%20fill='%238edab9'/%3E%3Cpath%20d='M18%2024c0-5%204-9%2010-9h8c6%200%2010%204%2010%209v16c0%205-4%209-10%209h-8c-6%200-10-4-10-9V24Zm9-2c-2%200-3%201-3%203v14c0%202%201%203%203%203h10c2%200%203-1%203-3V25c0-2-1-3-3-3H27Z'%20fill='%2315271f'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/assets/dashboard.css">
 </head>
 <body>
   <div class="app-shell">
     <aside class="sidebar" id="sidebar">
-      <div class="brand"><span class="brand-mark">OS</span><span>One Status</span></div>
+      <div class="brand"><span class="brand-mark"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="12" fill="#8edab9"/><path d="M18 24c0-5 4-9 10-9h8c6 0 10 4 10 9v16c0 5-4 9-10 9h-8c-6 0-10-4-10-9V24Zm9-2c-2 0-3 1-3 3v14c0 2 1 3 3 3h10c2 0 3-1 3-3V25c0-2-1-3-3-3H27Z" fill="#15271f"/></svg></span><span>One Status</span></div>
       <nav class="nav" aria-label="主导航">
         ${navLink("/", "overview", "概览")}
         ${navLink("/status", "status", "状态")}
@@ -113,120 +114,163 @@ export function renderDashboardPage(csrfToken: string): string {
 
 export const dashboardCss = String.raw`
 :root {
-  color: #17191c;
-  background: #f5f6f7;
+  color-scheme: light;
+  color: #26221b;
+  background: #f3efe6;
   font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-synthesis: none;
-  --border: #dfe2e5;
-  --muted: #687078;
-  --surface: #ffffff;
-  --surface-subtle: #f8f9fa;
-  --green: #16825d;
-  --blue: #2463eb;
-  --amber: #a65f00;
-  --red: #c33b3b;
+  --paper: #f3efe6;
+  --surface: #fbf9f3;
+  --surface-2: #f6f2e9;
+  --surface-subtle: #f0ebdd;
+  --ink: #26221b;
+  --muted: #77705f;
+  --faint: #9b937f;
+  --line: #ddd5c4;
+  --line-strong: #c9bfa9;
+  --accent: #c15f3c;
+  --accent-bright: #a94b2b;
+  --accent-soft: #f3e0d5;
+  --ok: #4a7c59;
+  --blue: #58719e;
+  --amber: #a9761f;
+  --red: #b3402e;
+  --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, "Times New Roman", serif;
+  --shadow-card: 2px 3px 0 rgba(38, 34, 27, .05);
+  --shadow-lift: 4px 6px 0 rgba(38, 34, 27, .09);
+  --wobble: 255px 15px 225px 15px / 15px 225px 15px 255px;
+  --wobble-sm: 12px 5px 14px 6px / 6px 13px 5px 14px;
+  --wave: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='120'%20height='8'%20viewBox='0%200%20120%208'%3E%3Cpath%20d='M2%205c15-4%2026%204%2040-1s29%203%2043-2%2024%203%2033%201'%20fill='none'%20stroke='%23c15f3c'%20stroke-width='2'%20stroke-linecap='round'%20opacity='.65'/%3E%3C/svg%3E");
+  --grain: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='140'%20height='140'%3E%3Cfilter%20id='n'%3E%3CfeTurbulence%20type='fractalNoise'%20baseFrequency='0.9'%20numOctaves='2'%20stitchTiles='stitch'/%3E%3C/filter%3E%3Crect%20width='140'%20height='140'%20filter='url(%23n)'%20opacity='0.55'/%3E%3C/svg%3E");
 }
 * { box-sizing: border-box; }
-body { margin: 0; min-width: 320px; min-height: 100vh; }
+body { margin: 0; min-width: 320px; min-height: 100vh; background: radial-gradient(1100px 380px at 72% -120px, rgba(193,95,60,.07), transparent 70%), radial-gradient(900px 320px at -10% 108%, rgba(74,124,89,.06), transparent 70%), var(--paper); }
+body::before { content: ""; position: fixed; inset: 0; z-index: 999; pointer-events: none; opacity: .05; background: var(--grain) repeat; }
 button, input, textarea, select { font: inherit; letter-spacing: 0; }
 button { cursor: pointer; }
 a { color: inherit; }
 .app-shell { display: grid; grid-template-columns: 224px minmax(0, 1fr); min-height: 100vh; }
-.sidebar { position: fixed; inset: 0 auto 0 0; width: 224px; display: flex; flex-direction: column; padding: 18px 14px; background: #17191c; color: #f7f8f9; z-index: 30; }
-.brand { display: flex; align-items: center; gap: 10px; padding: 0 8px 18px; font-size: 15px; font-weight: 700; }
-.brand-mark { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 6px; color: #17221e; background: #8ce0ba; font-size: 11px; font-weight: 800; }
+.sidebar { position: fixed; inset: 0 auto 0 0; width: 224px; display: flex; flex-direction: column; padding: 18px 14px; background: linear-gradient(180deg, #ede6d6 0%, #eae2d0 100%); border-right: 1px solid var(--line-strong); color: var(--ink); z-index: 30; }
+.brand { display: flex; align-items: center; gap: 10px; padding: 0 8px 18px; font-family: var(--serif); font-size: 17px; font-weight: 700; }
+.brand-mark { display: grid; place-items: center; width: 30px; height: 30px; }
+.brand-mark svg { width: 100%; height: 100%; border-radius: 7px 4px 8px 5px / 5px 8px 4px 7px; box-shadow: 2px 2px 0 rgba(38,34,27,.12); transition: transform .2s ease; }
+.brand:hover .brand-mark svg { transform: rotate(-6deg); }
 .nav { display: grid; gap: 3px; }
-.nav-link { display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 0 10px; border-radius: 6px; color: #aeb5bc; text-decoration: none; font-size: 14px; font-weight: 550; }
-.nav-link:hover { color: #fff; background: #24272b; }
-.nav-link.active { color: #fff; background: #2b2f33; }
-.nav-link svg { width: 17px; height: 17px; }
-.sidebar-footer { margin-top: auto; display: flex; align-items: center; gap: 9px; padding: 12px 9px; border-top: 1px solid #303338; color: #cbd0d5; }
+.nav-link { position: relative; display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 0 10px; border-radius: 9px; color: #6d6553; text-decoration: none; font-size: 14px; font-weight: 550; transition: color .15s ease, background-color .15s ease; }
+.nav-link::after { content: ""; position: absolute; left: 0; top: 24%; bottom: 24%; width: 3px; border-radius: 3px 1px 3px 1px; background: var(--accent); transform: scaleY(0); transition: transform .18s ease; }
+.nav-link svg { width: 17px; height: 17px; transition: transform .18s ease; }
+.nav-link:hover { color: var(--ink); background: rgba(193,95,60,.08); }
+.nav-link:hover svg { transform: rotate(-8deg); }
+.nav-link.active { color: var(--accent-bright); background: var(--accent-soft); }
+.nav-link.active::after { transform: scaleY(1); }
+.sidebar-footer { margin-top: auto; display: flex; align-items: center; gap: 9px; padding: 12px 9px; border-top: 1px solid var(--line); color: #57503f; }
 .sidebar-footer div { display: grid; gap: 2px; }
 .sidebar-footer strong { font-size: 12px; }
-.sidebar-footer span:not(.health-dot) { color: #7e8790; font-size: 11px; }
-.health-dot { width: 8px; height: 8px; border-radius: 50%; background: #45c78c; box-shadow: 0 0 0 3px rgba(69,199,140,.12); }
+.sidebar-footer span:not(.health-dot) { color: var(--faint); font-size: 11px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.health-dot { width: 8px; height: 8px; border-radius: 50% 42% 55% 45%; background: var(--ok); animation: ping 2.4s cubic-bezier(0, 0, .2, 1) infinite; }
 .workspace { grid-column: 2; min-width: 0; }
-.topbar { position: sticky; top: 0; z-index: 20; display: flex; align-items: center; justify-content: space-between; min-height: 72px; padding: 12px clamp(20px, 4vw, 48px); background: rgba(255,255,255,.94); border-bottom: 1px solid var(--border); backdrop-filter: blur(10px); }
-.topbar h1 { margin: 1px 0 0; font-size: 20px; line-height: 1.2; letter-spacing: 0; }
-.eyebrow { margin: 0; color: var(--muted); font-size: 10px; font-weight: 750; }
+.topbar { position: sticky; top: 0; z-index: 20; display: flex; align-items: center; justify-content: space-between; min-height: 76px; padding: 12px clamp(20px, 4vw, 48px); background: rgba(243,239,230,.86); border-bottom: 1px solid var(--line); backdrop-filter: blur(10px); }
+.topbar h1 { margin: 1px 0 0; font-family: var(--serif); font-size: 25px; line-height: 1.15; font-weight: 700; font-style: italic; }
+.eyebrow { margin: 0; color: var(--accent); font-size: 10px; font-weight: 750; letter-spacing: .18em; }
+.eyebrow::before { content: "✳ "; }
 .topbar-actions { display: flex; align-items: center; gap: 10px; }
 .sync-state { display: inline-flex; align-items: center; gap: 7px; color: var(--muted); font-size: 12px; }
-.sync-state span { width: 7px; height: 7px; border-radius: 50%; background: var(--green); }
-.sync-state.syncing span { background: var(--amber); }
-.sync-state.error span { background: var(--red); }
-.icon-button { display: inline-grid; place-items: center; width: 34px; height: 34px; padding: 0; border: 1px solid var(--border); border-radius: 6px; color: #34393e; background: #fff; }
-.icon-button:hover { background: #f3f5f6; }
-.icon-button svg { width: 16px; height: 16px; }
+.sync-state span { width: 8px; height: 8px; border-radius: 50% 42% 55% 45%; background: var(--ok); animation: ping 2.4s cubic-bezier(0, 0, .2, 1) infinite; }
+.sync-state.syncing span { background: var(--amber); animation-duration: 1s; }
+.sync-state.error span { background: var(--red); animation: none; }
+.icon-button { display: inline-grid; place-items: center; width: 34px; height: 34px; padding: 0; border: 1px solid var(--line-strong); border-radius: 9px; color: #57503f; background: var(--surface); transition: transform .15s ease, border-color .15s ease, color .15s ease, box-shadow .15s ease; }
+.icon-button:hover { color: var(--accent-bright); border-color: var(--accent); transform: rotate(-4deg); box-shadow: 2px 3px 0 rgba(38,34,27,.1); }
+.icon-button svg { width: 16px; height: 16px; transition: transform .35s ease; }
+#refresh:hover svg { transform: rotate(120deg); }
 .mobile-menu { display: none; }
 .main { width: min(1180px, 100%); margin: 0 auto; padding: 30px clamp(20px, 4vw, 48px) 60px; }
 .loading { display: grid; justify-items: center; gap: 12px; padding: 96px 0; color: var(--muted); }
-.loading span { width: 22px; height: 22px; border: 2px solid #d9dddf; border-top-color: #252a2e; border-radius: 50%; animation: spin .8s linear infinite; }
+.loading span { width: 26px; height: 26px; border: 2.5px dashed var(--accent); border-radius: 50% 45% 52% 48%; animation: spin 1.4s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
-.section-header { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-bottom: 18px; }
-.section-header h2 { margin: 0; font-size: 17px; letter-spacing: 0; }
+.section-header { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-bottom: 20px; }
+.section-header h2 { margin: 0; padding-bottom: 9px; background: var(--wave) left bottom / auto 8px repeat-x; font-family: var(--serif); font-size: 21px; font-weight: 700; }
 .section-header p { margin: 5px 0 0; color: var(--muted); font-size: 13px; }
-.button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 36px; padding: 0 13px; border: 1px solid #22272b; border-radius: 6px; color: #fff; background: #22272b; font-size: 13px; font-weight: 650; text-decoration: none; }
-.button:hover { background: #111315; }
-.button.secondary { color: #33383c; background: #fff; border-color: var(--border); }
-.button.secondary:hover { background: #f5f6f7; }
-.button.danger { color: var(--red); background: #fff; border-color: #e9c9c9; }
-.button:disabled { cursor: not-allowed; opacity: .5; }
+.button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 37px; padding: 0 15px; border: 1.5px solid var(--accent-bright); border-radius: var(--wobble); color: #fff8f2; background: var(--accent); font-size: 13px; font-weight: 650; text-decoration: none; box-shadow: 2px 3px 0 rgba(38,34,27,.16); transition: transform .15s ease, box-shadow .15s ease, background-color .15s ease; }
+.button:hover { background: var(--accent-bright); transform: translate(-1px, -2px) rotate(-.4deg); box-shadow: 4px 5px 0 rgba(38,34,27,.16); }
+.button:active { transform: translate(1px, 1px); box-shadow: 1px 1px 0 rgba(38,34,27,.16); }
+.button.secondary { color: var(--ink); background: var(--surface); border-color: var(--line-strong); box-shadow: 2px 3px 0 rgba(38,34,27,.08); }
+.button.secondary:hover { background: var(--surface-2); border-color: var(--muted); }
+.button.danger { color: var(--red); background: transparent; border-color: var(--red); box-shadow: none; }
+.button.danger:hover { background: rgba(179,64,46,.08); }
+.button:disabled { cursor: not-allowed; opacity: .45; transform: none; }
 .button svg { width: 15px; height: 15px; }
-.metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 28px; }
-.metric { min-height: 112px; padding: 16px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); }
-.metric-top { display: flex; align-items: center; justify-content: space-between; color: var(--muted); font-size: 12px; }
-.metric-icon { display: grid; place-items: center; width: 29px; height: 29px; border-radius: 6px; background: #eef1f3; color: #495158; }
+.metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin-bottom: 26px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); box-shadow: var(--shadow-card); overflow: hidden; animation: rise .45s cubic-bezier(.2, .7, .3, 1) backwards; }
+.metric { position: relative; min-height: 104px; padding: 16px 18px; border-left: 1px solid var(--line); background: transparent; transition: background-color .15s ease; }
+.metric:first-child { border-left: 0; }
+.metric:hover { background: var(--surface-2); }
+.metric-top { display: flex; align-items: center; justify-content: space-between; color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
+.metric-icon { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 9px; background: var(--accent-soft); color: var(--accent-bright); }
 .metric-icon svg { width: 15px; height: 15px; }
-.metric strong { display: block; margin-top: 12px; font-size: 24px; line-height: 1; }
-.metric small { display: block; margin-top: 7px; color: var(--muted); font-size: 11px; }
-.layout-2 { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(280px, .8fr); gap: 20px; }
-.panel { padding: 18px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); }
+.metric strong { display: block; margin-top: 13px; font-family: var(--serif); font-size: 32px; line-height: 1; font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; }
+.metric small { display: block; margin-top: 7px; color: var(--faint); font-size: 11px; }
+.layout-2 { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(280px, .8fr); gap: 20px; align-items: start; }
+.notebook { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); padding: 0; margin-bottom: 24px; }
+.notebook-page { padding: 20px 22px; min-width: 0; }
+.notebook-page + .notebook-page { border-left: 1px solid var(--line); }
+.context-quote { margin: 0; font-family: var(--serif); font-size: 17px; font-style: italic; line-height: 1.8; color: #3f3a2e; }
+.context-quote::before { content: "“ "; color: var(--accent); }
+.context-quote::after { content: " ”"; color: var(--accent); }
+.spotlight-name { margin: 0; font-family: var(--serif); font-size: 26px; font-weight: 700; }
+.panel { position: relative; padding: 20px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); box-shadow: var(--shadow-card); animation: rise .45s cubic-bezier(.2, .7, .3, 1) backwards; }
+.panel.notebook { padding: 0; }
 .panel + .panel { margin-top: 16px; }
 .panel-title { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
-.panel-title h3 { margin: 0; font-size: 14px; }
-.panel-title span { color: var(--muted); font-size: 11px; }
-.context-text { margin: 0; color: #33393e; font-size: 14px; line-height: 1.65; white-space: pre-wrap; }
+.panel-title h3 { margin: 0; font-family: var(--serif); font-size: 16px; font-weight: 700; }
+.panel-title span { color: var(--faint); font-size: 11px; letter-spacing: .06em; }
+.context-text { margin: 0; color: #4a4436; font-size: 14px; line-height: 1.7; white-space: pre-wrap; }
 .project-spotlight { display: grid; gap: 14px; }
-.project-spotlight h3 { margin: 0; font-size: 20px; }
-.project-spotlight p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.55; }
+.project-spotlight::before { content: ""; position: absolute; top: -9px; left: 50%; width: 74px; height: 16px; transform: translateX(-50%) rotate(-2deg); background: rgba(214,196,157,.5); border: 1px solid rgba(38,34,27,.07); box-shadow: 0 1px 2px rgba(38,34,27,.08); }
+.project-spotlight h3 { margin: 0; font-family: var(--serif); font-size: 22px; font-weight: 700; }
+.project-spotlight p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.6; }
 .tag-list { display: flex; flex-wrap: wrap; gap: 6px; }
-.tag { display: inline-flex; align-items: center; min-height: 25px; padding: 0 8px; border-radius: 5px; background: #eef1f3; color: #4e565d; font-size: 11px; }
-.link-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 0; border-top: 1px solid #eceeef; font-size: 13px; }
+.tag { display: inline-flex; align-items: center; min-height: 25px; padding: 0 9px; border: 1px dashed var(--line-strong); border-radius: 8px 4px 9px 5px / 5px 9px 4px 8px; background: transparent; color: var(--muted); font-size: 11px; }
+.link-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 0; border-top: 1px solid var(--line); font-size: 13px; }
 .link-row:first-child { border-top: 0; padding-top: 0; }
 .link-row:last-child { padding-bottom: 0; }
 .link-row > div { min-width: 0; }
 .link-row strong { display: block; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .link-row small { color: var(--muted); }
+.link-row svg { width: 15px; height: 15px; color: var(--faint); transition: transform .15s ease, color .15s ease; }
+.link-row:hover svg { transform: translateX(3px) rotate(-6deg); color: var(--accent); }
 .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
 .field { display: grid; gap: 6px; }
 .field.full { grid-column: 1 / -1; }
-.field label { color: #4f565d; font-size: 12px; font-weight: 650; }
-.field input, .field textarea, .field select { width: 100%; border: 1px solid #ccd1d5; border-radius: 6px; color: #24282c; background: #fff; outline: none; }
+.field label { color: #57503f; font-size: 12px; font-weight: 650; }
+.field input, .field textarea, .field select { width: 100%; border: 1px solid var(--line-strong); border-radius: 8px; color: var(--ink); background: #fffdf8; outline: none; transition: border-color .12s ease, box-shadow .12s ease; }
 .field input, .field select { height: 38px; padding: 0 10px; }
 .field textarea { min-height: 112px; padding: 10px; line-height: 1.5; resize: vertical; }
-.field input:focus, .field textarea:focus, .field select:focus { border-color: #5d7592; box-shadow: 0 0 0 3px rgba(57,91,128,.1); }
+.field input:focus, .field textarea:focus, .field select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(193,95,60,.15); }
 .field small { color: var(--muted); font-size: 11px; }
 .form-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
-.preference-list, .memory-list { border-top: 1px solid var(--border); }
-.preference-row, .memory-row { display: grid; grid-template-columns: 180px minmax(0, 1fr) auto; align-items: start; gap: 18px; padding: 13px 0; border-bottom: 1px solid var(--border); }
+.preference-list, .memory-list { border-top: 1px solid var(--line); }
+.preference-row, .memory-row { display: grid; grid-template-columns: 200px minmax(0, 1fr) auto; align-items: center; gap: 18px; padding: 12px 0; border-bottom: 1px solid var(--line); }
 .preference-row strong, .memory-row strong { font-size: 12px; }
 .preference-row > div:last-child { display: flex; gap: 6px; }
-.preference-row code { overflow-wrap: anywhere; color: #3f464c; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+.preference-row code { overflow-wrap: anywhere; color: #57503f; background: var(--surface-subtle); border: 1px solid var(--line); border-radius: 6px; padding: 3px 9px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
 .memory-row { grid-template-columns: 100px minmax(0, 1fr) auto; }
 .memory-row p { margin: 0 0 7px; font-size: 13px; line-height: 1.5; white-space: pre-wrap; }
 .memory-row small { display: block; margin-top: 8px; color: var(--muted); font-size: 10px; }
-.scope { display: inline-flex; align-items: center; width: fit-content; min-height: 24px; padding: 0 7px; border-radius: 5px; background: #eaf0ff; color: #315aaf; font-size: 10px; font-weight: 700; text-transform: uppercase; }
-.segmented { display: inline-flex; max-width: 100%; padding: 3px; overflow-x: auto; border: 1px solid var(--border); border-radius: 6px; background: #eef0f2; }
-.segmented button { flex: 0 0 auto; min-height: 29px; padding: 0 10px; border: 0; border-radius: 4px; color: var(--muted); background: transparent; font-size: 12px; }
-.segmented button.active { color: #22272b; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.07); }
-.card-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
-.item-card { min-width: 0; padding: 17px; border: 1px solid var(--border); border-radius: 6px; background: #fff; }
-.item-card.active { border-color: #8ab6a2; box-shadow: inset 3px 0 0 var(--green); }
+.scope { display: inline-flex; align-items: center; width: fit-content; min-height: 24px; padding: 0 8px; border: 1px solid rgba(193,95,60,.35); border-radius: 8px; background: var(--accent-soft); color: var(--accent-bright); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; }
+.segmented { display: inline-flex; max-width: 100%; padding: 3px; overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-subtle); }
+.segmented button { flex: 0 0 auto; min-height: 29px; padding: 0 11px; border: 0; border-radius: 8px; color: var(--muted); background: transparent; font-size: 12px; transition: color .12s ease, background-color .12s ease, box-shadow .12s ease; }
+.segmented button.active { color: var(--accent-bright); background: var(--surface); box-shadow: 2px 2px 0 rgba(38,34,27,.1); }
+.card-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.item-card { position: relative; min-width: 0; padding: 18px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); box-shadow: var(--shadow-card); animation: rise .45s cubic-bezier(.2, .7, .3, 1) backwards; transition: transform .16s ease, box-shadow .16s ease, border-color .16s ease; }
+.item-card:hover { transform: translateY(-2px); box-shadow: var(--shadow-lift); }
+.item-card.active { border-color: var(--accent); background: #fdf8f0; }
+.item-card.spotlight { grid-column: 1 / -1; }
+.item-card.spotlight .card-head h3 { font-size: 22px; }
+.item-card.spotlight .card-body { min-height: 0; font-size: 14px; }
 .card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
-.card-head h3 { margin: 0; font-size: 15px; }
-.card-head p { margin: 4px 0 0; color: var(--muted); font-size: 11px; }
-.card-body { min-height: 66px; margin: 14px 0; color: #444b51; font-size: 13px; line-height: 1.55; }
-.card-actions { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding-top: 13px; border-top: 1px solid #eceeef; }
+.card-head h3 { margin: 0; font-family: var(--serif); font-size: 16px; font-weight: 700; }
+.card-head p { margin: 4px 0 0; color: var(--faint); font-size: 11px; }
+.card-body { min-height: 66px; margin: 14px 0; color: #57503f; font-size: 13px; line-height: 1.6; }
+.card-actions { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding-top: 13px; border-top: 1px solid var(--line); }
 .provider-buttons { display: flex; align-items: center; gap: 8px; }
 .provider-card { position: relative; overflow: hidden; }
 .provider-card.provider-google { --provider-accent: #4285f4; }
@@ -237,67 +281,69 @@ a { color: inherit; }
 .provider-scopes { margin-top: 10px; }
 .provider-icon { display: grid; place-items: center; width: 38px; height: 38px; border-radius: 6px; color: #fff; background: var(--provider-accent); }
 .provider-icon svg { width: 19px; height: 19px; }
-.connection { margin-top: 14px; padding-top: 13px; border-top: 1px solid #e0e3e5; }
+.connection { margin-top: 14px; padding-top: 13px; border-top: 1px solid var(--line); }
 .connection-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .connection-head > div { min-width: 0; }
 .connection-head strong { font-size: 12px; }
 .connection-head small { display: block; margin-top: 3px; color: var(--muted); font-size: 10px; }
 .connection-status { flex: 0 0 auto; font-size: 10px; font-weight: 700; }
-.connection-status.connected { color: var(--green); }
+.connection-status.connected { color: var(--ok); }
 .connection-status.expired { color: var(--amber); }
 .connection-status.error { color: var(--red); }
-.grant-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 9px; padding-top: 9px; border-top: 1px solid #e0e3e5; font-size: 11px; }
+.grant-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 9px; padding-top: 9px; border-top: 1px solid var(--line); font-size: 11px; }
 .grant-row span { color: var(--muted); }
 .connection-scopes { display: grid; gap: 7px; margin-top: 10px; }
 .connection-scopes > small { color: var(--muted); font-size: 10px; font-weight: 650; }
-.handoff-policy { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 20px; padding: 14px 16px; border: 1px solid #cfd9e5; border-left: 3px solid #41658a; border-radius: 6px; background: #f4f7fa; }
-.handoff-policy > svg { flex: 0 0 auto; width: 18px; height: 18px; margin-top: 1px; color: #315779; }
+.handoff-policy { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 20px; padding: 14px 16px; border: 1px solid #dcb096; border-left: 3px solid var(--accent); border-radius: 10px; background: #f7ead9; }
+.handoff-policy > svg { flex: 0 0 auto; width: 18px; height: 18px; margin-top: 1px; color: var(--accent); }
 .handoff-policy strong { display: block; margin-bottom: 3px; font-size: 12px; }
-.handoff-policy p { margin: 0; color: #58636d; font-size: 11px; line-height: 1.5; }
+.handoff-policy p { margin: 0; color: #7c4a33; font-size: 11px; line-height: 1.55; }
 .handoff-project .card-body { min-height: 84px; }
-.handoff-path { display: block; margin-top: 10px; padding: 8px 9px; overflow-wrap: anywhere; border-radius: 5px; color: #41484e; background: #f1f3f5; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; line-height: 1.45; }
+.handoff-path { display: block; margin-top: 10px; padding: 8px 9px; overflow-wrap: anywhere; border: 1px solid var(--line); border-radius: 8px; color: #6d6553; background: var(--surface-subtle); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; line-height: 1.45; }
 .handoff-card-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 7px; }
 .handoff-preview { display: grid; gap: 16px; }
 .preview-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
-.preview-metric { min-width: 0; padding: 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-subtle); }
+.preview-metric { min-width: 0; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2); }
 .preview-metric span { display: block; color: var(--muted); font-size: 9px; font-weight: 700; text-transform: uppercase; }
 .preview-metric strong { display: block; margin-top: 5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
-.scan-result { padding: 12px; border: 1px solid var(--border); border-radius: 6px; }
+.scan-result { padding: 12px; border: 1px solid var(--line-strong); border-radius: 10px; }
 .scan-result-head { display: flex; align-items: center; gap: 8px; }
 .scan-result-head svg { width: 16px; height: 16px; }
 .scan-result-head strong { font-size: 12px; }
 .scan-result p { margin: 5px 0 0 24px; color: var(--muted); font-size: 11px; }
-.scan-result.passed { color: #176b50; border-color: #b8d9ca; background: #f2faf6; }
-.scan-result.blocked, .scan-result.error { color: #9b3030; border-color: #e3bcbc; background: #fff6f6; }
+.scan-result.passed { color: #3f6a4c; border-color: #9db89a; background: #edf2e7; }
+.scan-result.blocked, .scan-result.error { color: #8f3527; border-color: #d8a79b; background: #f7e9e5; }
 .scan-findings { margin-top: 11px; overflow-x: auto; }
-.scan-findings table { background: #fff; }
-.handoff-markdown { max-height: 280px; margin: 0; padding: 13px; overflow: auto; border: 1px solid var(--border); border-radius: 6px; color: #3e454b; background: #f7f8f9; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
-.handoff-warning { padding: 11px 12px; border: 1px solid #e6cfaa; border-radius: 6px; color: #795016; background: #fff9ef; font-size: 11px; line-height: 1.5; }
-.empty { padding: 48px 20px; border: 1px dashed #ccd1d4; border-radius: 6px; text-align: center; background: rgba(255,255,255,.45); }
-.empty svg { width: 24px; height: 24px; color: #7c858d; }
-.empty h3 { margin: 12px 0 5px; font-size: 14px; }
+.scan-findings table { background: var(--surface); }
+.handoff-markdown { max-height: 280px; margin: 0; padding: 13px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; color: #57503f; background: var(--surface-2); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+.handoff-warning { padding: 11px 12px; border: 1px solid #d9c68d; border-radius: 10px; color: #7a5a17; background: #f7efdb; font-size: 11px; line-height: 1.5; }
+.empty { padding: 48px 20px; border: 1.5px dashed var(--line-strong); border-radius: 10px 6px 12px 7px / 7px 12px 6px 10px; text-align: center; background: transparent; }
+.empty svg { width: 26px; height: 26px; color: var(--faint); rotate: -6deg; }
+.empty h3 { margin: 12px 0 5px; font-family: var(--serif); font-size: 15px; }
 .empty p { margin: 0; color: var(--muted); font-size: 12px; }
-.table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 6px; background: #fff; }
+.table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); box-shadow: var(--shadow-card); }
 table { width: 100%; border-collapse: collapse; font-size: 12px; }
-th, td { padding: 13px 14px; border-bottom: 1px solid #e8eaec; text-align: left; white-space: nowrap; }
-th { color: var(--muted); background: #f7f8f9; font-size: 10px; text-transform: uppercase; }
+th, td { padding: 13px 14px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; }
+th { color: var(--muted); background: var(--surface-subtle); font-size: 10px; text-transform: uppercase; letter-spacing: .08em; border-bottom: 1px solid var(--line-strong); }
+tbody tr { transition: background-color .12s ease; }
+tbody tr:hover { background: rgba(193,95,60,.045); }
 tr:last-child td { border-bottom: 0; }
-.current-device { color: var(--green); font-size: 10px; font-weight: 700; }
+.current-device { color: var(--ok); font-size: 10px; font-weight: 700; }
 .row-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
-.task-status { display: inline-flex; min-height: 23px; align-items: center; padding: 0 7px; border-radius: 5px; font-size: 10px; font-weight: 700; white-space: nowrap; }
-.task-todo { color: #4f5961; background: #edf0f2; }
-.task-in_progress { color: #215fb1; background: #e8f1ff; }
-.task-blocked { color: var(--red); background: #fff0f0; }
-.task-done { color: var(--green); background: #e9f7f1; }
-.modal-backdrop { position: fixed; inset: 0; z-index: 80; display: grid; place-items: center; padding: 20px; background: rgba(17,20,23,.48); }
+.task-status { display: inline-flex; min-height: 23px; align-items: center; padding: 0 8px; border-radius: 8px 4px 9px 5px / 5px 9px 4px 8px; font-size: 10px; font-weight: 700; white-space: nowrap; }
+.task-todo { color: #6d6553; background: #eee8d9; }
+.task-in_progress { color: #46618f; background: #e5ebf4; }
+.task-blocked { color: #8f3527; background: #f7e3de; }
+.task-done { color: #3f6a4c; background: #e4efe6; }
+.modal-backdrop { position: fixed; inset: 0; z-index: 80; display: grid; place-items: center; padding: 20px; background: rgba(64,58,45,.4); backdrop-filter: blur(3px); }
 .modal-backdrop[hidden] { display: none; }
-.modal { width: min(560px, 100%); max-height: calc(100vh - 40px); overflow: auto; border-radius: 7px; background: #fff; box-shadow: 0 22px 70px rgba(0,0,0,.2); }
+.modal { width: min(560px, 100%); max-height: calc(100vh - 40px); overflow: auto; border: 1px solid var(--line-strong); border-radius: 14px; background: var(--surface); box-shadow: 6px 8px 0 rgba(38,34,27,.08); animation: rise .25s cubic-bezier(.2, .7, .3, 1); }
 .modal.wide { width: min(860px, 100%); }
-.modal > header { position: sticky; top: 0; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 15px 18px; border-bottom: 1px solid var(--border); background: #fff; z-index: 2; }
-.modal h2 { margin: 0; font-size: 15px; }
+.modal > header { position: sticky; top: 0; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 15px 18px; border-bottom: 1px solid var(--line); background: var(--surface); z-index: 2; }
+.modal h2 { margin: 0; font-family: var(--serif); font-size: 17px; font-weight: 700; }
 #modal-content { padding: 18px; }
 .check-list { display: grid; gap: 8px; }
-.check-row { display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 9px; align-items: start; padding: 10px; border: 1px solid var(--border); border-radius: 6px; }
+.check-row { display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 9px; align-items: start; padding: 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2); }
 .check-row input { margin: 2px 0 0; }
 .check-row strong { display: block; font-size: 12px; }
 .check-row small { color: var(--muted); font-size: 11px; }
@@ -305,10 +351,10 @@ tr:last-child td { border-bottom: 0; }
 .permission-toolbar > span { color: var(--muted); font-size: 11px; }
 .permission-toolbar > div { display: flex; gap: 6px; }
 .permission-toolbar .button { min-height: 30px; }
-.callback { display: flex; gap: 7px; align-items: flex-start; padding: 9px 10px; border-radius: 5px; background: #f0f2f4; }
+.callback { display: flex; gap: 7px; align-items: flex-start; padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-subtle); }
 .callback code { flex: 1; min-width: 0; overflow-wrap: anywhere; font-size: 10px; line-height: 1.5; }
 .callback .icon-button { flex: 0 0 auto; width: 30px; height: 30px; }
-.oauth-help { grid-column: 1 / -1; margin: 0; padding: 10px 11px; border-left: 3px solid #6f7f8d; color: #535c64; background: #f6f7f8; font-size: 11px; line-height: 1.55; }
+.oauth-help { grid-column: 1 / -1; margin: 0; padding: 10px 11px; border-left: 3px solid var(--accent); border-radius: 4px; color: #7c4a33; background: #f7ead9; font-size: 11px; line-height: 1.55; }
 .app-shell.onboarding { grid-template-columns: 1fr; }
 .app-shell.onboarding .sidebar { display: none; }
 .app-shell.onboarding .workspace { grid-column: 1; }
@@ -316,15 +362,35 @@ tr:last-child td { border-bottom: 0; }
 .onboarding-head { display: grid; gap: 8px; margin-bottom: 22px; }
 .onboarding-head h2 { margin: 0; font-size: 22px; }
 .onboarding-head p { max-width: 620px; margin: 0; color: var(--muted); font-size: 13px; line-height: 1.6; }
-.onboarding-form { padding: 20px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); background: var(--surface); }
+.onboarding-form { padding: 20px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); background: var(--surface); box-shadow: var(--shadow-card); }
 .onboarding-form .segmented { margin-bottom: 18px; }
 .onboarding-security { display: flex; gap: 10px; margin-top: 16px; color: var(--muted); font-size: 11px; line-height: 1.55; }
-.onboarding-security svg { flex: 0 0 auto; width: 17px; height: 17px; color: var(--green); }
-.recovery-key { display: block; margin: 12px 0; padding: 12px; overflow-wrap: anywhere; border: 1px solid var(--border); border-radius: 6px; color: #28322e; background: #f0f7f4; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; line-height: 1.6; }
-.toast { position: fixed; right: 20px; bottom: 20px; z-index: 100; max-width: 360px; padding: 12px 14px; border: 1px solid #ced3d6; border-radius: 6px; color: #fff; background: #252a2e; box-shadow: 0 10px 30px rgba(0,0,0,.16); font-size: 12px; }
-.toast.error { background: #9f3030; border-color: #9f3030; }
+.onboarding-security svg { flex: 0 0 auto; width: 17px; height: 17px; color: var(--ok); }
+.recovery-key { display: block; margin: 12px 0; padding: 12px; overflow-wrap: anywhere; border: 1.5px dashed #9db89a; border-radius: 8px 5px 9px 6px / 6px 9px 5px 8px; color: #3f6a4c; background: #edf2e7; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; line-height: 1.6; }
+.toast { position: fixed; right: 20px; bottom: 20px; z-index: 100; max-width: 360px; padding: 12px 15px; border: 1.5px solid var(--ink); border-radius: var(--wobble-sm); color: var(--paper); background: var(--ink); box-shadow: 3px 4px 0 rgba(38,34,27,.25); font-size: 12px; animation: rise .25s cubic-bezier(.2, .7, .3, 1); }
+.toast.error { background: var(--red); border-color: #7c2d20; }
+.mt-20 { margin-top: 20px; }
+.mt-12 { margin-top: 12px; }
+.mt-6 { margin-top: 6px; }
+.loading-compact { padding: 48px 0; }
+@keyframes rise { from { opacity: 0; transform: translateY(8px) rotate(-.5deg); } to { opacity: 1; transform: translateY(0) rotate(0deg); } }
+@keyframes ping { 0% { box-shadow: 0 0 0 0 currentColor; } 75%, 100% { box-shadow: 0 0 0 7px transparent; } }
+::selection { background: rgba(193, 95, 60, .28); }
+* { scrollbar-width: thin; scrollbar-color: #c9bfa9 transparent; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { border: 3px solid transparent; border-radius: 8px; background: #c9bfa9; background-clip: content-box; }
+a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+}
 @media (max-width: 920px) {
-  .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .metrics { grid-template-columns: 1fr 1fr; }
+  .metric { border-top: 1px solid var(--line); }
+  .metric:nth-child(-n+2) { border-top: 0; }
+  .metric:nth-child(odd) { border-left: 0; }
+  .notebook { grid-template-columns: 1fr; }
+  .notebook-page + .notebook-page { border-left: 0; border-top: 1px solid var(--line); }
   .layout-2 { grid-template-columns: 1fr; }
   .card-grid { grid-template-columns: 1fr; }
 }
@@ -346,6 +412,9 @@ tr:last-child td { border-bottom: 0; }
 }
 @media (max-width: 430px) {
   .metrics { grid-template-columns: 1fr; }
+  .metric { border-left: 0; }
+  .metric:nth-child(-n+2) { border-top: 1px solid var(--line); }
+  .metric:first-child { border-top: 0; }
   .sync-state { display: none; }
   .section-header { align-items: flex-start; flex-direction: column; }
   .section-header .button { width: 100%; }
@@ -888,6 +957,16 @@ function dashboardClient(): void {
     const project = activeId ? snapshot.status.projects[activeId] : null;
     const connections = snapshot.integrations.connections;
     return `
+      <section class="panel notebook">
+        <div class="notebook-page">
+          <div class="panel-title"><h3>当前上下文</h3><span>Version ${snapshot.version}</span></div>
+          <p class="context-quote">${escapeHtml(snapshot.status.workspace.currentContext || "暂无上下文")}</p>
+        </div>
+        <div class="notebook-page project-spotlight">
+          <div class="panel-title"><h3>活动项目</h3><span>${activeId ? "ACTIVE" : "EMPTY"}</span></div>
+          ${project ? `<h3 class="spotlight-name">${escapeHtml(project.name)}</h3><p>${escapeHtml(project.currentGoal || project.summary || "暂无目标")}</p><div class="tag-list">${project.techStack.map((tag: string) => `<span class="tag">${escapeHtml(tag)}</span>`).join("")}</div>` : '<div class="empty"><p>尚未设置活动项目</p></div>'}
+        </div>
+      </section>
       <div class="metrics">
         ${metric("projects", "项目", Object.keys(snapshot.status.projects).length, project ? "当前：" + project.name : "尚未选择")}
         ${metric("brain", "记忆", snapshot.status.memory.length, "跨 Agent 同步")}
@@ -895,28 +974,16 @@ function dashboardClient(): void {
         ${metric("devices", "设备", snapshot.account.devices.length, snapshot.profile.deviceName)}
       </div>
       <div class="layout-2">
-        <div>
-          <section class="panel">
-            <div class="panel-title"><h3>当前上下文</h3><span>Version ${snapshot.version}</span></div>
-            <p class="context-text">${escapeHtml(snapshot.status.workspace.currentContext || "暂无上下文")}</p>
-          </section>
-          <section class="panel">
-            <div class="panel-title"><h3>最近记忆</h3><span>${snapshot.status.memory.length} 条</span></div>
-            ${snapshot.status.memory.slice(0, 4).map((entry: any) => `
-              <div class="link-row"><div><strong>${escapeHtml(entry.content)}</strong><small>${scopeLabel(entry.scope)} · ${formatDate(entry.updatedAt)}</small></div>${icon("chevron")}</div>
-            `).join("") || '<div class="empty"><p>暂无记忆</p></div>'}
-          </section>
-        </div>
-        <div>
-          <section class="panel project-spotlight">
-            <div class="panel-title"><h3>活动项目</h3><span>${activeId ? "ACTIVE" : "EMPTY"}</span></div>
-            ${project ? `<h3>${escapeHtml(project.name)}</h3><p>${escapeHtml(project.currentGoal || project.summary || "暂无目标")}</p><div class="tag-list">${project.techStack.map((tag: string) => `<span class="tag">${escapeHtml(tag)}</span>`).join("")}</div>` : '<div class="empty"><p>尚未设置活动项目</p></div>'}
-          </section>
-          <section class="panel">
-            <div class="panel-title"><h3>连接状态</h3><span>${connections.length} CONNECTED</span></div>
-            ${connections.map((connection: any) => `<div class="link-row"><div><strong>${escapeHtml(connection.label)}</strong><small>${providerLabel(connection.provider)}</small></div><span class="scope">已连接</span></div>`).join("") || '<div class="empty"><p>尚未连接第三方服务</p></div>'}
-          </section>
-        </div>
+        <section class="panel">
+          <div class="panel-title"><h3>最近记忆</h3><span>${snapshot.status.memory.length} 条</span></div>
+          ${snapshot.status.memory.slice(0, 4).map((entry: any) => `
+            <div class="link-row"><div><strong>${escapeHtml(entry.content)}</strong><small>${scopeLabel(entry.scope)} · ${formatDate(entry.updatedAt)}</small></div>${icon("chevron")}</div>
+          `).join("") || '<div class="empty"><p>暂无记忆</p></div>'}
+        </section>
+        <section class="panel">
+          <div class="panel-title"><h3>连接状态</h3><span>${connections.length} CONNECTED</span></div>
+          ${connections.map((connection: any) => `<div class="link-row"><div><strong>${escapeHtml(connection.label)}</strong><small>${providerLabel(connection.provider)}</small></div><span class="scope">已连接</span></div>`).join("") || '<div class="empty"><p>尚未连接第三方服务</p></div>'}
+        </section>
       </div>`;
   }
 
@@ -924,22 +991,24 @@ function dashboardClient(): void {
     const identity = snapshot.status.identity;
     return `
       ${sectionHeader("身份与偏好", `Version ${snapshot.version} · 加密同步`)}
-      <section class="panel">
+      <section class="panel notebook">
+        <div class="notebook-page">
         <div class="panel-title"><h3>身份</h3><span>加密同步</span></div>
         <form data-form="identity"><div class="form-grid">
           ${field("显示名称", "displayName", identity.displayName || "")}
           ${field("语言", "locale", identity.locale || navigator.language)}
           ${field("时区", "timezone", identity.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone, "text", "full")}
         </div><div class="form-actions"><button class="button" type="submit">${icon("save")}保存身份</button></div></form>
-      </section>
-      <section class="panel">
+        </div>
+        <div class="notebook-page">
         <div class="panel-title"><h3>当前上下文</h3><span>Agent handoff</span></div>
         <form data-form="context"><div class="form-grid">
           <div class="field full"><label for="currentContext">上下文</label><textarea id="currentContext" name="currentContext">${escapeHtml(snapshot.status.workspace.currentContext || "")}</textarea></div>
           <div class="field full"><label for="activeProjectId">活动项目</label><select id="activeProjectId" name="activeProjectId"><option value="">未选择</option>${Object.values(snapshot.status.projects).map((project: any) => `<option value="${escapeHtml(project.id)}" ${project.id === snapshot.status.workspace.activeProjectId ? "selected" : ""}>${escapeHtml(project.name)}</option>`).join("")}</select></div>
         </div><div class="form-actions"><button class="button" type="submit">${icon("save")}保存上下文</button></div></form>
+        </div>
       </section>
-      <section class="panel">
+      <section class="panel mt-20">
         <div class="panel-title"><h3>偏好</h3><button class="button secondary" data-action="add-preference" type="button">${icon("plus")}添加</button></div>
         <div class="preference-list">${Object.entries(snapshot.status.preferences).map(([key, value]) => `<div class="preference-row"><strong>${escapeHtml(key)}</strong><code>${escapeHtml(formatValue(value))}</code><div><button class="button secondary" data-action="edit-preference" data-key="${escapeHtml(key)}" type="button">编辑</button> <button class="icon-button" data-action="delete-preference" data-key="${escapeHtml(key)}" type="button" title="删除">${icon("trash")}</button></div></div>`).join("") || '<div class="empty"><p>暂无偏好</p></div>'}</div>
       </section>`;
@@ -951,13 +1020,13 @@ function dashboardClient(): void {
     return `
       ${sectionHeader("项目", `${projects.length} 个项目 · ${snapshot.status.workspace.activeProjectId ? "已设置活动项目" : "无活动项目"}`, `<button class="button" data-action="add-project" type="button">${icon("plus")}新建项目</button>`)}
       ${projects.length ? `<div class="card-grid">${projects.map((project) => `
-        <article class="item-card ${project.id === snapshot.status.workspace.activeProjectId ? "active" : ""}">
+        <article class="item-card ${project.id === snapshot.status.workspace.activeProjectId ? "active spotlight" : ""}">
           <div class="card-head"><div><h3>${escapeHtml(project.name)}</h3><p>${escapeHtml(project.id)}</p></div>${project.id === snapshot.status.workspace.activeProjectId ? '<span class="scope">活动</span>' : ""}</div>
           <div class="card-body">${escapeHtml(project.currentGoal || project.summary || "暂无目标")}</div>
           <div class="tag-list">${project.techStack.map((tag: string) => `<span class="tag">${escapeHtml(tag)}</span>`).join("")}</div>
           <div class="card-actions"><small>${formatDate(project.updatedAt)}</small><div><button class="button secondary" data-action="edit-project" data-id="${escapeHtml(project.id)}" type="button">编辑</button> <button class="icon-button" data-action="delete-project" data-id="${escapeHtml(project.id)}" type="button" title="删除">${icon("trash")}</button></div></div>
         </article>`).join("")}</div>` : emptyState("projects", "暂无项目", "当前项目列表为空")}
-      <section class="panel" style="margin-top:20px">
+      <section class="panel mt-20">
         <div class="panel-title"><h3>任务状态</h3><button class="button secondary" data-action="add-task" type="button">${icon("plus")}添加任务</button></div>
         ${tasks.length ? `<div class="table-wrap"><table><thead><tr><th>任务</th><th>项目</th><th>状态</th><th>下一步</th><th>更新时间</th><th></th></tr></thead><tbody>${tasks.map((task) => {
           const project = task.projectId ? snapshot.status.projects[task.projectId] : null;
@@ -995,7 +1064,7 @@ function dashboardClient(): void {
           <div class="card-actions"><small>${handoff ? `发布于 ${formatDate(handoff.publishedAt)}` : mapping ? `更新于 ${formatDate(mapping.updatedAt)}` : "路径不会同步到云端"}</small><div class="handoff-card-actions"><button class="button secondary" data-action="map-handoff-project" data-id="${escapeHtml(project.id)}" type="button">${mapping ? "更改映射" : "选择仓库"}</button>${mapping ? `<button class="button" data-action="preview-handoff" data-id="${escapeHtml(project.id)}" type="button">${icon("cloud")}发布 Handoff</button><button class="icon-button" data-action="unmap-handoff-project" data-id="${escapeHtml(project.id)}" type="button" title="移除映射">${icon("trash")}</button>` : ""}${handoff ? `<button class="button secondary" data-action="open-handoff" data-agent="codex" data-id="${escapeHtml(project.id)}" type="button" ${codexDisabled}>${icon("chevron")}Codex</button><button class="button secondary" data-action="open-handoff" data-agent="claude-code" data-id="${escapeHtml(project.id)}" type="button" ${claudeDisabled}>Claude Code</button>` : ""}</div></div>
         </article>`;
       }).join("")}</div>` : emptyState("projects", "暂无 Portable 项目", "先在项目页面创建项目，再建立本机路径映射")}
-      <section class="panel" style="margin-top:20px">
+      <section class="panel mt-20">
         <div class="panel-title"><h3>最近活动</h3><span>${activity.length} 条本机记录</span></div>
         ${activity.length ? `<div class="table-wrap"><table><thead><tr><th>操作</th><th>项目</th><th>时间</th></tr></thead><tbody>${activity.slice(0, 20).map((entry: any) => {
           const project = projects.find((candidate: any) => candidate.id === entry.projectId);
@@ -1033,7 +1102,7 @@ function dashboardClient(): void {
           const registered = Boolean(snapshot.status.projects[project.id]);
           return `<tr><td><strong>${escapeHtml(project.name)}</strong><br><small>${escapeHtml(project.path)}</small></td><td>${project.git ? escapeHtml(project.branch || "Git") : "Local only"}</td><td>${escapeHtml(project.agents.join(", ") || "—")}</td><td><div class="tag-list">${project.markers.map((marker: string) => `<span class="tag">${escapeHtml(marker)}</span>`).join("") || "—"}</div></td><td>${registered ? '<span class="current-device">已注册</span>' : `<button class="button secondary" data-action="import-inventory-project" data-index="${index}" type="button">导入</button>`}</td></tr>`;
         }).join("") || '<tr><td colspan="5">暂无项目</td></tr>'}</tbody></table></div>
-        ${inventory.rules.length ? `<div class="tag-list" style="margin-top:12px">${inventory.rules.map((rule: any) => `<span class="tag">${escapeHtml(rule.type)} · ${escapeHtml(rule.agent)}</span>`).join("")}</div>` : ""}
+        ${inventory.rules.length ? `<div class="tag-list mt-12">${inventory.rules.map((rule: any) => `<span class="tag">${escapeHtml(rule.type)} · ${escapeHtml(rule.agent)}</span>`).join("")}</div>` : ""}
       </section>
       ${inventory.warnings.length ? `<section class="panel"><div class="panel-title"><h3>扫描提示</h3><span>${inventory.warnings.length}</span></div>${inventory.warnings.map((warning: string) => `<p>${escapeHtml(warning)}</p>`).join("")}</section>` : ""}`;
   }
@@ -1050,7 +1119,7 @@ function dashboardClient(): void {
     return `
       ${sectionHeader("记忆", `${snapshot.status.memory.length} 条加密记录 · ${candidates.length} 条待确认`, `<button class="button" data-action="add-memory" type="button">${icon("plus")}添加记忆</button>`)}
       <div class="section-header"><div class="segmented">${["all", "candidate", "user", "project", "session"].map((scope) => `<button class="${memoryFilter === scope ? "active" : ""}" data-action="filter-memory" data-scope="${scope}" type="button">${scope === "all" ? "全部" : scope === "candidate" ? `待确认 ${candidates.length}` : scopeLabel(scope)}</button>`).join("")}</div><p>${memories.length} 条</p></div>
-      ${memories.length ? `<div class="memory-list">${memories.map((entry: any) => `<div class="memory-row"><div><span class="scope">${scopeLabel(entry.scope)}</span>${entry.state === "candidate" ? '<span class="task-status task-in_progress" style="margin-top:6px">待确认</span>' : ""}</div><div><p>${escapeHtml(entry.content)}</p><div class="tag-list">${entry.tags.map((tag: string) => `<span class="tag">${escapeHtml(tag)}</span>`).join("")}</div><small>${escapeHtml(memoryOriginLabel(entry))} · ${formatDate(entry.updatedAt)}</small></div><div class="row-actions">${entry.state === "candidate" ? `<button class="button" data-action="confirm-memory" data-id="${escapeHtml(entry.id)}" type="button">${icon("check")}确认</button>` : ""}<button class="button secondary" data-action="edit-memory" data-id="${escapeHtml(entry.id)}" type="button">编辑</button><button class="icon-button" data-action="delete-memory" data-id="${escapeHtml(entry.id)}" type="button" title="删除">${icon("trash")}</button></div></div>`).join("")}</div>` : emptyState("brain", "当前筛选下没有记忆", "当前记忆列表为空")}`;
+      ${memories.length ? `<div class="memory-list">${memories.map((entry: any) => `<div class="memory-row"><div><span class="scope">${scopeLabel(entry.scope)}</span>${entry.state === "candidate" ? '<span class="task-status task-in_progress mt-6">待确认</span>' : ""}</div><div><p>${escapeHtml(entry.content)}</p><div class="tag-list">${entry.tags.map((tag: string) => `<span class="tag">${escapeHtml(tag)}</span>`).join("")}</div><small>${escapeHtml(memoryOriginLabel(entry))} · ${formatDate(entry.updatedAt)}</small></div><div class="row-actions">${entry.state === "candidate" ? `<button class="button" data-action="confirm-memory" data-id="${escapeHtml(entry.id)}" type="button">${icon("check")}确认</button>` : ""}<button class="button secondary" data-action="edit-memory" data-id="${escapeHtml(entry.id)}" type="button">编辑</button><button class="icon-button" data-action="delete-memory" data-id="${escapeHtml(entry.id)}" type="button" title="删除">${icon("trash")}</button></div></div>`).join("")}</div>` : emptyState("brain", "当前筛选下没有记忆", "当前记忆列表为空")}`;
   }
 
   function renderIntegrations(): string {
@@ -1149,7 +1218,7 @@ function dashboardClient(): void {
           <div class="link-row"><div><strong>原始会话记录</strong><small>默认留在 Agent 本机目录</small></div>${icon("terminal")}</div>
         </section>
       </div>
-      <section class="panel" style="margin-top:20px">
+      <section class="panel mt-20">
         <div class="panel-title"><h3>Agent Permission Firewall</h3><span>${grants.length} 条授权</span></div>
         ${grants.length ? `<div class="table-wrap"><table><thead><tr><th>Agent</th><th>服务账号</th><th>Provider</th><th>允许动作</th><th>更新时间</th></tr></thead><tbody>${grants.map((grant: any) => {
           const connection = connectionById.get(grant.connectionId) as any;
@@ -1203,7 +1272,7 @@ function dashboardClient(): void {
   }
 
   async function openHandoffPreview(projectId: string): Promise<void> {
-    openModal("生成 Handoff 预览", '<div class="loading" style="padding:48px 0"><span></span><p>正在采集 Git 状态并扫描 Secret</p></div>', true);
+    openModal("生成 Handoff 预览", '<div class="loading loading-compact"><span></span><p>正在采集 Git 状态并扫描 Secret</p></div>', true);
     try {
       handoffPreview = await api(`/v1/dashboard/handoffs/${encodeURIComponent(projectId)}/preview`, {
         method: "POST",

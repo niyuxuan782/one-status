@@ -1,8 +1,8 @@
 class OneStatus < Formula
   desc "Portable identity, context, memory, and permission layer for AI agents"
   homepage "https://github.com/niyuxuan782/one-status"
-  url "https://github.com/niyuxuan782/one-status/releases/download/v0.3.0/one-status-0.3.0.tgz"
-  sha256 "784cdc79ecbcb0dd2f8eeebcb133ef74affa86179df9e10ef1b63dd815ac226c"
+  url "https://github.com/niyuxuan782/one-status/releases/download/v0.4.0/one-status-0.4.0.tgz"
+  sha256 "a56beeae4e8e5b9b7c3abd1f35d0ee6f2d8441bd1cd796c7ccfa06857319ba72"
   license "Apache-2.0"
 
   depends_on "node"
