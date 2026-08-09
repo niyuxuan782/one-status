@@ -96,7 +96,7 @@ jobs:
           pnpm --dir apps/desktop build
           pnpm --dir apps/desktop exec electron-builder \
             --linux AppImage deb --x64 --publish never \
-            --config.artifactName='One-Status-${version}-linux-${arch}.${ext}'
+            --config.artifactName='One-Status-${version}-linux-x64.${ext}'
       - uses: actions/upload-artifact@v4
         with:
           name: one-status-desktop-${{ matrix.platform }}-${{ matrix.arch }}

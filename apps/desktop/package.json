@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "description": "One Status desktop control center",
+  "desktopName": "one-status.desktop",
   "license": "Apache-2.0",
   "homepage": "https://os.furesta.top",
   "author": {
@@ -39,6 +40,7 @@
   },
   "build": {
     "appId": "top.furesta.onestatus",
+    "executableName": "one-status",
     "productName": "One Status",
     "asar": true,
     "directories": {
@@ -72,6 +74,7 @@
       "category": "Development",
       "icon": "build/icon.png",
       "synopsis": "Personal Agent control center",
+      "syncDesktopName": true,
       "target": ["AppImage", "deb"]
     }
   }
