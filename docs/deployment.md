@@ -13,7 +13,7 @@ deploy/backup.sh
 scripts/deploy-production.sh
 ```
 
-该栈包含官网静态文件、一键安装脚本、Caddy 自动 HTTPS、登录与注册限流、只读 API 容器、持久化 SQLite 数据目录、健康检查和停机一致性备份。`/health` 与 `/v1/*` 进入密文 Sync API，其余路径由官网处理。完整命令见 `deploy/README.md`。
+该栈包含 Caddy 自动 HTTPS、登录与注册限流、只读 API 容器、持久化 SQLite 数据目录、健康检查和停机一致性备份。`/health` 与 `/v1/*` 进入密文 Sync API，其余路径跳转到 GitHub Pages。官网图片、JavaScript、CSS、安装脚本和安装包均由 GitHub 提供。完整命令见 `deploy/README.md`。
 
 当前生产栈运行在腾讯云轻量应用服务器，DNS A 记录由腾讯云 DNS 管理。Caddy 运行在该实例的 Docker Compose 内，仅承担 TLS 证书、HTTPS 和反向代理，不依赖 Cloudflare 网络服务。
 

@@ -28,9 +28,7 @@
 	}
 
 	handle {
-		root * /srv
-		try_files {path} /index.html
-		file_server
+		redir https://niyuxuan782.github.io/one-status{uri} 302
 	}
 
 	header {
@@ -41,9 +39,6 @@
 		Referrer-Policy "strict-origin-when-cross-origin"
 		Permissions-Policy "camera=(), geolocation=(), microphone=()"
 	}
-
-	@powershell path /install.ps1
-	header @powershell Content-Type "text/plain; charset=utf-8"
 
 	log {
 		output stdout

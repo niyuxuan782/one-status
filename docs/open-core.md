@@ -40,6 +40,6 @@ Status Key 由设备持有。云服务保存密文 envelope、同步 revision、
 - 源码许可证：Apache-2.0
 - Issue 与 Pull Request：<https://github.com/niyuxuan782/one-status>
 - 正式构建：<https://github.com/niyuxuan782/one-status/releases>
-- 官网：<https://os.furesta.top>
+- 官网：<https://niyuxuan782.github.io/one-status/>
 
 正式桌面构建会附带 SHA-256 校验和。未签名的 Preview 构建会在 Release Notes 中明确标注，正式自动更新将在代码签名和发布密钥流程完成后开放。

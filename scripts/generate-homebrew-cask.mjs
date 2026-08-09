@@ -37,7 +37,7 @@ const cask = `cask "one-status" do
 
   name "One Status"
   desc "Personal Agent control center for AI environment sync and handoff"
-  homepage "https://os.furesta.top/"
+  homepage "https://niyuxuan782.github.io/one-status/"
 
   depends_on :macos
 

@@ -3,7 +3,7 @@
 set -eu
 
 REPOSITORY="niyuxuan782/one-status"
-RELEASE_API_URL="${ONE_STATUS_RELEASE_API_URL:-https://api.github.com/repos/${REPOSITORY}/releases/latest}"
+RELEASE_API_URL="${ONE_STATUS_RELEASE_API_URL:-https://niyuxuan782.github.io/one-status/release.json}"
 MODE="desktop"
 TEMP_DIRECTORY=""
 INSTALL_STAGING=""
@@ -22,8 +22,8 @@ usage() {
 Install the latest One Status release.
 
 Usage:
-  curl -fsSL https://os.furesta.top/install.sh | bash
-  curl -fsSL https://os.furesta.top/install.sh | bash -s -- --cli
+  curl -fsSL https://niyuxuan782.github.io/one-status/install.sh | bash
+  curl -fsSL https://niyuxuan782.github.io/one-status/install.sh | bash -s -- --cli
 
 Options:
   --desktop  Install the desktop application (default)
@@ -74,13 +74,13 @@ command -v curl >/dev/null 2>&1 || fail "curl is required. Install curl and run 
 TEMP_DIRECTORY="$(mktemp -d "${TMPDIR:-/tmp}/one-status.XXXXXX")" || fail "could not create a temporary directory."
 RELEASE_JSON="$TEMP_DIRECTORY/release.json"
 
-say "checking the latest GitHub release..."
+say "checking the latest One Status release..."
 if ! curl --fail --location --silent --show-error \
   --header "Accept: application/vnd.github+json" \
   --header "User-Agent: One-Status-Installer" \
   "$RELEASE_API_URL" \
   --output "$RELEASE_JSON"; then
-  fail "could not read the latest release from GitHub. Check your network connection and GitHub API availability."
+  fail "could not read the One Status release manifest. Check your network connection and try again."
 fi
 
 TAG="$(sed -n 's/^[[:space:]]*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/p' "$RELEASE_JSON" | head -n 1)"
@@ -277,7 +277,7 @@ ARCHITECTURE="$(normalized_architecture)"
 case "$OPERATING_SYSTEM" in
   Darwin) PLATFORM="mac" ;;
   Linux) PLATFORM="linux" ;;
-  *) fail "desktop installation supports macOS and Linux here. On Windows, use https://os.furesta.top/install.ps1." ;;
+  *) fail "desktop installation supports macOS and Linux here. On Windows, use https://niyuxuan782.github.io/one-status/install.ps1." ;;
 esac
 
 ASSET_URL="$(find_desktop_asset "$PLATFORM" "$ARCHITECTURE" || true)"

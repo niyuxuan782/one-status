@@ -14,10 +14,9 @@ const assetRules = {
 async function loadRelease() {
   let release = releaseFallback;
   try {
-    const response = await fetch(
-      "https://api.github.com/repos/niyuxuan782/one-status/releases/latest",
-      { headers: { Accept: "application/vnd.github+json" } },
-    );
+    const response = await fetch("./release.json", {
+      headers: { Accept: "application/json" },
+    });
     if (response.ok) release = await response.json();
   } catch {
     // Static fallback keeps every download pointed at the Releases page.

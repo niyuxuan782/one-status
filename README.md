@@ -60,18 +60,18 @@ Demo 会在临时目录中完成以下流程：
 
 ## 安装
 
-官网提供当前版本与平台下载入口：<https://os.furesta.top>
+官网由 GitHub Pages 托管：<https://niyuxuan782.github.io/one-status/>
 
 macOS、Linux 一键安装桌面应用：
 
 ```bash
-curl -fsSL https://os.furesta.top/install.sh | bash
+curl -fsSL https://niyuxuan782.github.io/one-status/install.sh | bash
 ```
 
 Windows PowerShell 一键安装：
 
 ```powershell
-irm https://os.furesta.top/install.ps1 | iex
+irm https://niyuxuan782.github.io/one-status/install.ps1 | iex
 ```
 
 安装器从 [GitHub Releases](https://github.com/niyuxuan782/one-status/releases/latest) 下载对应平台附件，并强制使用同一 Release 的 `SHA256SUMS.txt` 校验。当前桌面版属于未签名 Preview，操作系统会执行正常的安全检查。
@@ -86,7 +86,7 @@ brew install --cask niyuxuan782/tap/one-status
 CLI / MCP 一键安装：
 
 ```bash
-curl -fsSL https://os.furesta.top/install.sh | bash -s -- --cli
+curl -fsSL https://niyuxuan782.github.io/one-status/install.sh | bash -s -- --cli
 one-status app
 ```
 

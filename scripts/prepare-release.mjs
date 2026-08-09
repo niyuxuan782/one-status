@@ -25,5 +25,36 @@ formula = formula
   .replace(/sha256 "[a-f0-9]+"/, `sha256 "${digest}"`);
 await writeFile(formulaPath, formula, "utf8");
 
+const releaseAssetNames = [
+  `One-Status-${version}-linux-x64.AppImage`,
+  `One-Status-${version}-linux-x64.deb`,
+  `One-Status-${version}-mac-arm64.dmg`,
+  `One-Status-${version}-mac-arm64.zip`,
+  `One-Status-${version}-mac-x64.dmg`,
+  `One-Status-${version}-mac-x64.zip`,
+  `One-Status-Portable-${version}-windows-x64.exe`,
+  `One-Status-Setup-${version}-windows-x64.exe`,
+  `one-status-${version}.tgz`,
+  "one-status-cask.rb",
+  "one-status.rb",
+  "SHA256SUMS.txt",
+];
+const releaseBase =
+  `https://github.com/niyuxuan782/one-status/releases/download/v${version}`;
+const releaseManifest = {
+  tag_name: `v${version}`,
+  html_url:
+    `https://github.com/niyuxuan782/one-status/releases/tag/v${version}`,
+  assets: releaseAssetNames.map((name) => ({
+    name,
+    browser_download_url: `${releaseBase}/${name}`,
+  })),
+};
+await writeFile(
+  resolve(root, "apps", "site", "public", "release.json"),
+  `${JSON.stringify(releaseManifest, null, 2)}\n`,
+  "utf8",
+);
+
 console.log(`Prepared ${artifactName}`);
 console.log(`sha256 ${digest}`);

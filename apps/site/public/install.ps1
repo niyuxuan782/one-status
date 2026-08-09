@@ -9,7 +9,7 @@ $Repository = "niyuxuan782/one-status"
 $ReleaseApiUrl = if ($env:ONE_STATUS_RELEASE_API_URL) {
   $env:ONE_STATUS_RELEASE_API_URL
 } else {
-  "https://api.github.com/repos/$Repository/releases/latest"
+  "https://niyuxuan782.github.io/one-status/release.json"
 }
 $TemporaryDirectory = Join-Path ([System.IO.Path]::GetTempPath()) ("one-status-" + [Guid]::NewGuid().ToString("N"))
 
@@ -138,14 +138,14 @@ try {
   [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
   New-Item -ItemType Directory -Path $TemporaryDirectory -Force | Out-Null
 
-  Write-OneStatus "checking the latest GitHub release..."
+  Write-OneStatus "checking the latest One Status release..."
   try {
     $Release = Invoke-RestMethod -UseBasicParsing -Uri $ReleaseApiUrl -Headers @{
       Accept = "application/vnd.github+json"
       "User-Agent" = "One-Status-Installer"
     }
   } catch {
-    Stop-Installer "could not read the latest release from GitHub. Check your network connection and GitHub API availability. $($_.Exception.Message)"
+    Stop-Installer "could not read the One Status release manifest. Check your network connection and try again. $($_.Exception.Message)"
   }
 
   if ($null -eq $Release -or

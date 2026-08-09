@@ -17,27 +17,27 @@
 
 ## 官网与一键安装
 
-官网：<https://os.furesta.top>
+官网：<https://niyuxuan782.github.io/one-status/>
 
 macOS、Linux 桌面版：
 
 ```bash
-curl -fsSL https://os.furesta.top/install.sh | bash
+curl -fsSL https://niyuxuan782.github.io/one-status/install.sh | bash
 ```
 
 Windows 桌面版：
 
 ```powershell
-irm https://os.furesta.top/install.ps1 | iex
+irm https://niyuxuan782.github.io/one-status/install.ps1 | iex
 ```
 
 CLI：
 
 ```bash
-curl -fsSL https://os.furesta.top/install.sh | bash -s -- --cli
+curl -fsSL https://niyuxuan782.github.io/one-status/install.sh | bash -s -- --cli
 ```
 
-安装器读取 GitHub latest Release，下载平台附件和 `SHA256SUMS.txt`，校验成功后再安装。macOS App 安装到 `~/Applications`，Linux AppImage 安装到 `~/.local/bin/one-status-app`，Windows 运行已校验的 NSIS Setup。CLI 模式要求 Node.js 22+。
+安装器从 GitHub Pages 读取当前 Release 清单，再从 GitHub Releases 下载平台附件和 `SHA256SUMS.txt`，校验成功后安装。macOS App 安装到 `~/Applications`，Linux AppImage 安装到 `~/.local/bin/one-status-app`，Windows 运行已校验的 NSIS Setup。CLI 模式要求 Node.js 22+。
 
 ## Desktop App
 

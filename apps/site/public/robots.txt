@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://os.furesta.top/sitemap.xml
+Sitemap: https://niyuxuan782.github.io/one-status/sitemap.xml
