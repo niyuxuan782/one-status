@@ -56,15 +56,14 @@ export async function packageDeviceSidecar({
       "tar",
       [
         "-czf",
-        artifactPath,
-        "-C",
-        stagingDirectory,
+        artifactName,
         executable,
         "THIRD_PARTY_NOTICES.device-sidecar.md",
         "licenses",
       ],
-      { stdio: "inherit" },
+      { cwd: stagingDirectory, stdio: "inherit" },
     );
+    await copyFile(resolve(stagingDirectory, artifactName), artifactPath);
   } finally {
     await rm(stagingDirectory, { force: true, recursive: true });
   }
