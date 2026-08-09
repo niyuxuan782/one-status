@@ -1,14 +1,14 @@
 # One Status Handoff
 
-Generated: 2026-08-09T09:34:44.830Z
+Generated: 2026-08-09T09:53:23.528Z
 
 ## Current Goal
 
-Publish and verify One Status v0.5.0 with the Gateway-first MCP experience.
+Reauthorize and grant the new Gateway actions, then validate Open and Continue on a second physical device.
 
 ## Current Context
 
-One Status v0.5.0 implementation is ready for publication. The local Formula, API, GUI, Codex MCP, and Claude Code MCP run version 0.5.0. Gateway catalog: Calendar 4, GitHub 6, Slack 4 actions. tools_list returns compact inputSchema/readOnly/requiresConfirmation metadata; tools_execute enforces grants, scopes, confirmation, refresh, response normalization, and audit. Real checks passed: 161/161 tests, encrypted two-device demo, desktop/mobile GUI with no console errors, live GitHub viewer, live Google Calendar query with token refresh, and Claude Code using only One Status tools_list. Next: publish Handoff, tag v0.5.0, verify GitHub Release/CI/Pages/Homebrew.
+One Status v0.5.0 is fully released and deployed. Source/tag: 92c2e3ecb8d54b4afa14864eee88125fe37874d9. Release workflow 31306306609 passed all jobs and published 12 assets plus GHCR digest sha256:87cd1f711212d3d5fc8b0a0aacba4870ca41152fa4e9275b3682b8c1b7014989. GitHub Pages shows v0.5.0 and 14 Gateway actions. Homebrew tap commit ab69ba134b84f14da9a75d397139684d315edb4a publishes Formula/Cask 0.5.0; fetch, style, and strict audit passed. Tencent Cloud runs release 20260809T094657Z with API version 0.5.0; public HTTPS, redirect, auth denial, container health, read-only rootfs, non-root user, and SQLite quick_check passed. Local Codex and Claude Code MCP are connected; a real Claude Qwen session used only One Status tools_list. Next: reauthorize Slack for new scopes, grant desired new actions, and validate second-device Open and Continue.
 
 ## Architecture Decisions
 
@@ -42,11 +42,14 @@ One Status v0.5.0 implementation is ready for publication. The local Formula, AP
 - Release workflow success on tag v0.4.0 (run 31301582002)
 - CI workflow success on main 64430d29 (run 31301580210)
 - Pages workflow success on main 64430d29 (run 31301580227)
-- Added 14 controlled Calendar, GitHub, and Slack actions
-- Added Gateway-first MCP instructions and per-action input schemas
-- Enforced confirmed writes with stable API errors and audit events
-- Added one-status handoff preview/publish command
-- Validated 161 tests, encrypted demo, GUI desktop/mobile, live Calendar/GitHub, and Claude Code
+- Publish One Status v0.5.0
+- Published code and Handoff at commit 92c2e3ecb8d54b4afa14864eee88125fe37874d9
+- Published GitHub Release v0.5.0 with 12 checksum-listed assets
+- Release workflow 31306306609 passed verify, four desktop builds, release, and container
+- Published GHCR image digest sha256:87cd1f711212d3d5fc8b0a0aacba4870ca41152fa4e9275b3682b8c1b7014989
+- Updated Homebrew Formula and Cask at tap commit ab69ba134b84f14da9a75d397139684d315edb4a
+- Deployed Tencent Cloud release 20260809T094657Z; API 0.5.0 healthy and SQLite quick_check passed
+- Verified local Codex and Claude Code MCP connections and real Claude tools_list call
 
 ## Next
 
@@ -54,9 +57,8 @@ One Status v0.5.0 implementation is ready for publication. The local Formula, AP
 - Validate Windows and Linux installers on native devices
 - Validate Open and Continue on a second physical device
 - Monitor post-release regression reports; ship patch v0.4.x if needed
-- Publish One Status v0.5.0
-- Publish Handoff commit to main
-- Tag v0.5.0 and verify Release, CI, Pages, and Homebrew tap
+- Reauthorize the existing Slack connection for history, search, and chat scopes
+- Choose additional read actions for Codex and Claude Code in Connections
 
 ## Blocked
 
@@ -65,6 +67,6 @@ One Status v0.5.0 implementation is ready for publication. The local Formula, AP
 ## Git State
 
 - Branch: main
-- Commit: f8c4c487ada883c7b0961a121349122d6e0854ce
-- Dirty: yes
+- Commit: 92c2e3ecb8d54b4afa14864eee88125fe37874d9
+- Dirty: no
 - Tests: not run
