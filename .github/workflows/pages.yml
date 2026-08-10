@@ -6,6 +6,10 @@ on:
     paths:
       - "apps/site/public/**"
       - ".github/workflows/pages.yml"
+      - "scripts/prepare-release.mjs"
+  workflow_run:
+    workflows: ["Release"]
+    types: [completed]
   workflow_dispatch:
 
 permissions:
@@ -19,12 +23,20 @@ concurrency:
 
 jobs:
   deploy:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Pin downloads to the latest published Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/${GITHUB_REPOSITORY}/releases/latest" \
+            --jq '{tag_name, html_url, assets: [.assets[] | {name, browser_download_url}]}' \
+            > apps/site/public/release.json
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

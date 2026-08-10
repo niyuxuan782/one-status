@@ -8,7 +8,7 @@ One Status 是跨设备的个人 AI 控制中心。它自动扫描 Codex、Claud
 设备 -> AI 工具 -> 密钥钱包 -> 可配模型 -> 使用与同步状态
 ```
 
-[官网](https://niyuxuan782.github.io/one-status/) · [下载 v0.8.0](https://github.com/niyuxuan782/one-status/releases/tag/v0.8.0) · [安装文档](docs/installation.md) · [Open Core](docs/open-core.md)
+[官网](https://niyuxuan782.github.io/one-status/) · [下载最新版](https://github.com/niyuxuan782/one-status/releases/latest) · [安装文档](docs/installation.md) · [Open Core](docs/open-core.md)
 
 > 当前桌面导航收敛为：概览、密钥钱包、项目、记忆、连接、安全。Handoff 保留在 CLI 与 Agent 工作流中，Capability Pack 位于连接详情中，记忆由后台持续生成和整理。
 
@@ -154,7 +154,7 @@ one-status app
 
 安装器从 GitHub Releases 下载原生产物并校验 `SHA256SUMS.txt`。CLI 安装会同时安装对应平台的 Device Sidecar。当前桌面包尚未完成 Apple Developer ID notarization 和 Windows Authenticode 签名，操作系统会执行正常的安全检查。
 
-[查看全部 v0.8.0 附件](https://github.com/niyuxuan782/one-status/releases/tag/v0.8.0) · [阅读完整安装文档](docs/installation.md)
+[查看最新 Release 附件](https://github.com/niyuxuan782/one-status/releases/latest) · [阅读完整安装文档](docs/installation.md)
 
 ## 隐私边界
 

@@ -42,7 +42,7 @@ const releaseManifest = {
   })),
 };
 await writeFile(
-  resolve(root, "apps", "site", "public", "release.json"),
+  resolve(root, "dist", "release.json"),
   `${JSON.stringify(releaseManifest, null, 2)}\n`,
   "utf8",
 );
