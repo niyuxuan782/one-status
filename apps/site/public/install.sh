@@ -375,13 +375,10 @@ if [ "$PLATFORM" = "mac" ]; then
     if ! xattr -cr "$INSTALL_STAGING"; then
       fail "could not remove unsupported Finder metadata from the macOS preview build."
     fi
-    if ! codesign --force --deep --sign - "$INSTALL_STAGING"; then
-      fail "could not apply a local ad-hoc signature to the macOS preview build."
-    fi
     if ! codesign --verify --deep --strict "$INSTALL_STAGING"; then
-      fail "the local ad-hoc signature could not be verified; installation has been stopped."
+      fail "the bundled ad-hoc signature is invalid; installation has been stopped."
     fi
-    SIGNATURE_DESCRIPTION="local ad-hoc signature applied (preview build; not notarized)"
+    SIGNATURE_DESCRIPTION="bundled ad-hoc signature verified (preview build; not notarized)"
     LAUNCH_DESCRIPTION="SHA-256 and Bundle ID verified; quarantine was not added to the preview build"
   fi
 

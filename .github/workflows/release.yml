@@ -252,7 +252,7 @@ jobs:
             macOS preview builds use ad-hoc code signing because Developer ID
             and notarization credentials are not configured yet. The one-line
             installer verifies `SHA256SUMS.txt` and the Bundle ID before it
-            applies a local signature to the staged application.
+            clears quarantine and verifies the bundled signature.
           files: release-assets/*
       - name: Update Homebrew tap when configured
         if: ${{ env.HOMEBREW_TAP_TOKEN != '' }}
