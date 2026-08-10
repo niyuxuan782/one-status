@@ -23,6 +23,7 @@ struct Cli {
 #[derive(Clone, Copy, Debug, Subcommand)]
 enum Command {
     Scan,
+    Usage,
     Preview,
     Apply,
     Rollback,
@@ -32,6 +33,7 @@ impl From<Command> for CommandName {
     fn from(value: Command) -> Self {
         match value {
             Command::Scan => Self::Scan,
+            Command::Usage => Self::Usage,
             Command::Preview => Self::Preview,
             Command::Apply => Self::Apply,
             Command::Rollback => Self::Rollback,

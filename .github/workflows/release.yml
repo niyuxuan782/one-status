@@ -211,9 +211,9 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           body: |
-            One Status v0.7 introduces the device and AI tool control center,
-            model sources, confirmed model configuration intents, the Persona
-            Skill, and updated Codex and Claude Code adapters.
+            One Status v0.8.0 introduces the encrypted Key Wallet, the device and
+            AI tool overview, background-generated memory, unified Connections
+            and Capability Packs, and updated Codex and Claude Code adapters.
 
             Every Desktop package embeds the native Device Sidecar. Separate
             Sidecar archives for macOS arm64/x64, Windows x64 and Linux x64

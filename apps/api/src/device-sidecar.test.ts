@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import {
   DeviceSidecarCommandError,
   SidecarModelConfigurationAdapter,
+  SidecarModelUsageReader,
   resolveDeviceSidecarExecutable,
   type SidecarCommand,
   type DeviceSidecarRunner,
@@ -162,5 +163,48 @@ describe("SidecarModelConfigurationAdapter", () => {
       ],
       changes: [expect.objectContaining({ sensitive: true })],
     });
+  });
+});
+
+describe("SidecarModelUsageReader", () => {
+  it("validates and caches redacted model aggregates", async () => {
+    let calls = 0;
+    const runner: DeviceSidecarRunner = {
+      async run<T>(command: SidecarCommand): Promise<T> {
+        calls += 1;
+        expect(command).toBe("usage");
+        return {
+          scannedAt: "2026-08-10T02:00:00Z",
+          scope: "latest-100-session-files-per-tool",
+          filesScanned: 2,
+          truncated: false,
+          entries: [
+            {
+              tool: "codex",
+              modelId: "gpt-5.4",
+              dataSource: "codex-session",
+              inputTokens: 100,
+              cachedInputTokens: 80,
+              cacheCreationInputTokens: 0,
+              outputTokens: 20,
+              requests: 1,
+              latestAt: "2026-08-10T01:59:00Z",
+            },
+          ],
+          warnings: [],
+        } as T;
+      },
+    };
+    const reader = new SidecarModelUsageReader({ runner, cacheTtlMs: 60_000 });
+
+    const [first, second] = await Promise.all([reader.scan(), reader.scan()]);
+
+    expect(first).toEqual(second);
+    expect(first.entries[0]).toMatchObject({
+      modelId: "gpt-5.4",
+      inputTokens: 100,
+    });
+    expect(calls).toBe(1);
+    expect(JSON.stringify(first)).not.toContain("message");
   });
 });

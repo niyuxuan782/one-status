@@ -6,9 +6,12 @@ mod models;
 mod operation;
 mod paths;
 mod security;
+mod usage;
 
 pub use error::{SidecarError, SidecarResult};
-pub use models::{ApplyRequest, CommandName, PreviewRequest, RollbackRequest, ScanRequest};
+pub use models::{
+    ApplyRequest, CommandName, PreviewRequest, RollbackRequest, ScanRequest, UsageRequest,
+};
 
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
@@ -66,6 +69,9 @@ fn execute_inner(command: CommandName, raw_input: &[u8]) -> SidecarResult<Value>
     match command {
         CommandName::Scan => {
             serde_json::to_value(inventory::scan(parse(input)?)?).map_err(SidecarError::serialize)
+        }
+        CommandName::Usage => {
+            serde_json::to_value(usage::scan(parse(input)?)?).map_err(SidecarError::serialize)
         }
         CommandName::Preview => serde_json::to_value(operation::preview(parse(input)?)?)
             .map_err(SidecarError::serialize),

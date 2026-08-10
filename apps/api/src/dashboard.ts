@@ -57,20 +57,14 @@ import type {
 } from "./local-capability-manager.js";
 import type { LocalOnboardingService } from "./onboarding.js";
 import type { DeviceControlService } from "./device-control.js";
+import type { LocalModelUsageSnapshot } from "./device-sidecar.js";
 
 const dashboardPaths = new Set([
   "/",
-  "/status",
   "/projects",
-  "/handoffs",
   "/memory",
-  "/environment",
   "/models",
-  "/capabilities",
-  "/persona",
   "/integrations",
-  "/devices",
-  "/activity",
   "/security",
 ]);
 
@@ -102,6 +96,7 @@ export interface DashboardRuntime {
     DeviceControlService,
     "previewConfiguration" | "queueConfiguration" | "synchronizeCurrentDevice"
   >;
+  modelUsage?: { scan(): Promise<LocalModelUsageSnapshot> };
   onboarding?: Pick<LocalOnboardingService, "login" | "register" | "status">;
   permissionVault: PermissionVault;
   permissionSync?: Pick<PermissionSyncService, "run">;
@@ -196,10 +191,14 @@ export function registerDashboardRoutes(
     if (!authorizeDashboard(request, reply, dashboardSession)) return;
     return dashboardCall(reply, () =>
       withPermissionVault(runtime, async () => {
-        const snapshot = await runtime.backend.getSnapshot();
+        const [snapshot, modelUsage] = await Promise.all([
+          runtime.backend.getSnapshot(),
+          runtime.modelUsage?.scan().catch(() => null) ?? Promise.resolve(null),
+        ]);
         const userId = snapshot.profile.userId;
         return {
           ...snapshot,
+          modelUsage,
           capabilityPacks: listBuiltInCapabilityPacks().map(
             ({ manifest, digest }) => ({ manifest, digest }),
           ),
@@ -398,6 +397,86 @@ export function registerDashboardRoutes(
               updatedAt: now,
             };
           });
+        }),
+      );
+    },
+  );
+
+  app.post(
+    "/v1/dashboard/model-wallet/:sourceId/reveal",
+    async (request, reply) => {
+      reply.headers({
+        "cache-control": "no-store, max-age=0",
+        pragma: "no-cache",
+      });
+      if (!authorizeDashboardWrite(request, reply, dashboardSession, csrfToken)) {
+        return;
+      }
+      const { sourceId } = modelWalletParameterSchema.parse(request.params);
+      const { password } = modelWalletRevealInputSchema.parse(request.body);
+      return dashboardCall(reply, () =>
+        withPermissionVault(runtime, async () => {
+          const snapshot = await runtime.backend.getSnapshot();
+          if (
+            !runtime.permissionVault.verifyModelWalletPassword(
+              snapshot.profile.userId,
+              password,
+            )
+          ) {
+            return reply.code(403).send({
+              error: {
+                code: "invalid_model_wallet_password",
+                message: "Model wallet password is invalid.",
+              },
+            });
+          }
+          const apiKey = runtime.permissionVault.getModelCredential(
+            snapshot.profile.userId,
+            sourceId,
+          );
+          if (!apiKey) {
+            return reply.code(404).send({
+              error: {
+                code: "model_wallet_credential_not_found",
+                message: "Model wallet credential was not found.",
+              },
+            });
+          }
+          return { apiKey, sourceId };
+        }),
+      );
+    },
+  );
+
+  app.post(
+    "/v1/dashboard/model-wallet/password",
+    async (request, reply) => {
+      reply.headers({
+        "cache-control": "no-store, max-age=0",
+        pragma: "no-cache",
+      });
+      if (!authorizeDashboardWrite(request, reply, dashboardSession, csrfToken)) {
+        return;
+      }
+      const input = modelWalletPasswordInputSchema.parse(request.body);
+      return dashboardCall(reply, () =>
+        withPermissionVault(runtime, async () => {
+          const snapshot = await runtime.backend.getSnapshot();
+          if (
+            !runtime.permissionVault.changeModelWalletPassword(
+              snapshot.profile.userId,
+              input.currentPassword,
+              input.newPassword,
+            )
+          ) {
+            return reply.code(403).send({
+              error: {
+                code: "invalid_model_wallet_password",
+                message: "Model wallet password is invalid.",
+              },
+            });
+          }
+          return { changed: true };
         }),
       );
     },
@@ -1713,6 +1792,18 @@ const modelControlParameterSchema = z.object({
     .max(200)
     .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/),
 });
+const modelWalletParameterSchema = z.object({
+  sourceId: modelControlParameterSchema.shape.id,
+});
+const modelWalletRevealInputSchema = z
+  .object({ password: z.string().min(1).max(256) })
+  .strict();
+const modelWalletPasswordInputSchema = z
+  .object({
+    currentPassword: z.string().min(1).max(256),
+    newPassword: z.string().min(6).max(256),
+  })
+  .strict();
 const personaEventParameterSchema = z.object({
   id: z.string().min(1).max(200),
 });

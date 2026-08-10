@@ -1,7 +1,7 @@
 {
   "name": "One Status",
   "short_name": "One Status",
-  "description": "Cross-device control center for AI tools, models, Persona, and work state",
+  "description": "Cross-device control center for AI tools, encrypted keys, models, memory, and connections",
   "start_url": "./",
   "display": "standalone",
   "background_color": "#111315",

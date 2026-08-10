@@ -1,6 +1,6 @@
 # One Status Device Sidecar
 
-`one-status-device-sidecar` is the local, privilege-limited configuration process for One Status v0.7. It scans Codex, Claude Code, and Cursor model state, then previews and applies narrow model-routing changes with atomic writes and rollback records.
+`one-status-device-sidecar` is the local, privilege-limited configuration process for One Status v0.8.0. It scans Codex, Claude Code, and Cursor model state, then previews and applies narrow model-routing changes with atomic writes and rollback records.
 
 ## JSON protocol
 

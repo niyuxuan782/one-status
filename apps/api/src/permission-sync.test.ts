@@ -45,6 +45,11 @@ describe("Permission Vault encrypted sync", () => {
       "third-party-a",
       "third-party-model-secret",
     );
+    expect(first.verifyModelWalletPassword("user-1", "123456")).toBe(true);
+    expect(
+      first.changeModelWalletPassword("user-1", "123456", "654321"),
+    ).toBe(true);
+    const walletPassword = first.exportBundle("user-1").walletPassword;
     await firstSync.run(() => undefined);
 
     const persisted = JSON.stringify(backend.status.permissions.vault);
@@ -67,6 +72,11 @@ describe("Permission Vault encrypted sync", () => {
     expect(second.getModelCredential("user-1", "third-party-a")).toBe(
       "third-party-model-secret",
     );
+    expect(second.exportBundle("user-1").walletPassword).toEqual(
+      walletPassword,
+    );
+    expect(second.verifyModelWalletPassword("user-1", "123456")).toBe(false);
+    expect(second.verifyModelWalletPassword("user-1", "654321")).toBe(true);
 
     await secondSync.run(() => {
       second.deleteConnection("user-1", connection.id);
@@ -99,6 +109,8 @@ describe("Permission Vault encrypted sync", () => {
   });
 
   it("recovers a single-use refresh race from another device", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-09T12:00:00.000Z"));
     const backend = new MemoryBackend();
     const first = createVault(7);
     const second = createVault(8);

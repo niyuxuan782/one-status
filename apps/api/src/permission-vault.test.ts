@@ -44,6 +44,70 @@ describe("Permission Vault", () => {
     vault.close();
   });
 
+  it("keeps repeated credential discovery idempotent", () => {
+    const vault = new PermissionVault({
+      path: ":memory:",
+      key: new Uint8Array(32).fill(22),
+    });
+    expect(
+      vault.setModelCredential("user-1", "discovered-source", "same-secret"),
+    ).toBe(true);
+    const first = vault.listModelCredentialStatus("user-1")[0];
+
+    expect(
+      vault.setModelCredential("user-1", "discovered-source", "same-secret"),
+    ).toBe(false);
+    expect(vault.listModelCredentialStatus("user-1")[0]).toEqual(first);
+    expect(
+      vault.setModelCredential("user-1", "discovered-source", "new-secret"),
+    ).toBe(true);
+    expect(vault.getModelCredential("user-1", "discovered-source")).toBe(
+      "new-secret",
+    );
+    vault.close();
+  });
+
+  it("gates wallet reveal with a persisted scrypt verifier", async () => {
+    const directory = await mkdtemp(
+      join(tmpdir(), "one-status-wallet-password-"),
+    );
+    directories.push(directory);
+    const path = join(directory, "permissions.sqlite");
+    const vault = new PermissionVault({
+      path,
+      keyPath: join(directory, "permission.key"),
+    });
+
+    expect(vault.verifyModelWalletPassword("user-1", "wrong-password")).toBe(
+      false,
+    );
+    expect(vault.verifyModelWalletPassword("user-1", "123456")).toBe(true);
+    expect(
+      vault.changeModelWalletPassword("user-1", "wrong-password", "654321"),
+    ).toBe(false);
+    expect(
+      vault.changeModelWalletPassword("user-1", "123456", "654321"),
+    ).toBe(true);
+    expect(vault.verifyModelWalletPassword("user-1", "123456")).toBe(false);
+    expect(vault.verifyModelWalletPassword("user-1", "654321")).toBe(true);
+    expect(vault.exportBundle("user-1").walletPassword).toMatchObject({
+      salt: expect.stringMatching(/^[A-Za-z0-9_-]{22}$/),
+      verifier: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/),
+    });
+    vault.close();
+
+    const persisted = await readFile(path, "utf8");
+    expect(persisted).not.toContain("123456");
+    expect(persisted).not.toContain("654321");
+    const reopened = new PermissionVault({
+      path,
+      keyPath: join(directory, "permission.key"),
+    });
+    expect(reopened.verifyModelWalletPassword("user-1", "123456")).toBe(false);
+    expect(reopened.verifyModelWalletPassword("user-1", "654321")).toBe(true);
+    reopened.close();
+  });
+
   it("encrypts model source API keys and exposes availability metadata", () => {
     const vault = new PermissionVault({
       key: new Uint8Array(32).fill(31),

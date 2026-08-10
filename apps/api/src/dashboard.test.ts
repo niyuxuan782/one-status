@@ -92,7 +92,12 @@ describe("local dashboard", () => {
     });
     expect(page.statusCode).toBe(200);
     expect(page.body).toContain("One Status");
-    expect(page.body).toContain("连接与权限");
+    expect(page.body).toContain("密钥钱包");
+    expect(page.body).toContain("连接");
+    expect(page.body.match(/class="nav-link"/g)).toHaveLength(6);
+    expect(page.body).not.toContain('href="/persona"');
+    expect(page.body).not.toContain('href="/capabilities"');
+    expect(page.body).not.toContain('href="/handoffs"');
     const setCookie = page.headers["set-cookie"]!;
     expect(setCookie).toContain("SameSite=Lax");
     const cookie = (Array.isArray(setCookie) ? setCookie[0]! : setCookie).split(
@@ -260,6 +265,43 @@ describe("local dashboard", () => {
     ).toBeUndefined();
   });
 
+  it("serves the six-page control center and removes legacy page entries", async () => {
+    const script = await app.inject({
+      method: "GET",
+      url: "/assets/dashboard.js",
+    });
+    expect(script.statusCode).toBe(200);
+    expect(script.body).toContain("安装到 Agent");
+    expect(script.body).not.toContain("Agent 能力与安装目标");
+    expect(script.body).toContain("用户细节");
+    expect(script.body).toContain("观察记录");
+    expect(script.body).toContain("记录策略");
+    expect(script.body).toContain("/v1/dashboard/model-wallet/");
+    for (const label of ["密钥钱包", "项目", "记忆", "连接", "安全"]) {
+      expect(script.body).not.toContain(`sectionHeader("${label}"`);
+    }
+    expect(script.body).toContain("function pageLead");
+    expect(script.body).not.toContain('"/persona": { label:');
+    expect(script.body).not.toContain('"/capabilities": { label:');
+
+    for (const path of [
+      "/status",
+      "/handoffs",
+      "/environment",
+      "/capabilities",
+      "/persona",
+      "/devices",
+      "/activity",
+    ]) {
+      const response = await app.inject({
+        method: "GET",
+        url: path,
+        headers: { accept: "text/html", host: "127.0.0.1:8787" },
+      });
+      expect(response.statusCode, path).toBe(404);
+    }
+  });
+
   it("rejects DNS rebinding hosts", async () => {
     const response = await app.inject({
       method: "GET",
@@ -361,7 +403,7 @@ describe("local dashboard", () => {
     expect(backend.status.tasks["phase:oauth"]).toBeUndefined();
   });
 
-  it("edits Persona events and recording policy through the dashboard", async () => {
+  it("edits memory observations and recording policy through the dashboard", async () => {
     recordPersonaEvent(
       backend.status,
       {
@@ -376,7 +418,7 @@ describe("local dashboard", () => {
     );
     const page = await app.inject({
       method: "GET",
-      url: "/persona",
+      url: "/memory",
       headers: { accept: "text/html", host: "127.0.0.1:8787" },
     });
     const setCookie = page.headers["set-cookie"]!;
@@ -1707,7 +1749,7 @@ describe("local dashboard", () => {
   it("protects local project mapping and Handoff writes", async () => {
     const page = await app.inject({
       method: "GET",
-      url: "/handoffs",
+      url: "/projects",
       headers: { accept: "text/html", host: "127.0.0.1:8787" },
     });
     expect(page.statusCode).toBe(200);

@@ -14,8 +14,11 @@ import type {
   LocalAgentAsset,
   LocalInventoryService,
   LocalInventorySnapshot,
+  LocalModelCredentialDiscovery,
 } from "./local-inventory.js";
+import { localModelSourceId } from "./local-inventory.js";
 import type { PermissionVault } from "./permission-vault.js";
+import type { LocalModelUsageSnapshot } from "./device-sidecar.js";
 
 const APPROVAL_TTL_MS = 10 * 60 * 1_000;
 const CLAIM_LEASE_MS = 2 * 60 * 1_000;
@@ -92,12 +95,14 @@ export class DeviceControlService {
 
   constructor(
     private readonly backend: DashboardBackend,
-    private readonly inventory: Pick<LocalInventoryService, "refresh">,
+    private readonly inventory: Pick<LocalInventoryService, "refresh"> &
+      Partial<Pick<LocalInventoryService, "discoverModelCredentials">>,
     private readonly permissionVault: Pick<
       PermissionVault,
       "getModelCredential" | "hasModelCredential"
-    >,
+    > & Partial<Pick<PermissionVault, "setModelCredential">>,
     private readonly configurator: ModelConfigurationAdapter,
+    private readonly modelUsage?: { scan(): Promise<LocalModelUsageSnapshot> },
   ) {}
 
   synchronizeCurrentDevice(): Promise<DashboardStatusSnapshot> {
@@ -289,24 +294,50 @@ export class DeviceControlService {
   }
 
   async #synchronize(): Promise<DashboardStatusSnapshot> {
-    const inventory = await this.inventory.refresh();
+    const [inventory, modelUsage] = await Promise.all([
+      this.inventory.refresh(),
+      this.modelUsage?.scan().catch(() => undefined) ??
+        Promise.resolve(undefined),
+    ]);
     let snapshot = await this.backend.getSnapshot();
-    const report = buildDeviceReport(snapshot, inventory);
+    let discoveries: LocalModelCredentialDiscovery[] = [];
+    if (
+      this.inventory.discoverModelCredentials &&
+      this.permissionVault.setModelCredential
+    ) {
+      discoveries = await this.inventory.discoverModelCredentials();
+      for (const discovery of discoveries) {
+        this.permissionVault.setModelCredential(
+          snapshot.profile.userId,
+          discovery.sourceId,
+          discovery.apiKey,
+        );
+      }
+    }
+    const report = buildDeviceReport(snapshot, inventory, modelUsage);
     const previousReport = snapshot.status.deviceControl.reports[report.deviceId];
     const credentialsChanged = modelCredentialStatusChanged(
       snapshot.status.deviceControl.sources,
       snapshot.profile.userId,
       this.permissionVault,
     );
+    const discoveryCatalogChanged = credentialDiscoveryCatalogChanged(
+      snapshot.status.deviceControl,
+      discoveries,
+    );
     const shouldPublish =
       !previousReport ||
+      (!previousReport.modelUsage && Boolean(report.modelUsage)) ||
       !sameReport(previousReport, report) ||
       Date.now() - Date.parse(previousReport.reportedAt) >= REPORT_REFRESH_MS;
-    if (shouldPublish || credentialsChanged) {
+    if (shouldPublish || credentialsChanged || discoveryCatalogChanged) {
       snapshot = await this.backend.mutateStatus((status) => {
         if (shouldPublish) {
           mergeDiscoveredCatalog(status.deviceControl, report, inventory);
           status.deviceControl.reports[report.deviceId] = report;
+        }
+        if (discoveryCatalogChanged) {
+          mergeCredentialDiscoveries(status.deviceControl, discoveries);
         }
         reconcileModelCredentialStatus(
           status.deviceControl.sources,
@@ -516,6 +547,7 @@ function clearIntentClaim(intent: ConfigurationIntent): void {
 function buildDeviceReport(
   snapshot: DashboardStatusSnapshot,
   inventory: LocalInventorySnapshot,
+  modelUsage?: LocalModelUsageSnapshot,
 ): DeviceReport {
   const previousReport =
     snapshot.status.deviceControl.reports[snapshot.profile.deviceId];
@@ -531,6 +563,27 @@ function buildDeviceReport(
     osVersion: release(),
     architecture: arch(),
     backgroundVersion: ONE_STATUS_VERSION,
+    ...(modelUsage
+      ? {
+          modelUsage: {
+            scannedAt: modelUsage.scannedAt,
+            scope: modelUsage.scope,
+            filesScanned: modelUsage.filesScanned,
+            truncated: modelUsage.truncated,
+            entries: modelUsage.entries.map((entry) => ({
+              toolId: entry.tool,
+              modelId: entry.modelId,
+              dataSource: entry.dataSource,
+              inputTokens: entry.inputTokens,
+              cachedInputTokens: entry.cachedInputTokens,
+              cacheCreationInputTokens: entry.cacheCreationInputTokens,
+              outputTokens: entry.outputTokens,
+              requests: entry.requests,
+              ...(entry.latestAt ? { latestAt: entry.latestAt } : {}),
+            })),
+          },
+        }
+      : {}),
     tools: inventory.agents.map((agent) => {
       const previous = previousReport?.tools.find(
         (entry) => entry.toolId === agent.id,
@@ -539,7 +592,7 @@ function buildDeviceReport(
         ? snapshot.status.deviceControl.sources[previous.sourceId]
         : undefined;
       const discoveredSourceId = agent.model
-        ? normalizeControlId(agent.model.providerId)
+        ? localModelSourceId(agent.model)
         : undefined;
       const knownModel = agent.model?.modelId
         ? Object.values(snapshot.status.deviceControl.models).find(
@@ -585,7 +638,7 @@ function buildToolReport(
   const sourceId = model
     ? keepManagedSource
       ? previousSource!.id
-      : knownModel?.sourceId ?? normalizeControlId(model.providerId)
+      : knownModel?.sourceId ?? localModelSourceId(model)
     : undefined;
   const modelRef =
     model?.modelId && sourceId
@@ -654,7 +707,7 @@ function mergeDiscoveredCatalog(
     const sourceId =
       reportedTool?.sourceId && state.sources[reportedTool.sourceId]
         ? reportedTool.sourceId
-        : normalizeControlId(agent.model.providerId);
+        : localModelSourceId(agent.model);
     const existingSource = state.sources[sourceId];
     const supportedTools = uniqueTools([
       ...(existingSource?.supportedTools ?? []),
@@ -711,6 +764,186 @@ function mergeDiscoveredCatalog(
       updatedAt: now,
     };
   }
+}
+
+function credentialDiscoveryCatalogChanged(
+  state: DashboardStatusSnapshot["status"]["deviceControl"],
+  discoveries: LocalModelCredentialDiscovery[],
+): boolean {
+  return discoveries.some((discovery) => {
+    const source = state.sources[discovery.sourceId];
+    const model = discovery.model;
+    const legacySourceId = localModelSourceId({ providerId: model.providerId });
+    const legacySource = state.sources[legacySourceId];
+    if (
+      legacySourceId !== discovery.sourceId &&
+      legacySource &&
+      legacySource.credentialStatus !== "available" &&
+      legacySource.protocol === model.protocol &&
+      effectiveEndpoint(legacySource) === normalizedEndpoint(model.endpoint)
+    ) {
+      return true;
+    }
+    if (
+      !source ||
+      source.label !== model.providerLabel ||
+      source.kind !== model.sourceKind ||
+      source.protocol !== model.protocol ||
+      source.endpoint !== model.endpoint ||
+      source.credentialStatus !== "available" ||
+      !source.supportedTools.includes(discovery.toolId)
+    ) {
+      return true;
+    }
+    if (!model.modelId) return false;
+    const modelId = modelControlId(discovery.sourceId, model.modelId);
+    const definition = state.models[modelId];
+    return (
+      !definition ||
+      definition.modelId !== model.modelId ||
+      !definition.supportedTools.includes(discovery.toolId)
+    );
+  });
+}
+
+function mergeCredentialDiscoveries(
+  state: DashboardStatusSnapshot["status"]["deviceControl"],
+  discoveries: LocalModelCredentialDiscovery[],
+): void {
+  const now = new Date().toISOString();
+  for (const discovery of discoveries) {
+    const model = discovery.model;
+    const existingSource = state.sources[discovery.sourceId];
+    const nextSource: ModelSource = {
+      ...(existingSource ?? {
+        id: discovery.sourceId,
+        createdAt: now,
+      }),
+      id: discovery.sourceId,
+      label: model.providerLabel,
+      kind: model.sourceKind,
+      protocol: model.protocol,
+      ...(model.endpoint ? { endpoint: model.endpoint } : {}),
+      supportedTools: uniqueTools([
+        ...(existingSource?.supportedTools ?? []),
+        discovery.toolId,
+      ]),
+      credentialRef: `model-source:${discovery.sourceId}`,
+      credentialStatus: "available",
+      lastVerifiedAt: existingSource?.lastVerifiedAt ?? now,
+      updatedAt: now,
+    };
+    if (!model.endpoint) delete nextSource.endpoint;
+    state.sources[discovery.sourceId] = nextSource;
+    if (!model.modelId) continue;
+    const id = modelControlId(discovery.sourceId, model.modelId);
+    const existingModel = state.models[id];
+    state.models[id] = {
+      ...(existingModel ?? {
+        id,
+        sourceId: discovery.sourceId,
+        createdAt: now,
+      }),
+      id,
+      sourceId: discovery.sourceId,
+      name: model.modelId,
+      modelId: model.modelId,
+      supportedTools: uniqueTools([
+        ...(existingModel?.supportedTools ?? []),
+        discovery.toolId,
+      ]),
+      updatedAt: now,
+    };
+    migrateLegacyDiscoveredSource(state, discovery, now);
+  }
+}
+
+function migrateLegacyDiscoveredSource(
+  state: DashboardStatusSnapshot["status"]["deviceControl"],
+  discovery: LocalModelCredentialDiscovery,
+  now: string,
+): void {
+  const legacySourceId = localModelSourceId({
+    providerId: discovery.model.providerId,
+  });
+  if (legacySourceId === discovery.sourceId) return;
+  const legacySource = state.sources[legacySourceId];
+  const targetSource = state.sources[discovery.sourceId];
+  if (
+    !legacySource ||
+    !targetSource ||
+    legacySource.credentialStatus === "available" ||
+    legacySource.protocol !== discovery.model.protocol ||
+    effectiveEndpoint(legacySource) !==
+      normalizedEndpoint(discovery.model.endpoint)
+  ) {
+    return;
+  }
+
+  targetSource.supportedTools = uniqueTools([
+    ...targetSource.supportedTools,
+    ...legacySource.supportedTools,
+  ]);
+  targetSource.createdAt =
+    Date.parse(legacySource.createdAt) < Date.parse(targetSource.createdAt)
+      ? legacySource.createdAt
+      : targetSource.createdAt;
+  targetSource.updatedAt = now;
+
+  const modelIds = new Map<string, string>();
+  for (const [legacyModelId, legacyModel] of Object.entries(state.models)) {
+    if (legacyModel.sourceId !== legacySourceId) continue;
+    const targetModelId = modelControlId(discovery.sourceId, legacyModel.modelId);
+    const targetModel = state.models[targetModelId];
+    state.models[targetModelId] = {
+      ...(targetModel ?? legacyModel),
+      id: targetModelId,
+      sourceId: discovery.sourceId,
+      name: targetModel?.name ?? legacyModel.name,
+      supportedTools: uniqueTools([
+        ...(targetModel?.supportedTools ?? []),
+        ...legacyModel.supportedTools,
+      ]),
+      createdAt:
+        targetModel &&
+        Date.parse(targetModel.createdAt) < Date.parse(legacyModel.createdAt)
+          ? targetModel.createdAt
+          : legacyModel.createdAt,
+      updatedAt: now,
+    };
+    modelIds.set(legacyModelId, targetModelId);
+    delete state.models[legacyModelId];
+  }
+
+  for (const report of Object.values(state.reports)) {
+    for (const tool of report.tools) {
+      if (tool.sourceId === legacySourceId) tool.sourceId = discovery.sourceId;
+      if (tool.currentModelRef && modelIds.has(tool.currentModelRef)) {
+        tool.currentModelRef = modelIds.get(tool.currentModelRef)!;
+      }
+    }
+  }
+  for (const intent of Object.values(state.intents)) {
+    if (intent.sourceId === legacySourceId) intent.sourceId = discovery.sourceId;
+    if (modelIds.has(intent.modelId)) intent.modelId = modelIds.get(intent.modelId)!;
+    if (intent.previous?.sourceId === legacySourceId) {
+      intent.previous.sourceId = discovery.sourceId;
+    }
+    if (intent.configuration?.source.id === legacySourceId) {
+      intent.configuration.source.id = discovery.sourceId;
+      intent.configuration.source.credentialRef =
+        `model-source:${discovery.sourceId}`;
+      intent.configuration.source.credentialStatus = "available";
+      intent.configuration.model.sourceId = discovery.sourceId;
+      const migratedModelId = modelIds.get(intent.configuration.model.id);
+      if (migratedModelId) intent.configuration.model.id = migratedModelId;
+    }
+  }
+  delete state.sources[legacySourceId];
+}
+
+function normalizedEndpoint(endpoint?: string): string | undefined {
+  return endpoint?.replace(/\/$/, "");
 }
 
 function modelCredentialStatusChanged(
@@ -771,8 +1004,9 @@ function uniqueTools(tools: AgentToolId[]): AgentToolId[] {
 }
 
 function sameReport(left: DeviceReport, right: DeviceReport): boolean {
-  return JSON.stringify({ ...left, reportedAt: "" }) ===
-    JSON.stringify({ ...right, reportedAt: "" });
+  const { reportedAt: _leftReportedAt, modelUsage: _leftUsage, ...leftCore } = left;
+  const { reportedAt: _rightReportedAt, modelUsage: _rightUsage, ...rightCore } = right;
+  return JSON.stringify(leftCore) === JSON.stringify(rightCore);
 }
 
 function configurationDigest(value: unknown): string {
@@ -824,15 +1058,6 @@ function configurationApprovalState(
       };
     }),
   };
-}
-
-function normalizeControlId(value: string): string {
-  const normalized = value
-    .trim()
-    .replace(/[^A-Za-z0-9._:-]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 160);
-  return normalized || `source-${createHash("sha256").update(value).digest("hex").slice(0, 12)}`;
 }
 
 function modelControlId(sourceId: string, modelId: string): string {

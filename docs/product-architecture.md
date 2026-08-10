@@ -1,12 +1,12 @@
-# One Status 产品架构 v0.3
+# One Status 产品架构 v0.8
 
 ## 产品定义
 
-> One Status 是面向多 Agent 的通用能力包、身份授权和状态同步层。它将 MCP、Skills、Markdown、Plugins 与原生扩展统一成一次定义、多端适配、一次授权、处处可用的 Agent 能力。
+> One Status 是跨设备的个人 AI 控制中心。它统一管理设备上的 AI 工具、加密密钥、模型、记忆、连接、项目与工作状态。
 
 第一阶段体验目标：
 
-> 换设备，换 Agent，继续当前工作。
+> 一处管理所有设备上的 AI 工具、密钥、模型和记忆。
 
 ## 运行拓扑
 
@@ -14,6 +14,8 @@
 flowchart TD
     Desktop["One Status Desktop"] --> Local["Local Background Service"]
     Local --> Inventory["Read-only Local Inventory"]
+    Local --> Wallet["E2EE Key Wallet"]
+    Local --> Usage["Bounded Model Usage Scanner"]
     Local --> Adapters["Codex / Claude Code Adapters"]
     Local --> Packs["Capability Pack Compiler"]
     Local <--> Cloud["Encrypted One Status Cloud"]
@@ -22,6 +24,23 @@ flowchart TD
 ```
 
 桌面应用负责确认和操作，本机后台服务负责扫描、同步、Adapter 与 Handoff。云端保存加密状态和最少量路由元数据。GitHub保存代码、项目文档和用户确认发布的 Handoff 文件。
+
+## 密钥钱包
+
+每台设备后台只读扫描 Codex 的全部 `model_providers`、Claude Code 活动设置、环境变量引用，以及 CC Switch 数据库中保存的 Codex / Claude Profile。API Key 在本机短时敏感通道中完成指纹计算和 Vault 写入；公开 Inventory、日志与 Agent 上下文只接收脱敏元数据。
+
+```text
+Local config / CC Switch profile
+  -> local credential discovery
+  -> domain-separated SHA-256 fingerprint
+  -> encrypted Permission Vault entry
+  -> E2EE Vault bundle sync
+  -> source ID + model metadata in encrypted Status
+```
+
+查看或复制密钥需要钱包密码。初始密码为 `123456`，用户可以在安全页修改。钱包只同步随机 salt 和 scrypt verifier，不保存密码明文。模型切换传递 source ID，由目标设备本地解密密钥并原子写入 Agent 配置。
+
+模型用量由 Device Sidecar 有界读取 Codex `token_count` 与 Claude assistant `message.usage`，按消息或事件去重后聚合到模型。设备报告每 5 分钟最多同步一次脱敏汇总，原始会话和文件路径继续留在本机。
 
 ## Capability Pack
 
@@ -67,7 +86,8 @@ Agent request
 | 设备在线时间 | One Status Cloud | 是 |
 | Capability Pack manifest、版本、摘要和安装意图 | One Status E2EE；实际输出留在设备 | 否 |
 | Skills、Rules、MCP Manifest | 本机；确认后由 Adapter 生成 | 默认否 |
-| OAuth Token、Provider Secret | 本机 Permission Vault；二次加密 bundle 随 Status 同步 | 否 |
+| OAuth Token、模型 API Key、钱包 verifier | 本机 Permission Vault；二次加密 bundle 随 Status 同步 | 否 |
+| 模型 Token 汇总、请求数、数据来源和统计时间 | Device Sidecar 聚合；随加密设备报告同步 | 否 |
 | 项目代码、大文件、`HANDOFF.md` | GitHub | 受 GitHub 仓库权限控制 |
 | 本机绝对路径 | 每台设备本地映射 | 否 |
 | 原始 Agent 会话 | 本机 | 否 |
@@ -79,6 +99,7 @@ Agent request
 首版扫描器只读以下来源：
 
 - Codex、Claude Code 与 Cursor 安装状态
+- Codex 全部 Provider、Claude 活动配置与 CC Switch 保存的 Profile
 - Codex 和 Claude Code 已登记的项目目录
 - 用户通过 `ONE_STATUS_SCAN_ROOTS` 明确指定的项目根目录
 - MCP 结构化清单
@@ -93,7 +114,8 @@ Agent request
 - MCP env 仅保留变量名
 - HTTP endpoint 删除 query 和 fragment
 - Skill 与 Rule 内容不进入 Inventory response
-- 扫描结果只进入回环 Dashboard，不自动写入 Status
+- 公开清单只进入回环 Dashboard；模型元数据进入加密 Status
+- API Key 经本机敏感通道直接进入 Permission Vault，不进入公开清单
 
 默认从结构化配置生成清单。需要调用 Agent CLI 补充运行时清单时，可以临时设置 `ONE_STATUS_INVENTORY_RUN_AGENT_COMMANDS=true`；该选项不会作为后台服务默认值。
 
@@ -147,16 +169,12 @@ Git、测试和 Secret 结果由程序采集。Agent 只负责生成目标、决
 
 | 页面 | 当前状态 |
 | --- | --- |
-| Home | 已有 Status、项目、记忆、连接与设备摘要 |
-| Projects | 已有便携项目；本机 checkout 可在 Handoff 页面关联 |
-| Handoff | 已有本机映射、Secret 预览、显式 commit/push、精确 commit clone/update、Agent 启动和本机活动记录 |
-| Agents 与工具 | 已有只读 Agent、MCP、Skills、Plugins、Rules Inventory |
-| Capability Packs | 已有内置目录、目标平台选择、E2EE 安装意图和 Adapter 编译预览 |
-| Memory | 已有来源、候选确认、编辑、删除与 Agent 默认过滤 |
-| Connections | 14 个 Provider 与 69 个固定 actions；Google Workspace、GitHub、Slack 已完成真实调用验收，新增 Provider 等待各自 OAuth App 凭据验收 |
-| Devices | 已有稳定 installation ID、活动时间、在线状态与撤销 |
-| Activity | 已有本机 Handoff 与脱敏工具授权审计时间线；同步事件待加入 |
-| Security | 已有加密状态、Permission Vault、设备、Agent grants 视图；密钥轮换待加入 |
+| 概览 | 设备在线状态、已安装 AI 工具、当前模型、可配模型与跨设备模型用量 |
+| 密钥钱包 | 自动发现的 API Key、Endpoint、协议、模型、查看/复制验证与免密码模型切换 |
+| 项目 | 便携项目、本机映射、Secret 预览、Publish Handoff 与 Open and Continue |
+| 记忆 | Memory、用户细节、观察记录、候选确认、编辑、删除和记录策略 |
+| 连接 | 14 个 Provider、固定 actions、OAuth、Agent 权限与对应能力的安装目标 |
+| 安全 | 加密状态、钱包密码、Permission Vault、设备和 Agent grants |
 
 ## 第一阶段验收
 

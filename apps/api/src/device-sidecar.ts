@@ -17,7 +17,7 @@ import { z } from "zod";
 const COMMAND_TIMEOUT_MS = 20_000;
 const MAX_OUTPUT_BYTES = 2 * 1024 * 1024;
 
-export type SidecarCommand = "apply" | "preview" | "rollback" | "scan";
+export type SidecarCommand = "apply" | "preview" | "rollback" | "scan" | "usage";
 
 interface SidecarSuccess<T> {
   schemaVersion: 1;
@@ -280,6 +280,65 @@ export class SidecarModelConfigurationAdapter
   }
 }
 
+export interface LocalModelUsageSnapshot {
+  scannedAt: string;
+  scope: string;
+  filesScanned: number;
+  truncated: boolean;
+  entries: Array<{
+    tool: AgentToolId;
+    modelId: string;
+    dataSource: "claude-session" | "codex-session";
+    inputTokens: number;
+    cachedInputTokens: number;
+    cacheCreationInputTokens: number;
+    outputTokens: number;
+    requests: number;
+    latestAt?: string;
+  }>;
+  warnings: string[];
+}
+
+export class SidecarModelUsageReader {
+  readonly #runner: DeviceSidecarRunner;
+  readonly #cacheTtlMs: number;
+  #cached?: { expiresAt: number; value: LocalModelUsageSnapshot };
+  #pending?: Promise<LocalModelUsageSnapshot>;
+
+  constructor(
+    options: DeviceSidecarOptions & { cacheTtlMs?: number } = {},
+  ) {
+    this.#runner =
+      options.runner ??
+      new DeviceSidecarProcessRunner({
+        ...(options.environment ? { environment: options.environment } : {}),
+        ...(options.executable ? { executable: options.executable } : {}),
+      });
+    this.#cacheTtlMs = options.cacheTtlMs ?? 30_000;
+  }
+
+  async scan(): Promise<LocalModelUsageSnapshot> {
+    if (this.#cached && this.#cached.expiresAt > Date.now()) {
+      return this.#cached.value;
+    }
+    if (this.#pending) return this.#pending;
+    this.#pending = this.#runner
+      .run("usage", { maxFilesPerTool: 100 })
+      .then((value) => sidecarUsageSchema.parse(value))
+      .then((value) => {
+        this.#cached = {
+          expiresAt: Date.now() + this.#cacheTtlMs,
+          value,
+        };
+        return value;
+      })
+      .finally(() => {
+        this.#pending = undefined;
+      });
+    return this.#pending;
+  }
+}
+
 function sidecarInvocation(input: ModelConfigurationInput): {
   environment?: NodeJS.ProcessEnv;
   request: { tool: AgentToolId; profile: Record<string, unknown> };
@@ -350,6 +409,34 @@ const sidecarApplySchema = z
     transactionId: z.string().min(20).max(96),
     tool: z.enum(["codex", "claude-code", "cursor"]),
     targets: z.array(sidecarPlanTargetSchema).min(1).max(8),
+  })
+  .strict();
+
+const tokenCountSchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
+const sidecarUsageSchema = z
+  .object({
+    scannedAt: z.string().min(1).max(64),
+    scope: z.string().min(1).max(120),
+    filesScanned: z.number().int().nonnegative().max(1_000),
+    truncated: z.boolean(),
+    entries: z
+      .array(
+        z
+          .object({
+            tool: z.enum(["codex", "claude-code"]),
+            modelId: z.string().min(1).max(300),
+            dataSource: z.enum(["codex-session", "claude-session"]),
+            inputTokens: tokenCountSchema,
+            cachedInputTokens: tokenCountSchema,
+            cacheCreationInputTokens: tokenCountSchema,
+            outputTokens: tokenCountSchema,
+            requests: tokenCountSchema,
+            latestAt: z.string().min(1).max(64).optional(),
+          })
+          .strict(),
+      )
+      .max(2_000),
+    warnings: z.array(z.string().max(500)).max(100).default([]),
   })
   .strict();
 

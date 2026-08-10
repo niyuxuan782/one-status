@@ -1,21 +1,21 @@
 # One Status 安装与发布
 
-当前 Release 为 `v0.7.0`。设备模型控制、Persona、独立 Device Sidecar 与跨平台安装产物使用同一版本号。
+当前 Release 为 `v0.8.0`。设备与 AI 工具概览、端到端加密密钥钱包、后台记忆、独立 Device Sidecar 与跨平台安装产物使用同一版本号。
 
 ## 交付物
 
 | 交付物 | 生成命令 | 入口 |
 | --- | --- | --- |
 | 单文件 CLI | `pnpm build` | `dist/one-status.js` |
-| npm tarball | `pnpm pack:local` | `dist/one-status-0.7.0.tgz` |
+| npm tarball | `pnpm pack:local` | `dist/one-status-0.8.0.tgz` |
 | Desktop App | `pnpm --filter @one-status/desktop dist` | `apps/desktop/release` |
 | Device Sidecar | Release 原生矩阵 | `one-status-device-sidecar-<version>-<platform>-<arch>.tar.gz` |
 | Homebrew Formula | Release 汇总阶段 | `one-status.rb` Release 附件与公开 tap |
 | Homebrew Cask | Release workflow | `Casks/one-status.rb` 与公开 tap |
 | 校验和 | Release workflow | `SHA256SUMS.txt` |
-| Docker image | `docker build -t one-status:0.7.0 .` | `one-status` |
+| Docker image | `docker build -t one-status:0.8.0 .` | `one-status` |
 
-单文件 CLI 将业务包、Fastify、MCP SDK 与 Zod 打入同一个 ESM 文件。运行时只要求 Node.js 22+，安装阶段无需下载 JavaScript 依赖。v0.7 CLI 安装器还会下载同平台、同架构的 Rust Device Sidecar，校验摘要后放到 CLI 同目录。
+单文件 CLI 将业务包、Fastify、MCP SDK 与 Zod 打入同一个 ESM 文件。运行时只要求 Node.js 22+，安装阶段无需下载 JavaScript 依赖。v0.8.0 CLI 安装器还会下载同平台、同架构的 Rust Device Sidecar，校验摘要后放到 CLI 同目录。
 构建过程会生成 `dist/THIRD_PARTY_NOTICES.txt`；npm 包、Homebrew 安装和 Docker 镜像都会携带该文件。
 
 ## 官网与一键安装
@@ -62,7 +62,7 @@ Release workflow 在对应操作系统 runner 生成 macOS arm64/x64 DMG 与 ZIP
 
 Preview 构建尚未完成 Apple Developer ID notarization 和 Windows Authenticode 签名。Release Notes 与 Homebrew Cask 会明确显示该状态，不会自动绕过 Gatekeeper 或 SmartScreen。
 
-v0.7 构建会把模型配置 Rust Sidecar 放入 Desktop App resources，并同时生成独立原生附件，供 CLI、一键安装与 Homebrew 使用。原生构建需要验证：
+v0.8.0 构建会把模型配置 Rust Sidecar 放入 Desktop App resources，并同时生成独立原生附件，供 CLI、一键安装与 Homebrew 使用。原生构建需要验证：
 
 - macOS arm64/x64、Windows x64 与 Linux x64 使用对应 Sidecar target
 - 每个独立 Sidecar 附件进入 `SHA256SUMS.txt`
@@ -92,7 +92,7 @@ ONE_STATUS_INSTALL_PREFIX=/usr/local ./scripts/install-local.sh
 
 ```bash
 pnpm pack:local
-npm install -g ./dist/one-status-0.7.0.tgz
+npm install -g ./dist/one-status-0.8.0.tgz
 one-status version
 ```
 
@@ -202,7 +202,7 @@ brew link --overwrite --force niyuxuan782/tap/one-status
 9. 配置 `NPM_TOKEN` 时同步发布 npm。
 10. 配置 `HOMEBREW_TAP_TOKEN` 时同步更新 Formula 与 Cask。
 
-v0.7 加入 Rust Sidecar 后，Release 还需要固定 Rust toolchain、生成各平台二进制、核对目标架构，并在桌面 smoke test 中执行一次只读工具探测。Sidecar 缺失、架构不符或第三方归属不完整时应终止发布。
+Rust Sidecar 的 Release 需要固定 Rust toolchain、生成各平台二进制、核对目标架构，并在桌面 smoke test 中执行一次只读工具探测。Sidecar 缺失、架构不符或第三方归属不完整时应终止发布。
 
 Release workflow 权限：
 
@@ -211,20 +211,20 @@ Release workflow 权限：
 - `NPM_TOKEN` 可选，用于 npm 发布
 - `HOMEBREW_TAP_TOKEN` 可选，用于自动更新 `niyuxuan782/homebrew-tap`
 
-## 已验证
+## v0.8.0 发布验收
 
-- npm tarball 全局安装后 `one-status version` 返回 `0.7.0`。
-- Formula 安装到 `/opt/homebrew/Cellar/one-status/0.7.0`，并包含可执行 Device Sidecar。
-- 本地 Formula 重装后，`127.0.0.1:8787/health` 返回 `0.7.0`。
+- npm tarball 全局安装后 `one-status version` 返回 `0.8.0`。
+- Formula 安装到 `/opt/homebrew/Cellar/one-status/0.8.0`，并包含可执行 Device Sidecar。
+- 本地 Formula 重装后，`127.0.0.1:8787/health` 返回 `0.8.0`。
 - 单文件产物启动同步 API 和 HTTP MCP 后，官方 MCP Client 成功列出 Status 与 Tool Gateway 工具并调用 `status_get_profile`。
-- Codex 与 Claude Code stdio MCP 均已连接，Persona Event 可由 Codex 写入并由 Claude Code 读取。
+- Codex 与 Claude Code stdio MCP 均可连接，并能读取同一份 E2EE Status 与后台整理的结构化记忆。
 - 双设备加密 Demo、文件级模型配置预览、租约重领和原子恢复测试均已通过。
 
 ## 第三方代码归属
 
 构建脚本生成 `dist/THIRD_PARTY_NOTICES.txt`，CLI、npm、Homebrew 和 Docker 产物会携带该文件。Desktop 附件也必须保留适用于 App 内 Node.js 与 Sidecar 的第三方 notices。
 
-v0.7 Device Sidecar 的开发实现参照并改写 [CC Switch](https://github.com/farion1231/cc-switch) `3.19.2` 的 MIT 代码。Desktop 与独立原生附件均包含对应 notice 和许可证副本。当前归属记录：
+Device Sidecar 的初始开发实现参照并改写 [CC Switch](https://github.com/farion1231/cc-switch) `3.19.2` 的 MIT 代码。Desktop 与独立原生附件均包含对应 notice 和许可证副本。当前归属记录：
 
 | 字段 | 要求 |
 | --- | --- |

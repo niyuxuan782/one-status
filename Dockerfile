@@ -17,7 +17,7 @@ RUN pnpm build
 FROM node:22-bookworm-slim AS runtime
 
 LABEL org.opencontainers.image.title="One Status"
-LABEL org.opencontainers.image.description="Cross-device AI tool, model, Persona, and work state control center"
+LABEL org.opencontainers.image.description="Cross-device AI tool, encrypted credential, memory, and work state control center"
 LABEL org.opencontainers.image.licenses="Apache-2.0"
 
 COPY --from=build /app/dist/one-status.js /usr/local/bin/one-status

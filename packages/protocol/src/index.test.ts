@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   configurationIntentSchema,
   createEmptyStatus,
+  deviceReportSchema,
   memoryEntrySchema,
   modelSourceSchema,
   parseStatusDocument,
@@ -32,6 +33,43 @@ describe("status protocol", () => {
         reports: {},
         intents: {},
       },
+    });
+  });
+
+  it("accepts bounded per-model usage in a device report", () => {
+    const report = deviceReportSchema.parse({
+      deviceId: "device-a",
+      deviceName: "Ryan's MacBook Pro",
+      operatingSystem: "macos",
+      osVersion: "25.0",
+      architecture: "arm64",
+      backgroundVersion: "0.8.0",
+      tools: [],
+      modelUsage: {
+        scannedAt: "2026-08-10T02:00:00.000Z",
+        scope: "latest-100-session-files-per-tool",
+        filesScanned: 4,
+        truncated: false,
+        entries: [
+          {
+            toolId: "codex",
+            modelId: "gpt-5.4",
+            dataSource: "codex-session",
+            inputTokens: 12_000,
+            cachedInputTokens: 10_000,
+            cacheCreationInputTokens: 0,
+            outputTokens: 800,
+            requests: 3,
+            latestAt: "2026-08-10T01:59:00.000Z",
+          },
+        ],
+      },
+      reportedAt: "2026-08-10T02:00:00.000Z",
+    });
+
+    expect(report.modelUsage?.entries[0]).toMatchObject({
+      modelId: "gpt-5.4",
+      inputTokens: 12_000,
     });
   });
 

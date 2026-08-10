@@ -487,6 +487,38 @@ export const deviceToolReportSchema = z
   })
   .strict();
 
+export const deviceModelUsageEntrySchema = z
+  .object({
+    toolId: agentToolIdSchema,
+    modelId: z.string().min(1).max(500),
+    dataSource: z.enum(["codex-session", "claude-session"]),
+    inputTokens: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    cachedInputTokens: z
+      .number()
+      .int()
+      .nonnegative()
+      .max(Number.MAX_SAFE_INTEGER),
+    cacheCreationInputTokens: z
+      .number()
+      .int()
+      .nonnegative()
+      .max(Number.MAX_SAFE_INTEGER),
+    outputTokens: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    requests: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    latestAt: timestampSchema.optional(),
+  })
+  .strict();
+
+export const deviceModelUsageSchema = z
+  .object({
+    scannedAt: timestampSchema,
+    scope: z.string().min(1).max(120),
+    filesScanned: z.number().int().nonnegative().max(1_000),
+    truncated: z.boolean(),
+    entries: z.array(deviceModelUsageEntrySchema).max(2_000),
+  })
+  .strict();
+
 export const deviceReportSchema = z
   .object({
     deviceId: z.string().min(1).max(200),
@@ -496,6 +528,7 @@ export const deviceReportSchema = z
     architecture: z.string().min(1).max(80),
     backgroundVersion: z.string().min(1).max(64),
     tools: z.array(deviceToolReportSchema).max(agentToolIdSchema.options.length),
+    modelUsage: deviceModelUsageSchema.optional(),
     reportedAt: timestampSchema,
   })
   .strict()
@@ -771,6 +804,10 @@ export type ConfigurationIntentStatus = z.infer<
 export type DeviceControlState = z.infer<typeof deviceControlStateSchema>;
 export type DeviceReport = z.infer<typeof deviceReportSchema>;
 export type DeviceToolReport = z.infer<typeof deviceToolReportSchema>;
+export type DeviceModelUsage = z.infer<typeof deviceModelUsageSchema>;
+export type DeviceModelUsageEntry = z.infer<
+  typeof deviceModelUsageEntrySchema
+>;
 export type ModelApiProtocol = z.infer<typeof modelApiProtocolSchema>;
 export type ModelDefinition = z.infer<typeof modelDefinitionSchema>;
 export type ModelSource = z.infer<typeof modelSourceSchema>;

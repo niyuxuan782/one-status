@@ -9,8 +9,13 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
-import { scanLocalInventory } from "./local-inventory.js";
+import {
+  discoverLocalModelCredentials,
+  scanLocalInventory,
+  type LocalInventoryOptions,
+} from "./local-inventory.js";
 
 describe("local inventory", () => {
   let directory: string | undefined;
@@ -33,6 +38,8 @@ describe("local inventory", () => {
     await mkdir(bin, { recursive: true });
     await writeFile(join(bin, "codex"), "#!/bin/sh\nexit 0\n");
     await chmod(join(bin, "codex"), 0o755);
+    await writeFile(join(bin, "claude"), "#!/bin/sh\nexit 0\n");
+    await chmod(join(bin, "claude"), 0o755);
     await writeFile(join(project, "package.json"), "{}\n");
     await writeFile(join(project, "AGENTS.md"), "project rules\n");
     await writeFile(join(project, ".git", "HEAD"), "ref: refs/heads/main\n");
@@ -62,8 +69,18 @@ describe("local inventory", () => {
       join(home, ".claude", "plugins", "installed_plugins.json"),
       JSON.stringify({ version: 1, plugins: {} }),
     );
+    await writeFile(
+      join(home, ".claude", "settings.json"),
+      JSON.stringify({
+        model: "claude-test",
+        env: {
+          ANTHROPIC_API_KEY: "CLAUDE_MODEL_KEY_SECRET",
+          ANTHROPIC_BASE_URL: "https://claude.example.test/v1",
+        },
+      }),
+    );
 
-    const snapshot = await scanLocalInventory({
+    const options: LocalInventoryOptions = {
       homeDir: home,
       environment: {
         HOME: home,
@@ -97,7 +114,8 @@ describe("local inventory", () => {
         }
         throw new Error("Unexpected command");
       },
-    });
+    };
+    const snapshot = await scanLocalInventory(options);
 
     expect(snapshot.projects).toHaveLength(1);
     expect(snapshot.projects[0]).toMatchObject({
@@ -120,9 +138,38 @@ describe("local inventory", () => {
         endpoint: "https://api.example.test/v1",
         endpointHost: "api.example.test",
         credentialStatus: "available",
+        credentialFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
         health: "healthy",
       },
     });
+    expect(snapshot.agents[1]).toMatchObject({
+      id: "claude-code",
+      model: {
+        modelId: "claude-test",
+        sourceKind: "compatible-api",
+        protocol: "anthropic",
+        endpoint: "https://claude.example.test/v1",
+        credentialStatus: "available",
+        credentialFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
+      },
+    });
+    const credentials = await discoverLocalModelCredentials(options);
+    expect(credentials).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          apiKey: "CODEX_MODEL_KEY_SECRET",
+          sourceId: expect.stringMatching(/^custom-openai-[a-f0-9]{16}$/),
+          toolId: "codex",
+        }),
+        expect.objectContaining({
+          apiKey: "CLAUDE_MODEL_KEY_SECRET",
+          sourceId: expect.stringMatching(
+            /^anthropic-[a-f0-9]{12}-[a-f0-9]{16}$/,
+          ),
+          toolId: "claude-code",
+        }),
+      ]),
+    );
     expect(snapshot.mcpServers).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -142,6 +189,7 @@ describe("local inventory", () => {
     expect(serialized).not.toContain("CLAUDE_ENV_SECRET");
     expect(serialized).not.toContain("CODEX_ENV_SECRET");
     expect(serialized).not.toContain("CODEX_MODEL_KEY_SECRET");
+    expect(serialized).not.toContain("CLAUDE_MODEL_KEY_SECRET");
     expect(serialized).not.toContain("secret=query");
     expect(serialized).not.toContain("TOP_SECRET_SKILL_BODY");
   });
@@ -177,6 +225,157 @@ describe("local inventory", () => {
       },
     });
     expect(JSON.stringify(snapshot)).not.toContain("SIDECAR_MANAGED_SECRET");
+  });
+
+  it("discovers a Codex auth.json API key for the active provider", async () => {
+    directory = await mkdtemp(join(tmpdir(), "one-status-inventory-"));
+    const home = join(directory, "home");
+    const codexHome = join(home, ".codex");
+    await mkdir(codexHome, { recursive: true });
+    await writeFile(
+      join(codexHome, "config.toml"),
+      `model = "gpt-auth"\nmodel_provider = "auth-provider"\n[model_providers.auth-provider]\nbase_url = "https://auth.example.test/v1"\n`,
+    );
+    await writeFile(
+      join(codexHome, "auth.json"),
+      JSON.stringify({
+        OPENAI_API_KEY: "CODEX_AUTH_JSON_SECRET",
+        tokens: { access_token: "OAUTH_ACCESS_TOKEN_IGNORED" },
+      }),
+    );
+
+    const credentials = await discoverLocalModelCredentials({
+      homeDir: home,
+      environment: { HOME: home, CODEX_HOME: codexHome, PATH: "" },
+    });
+
+    expect(credentials).toEqual([
+      expect.objectContaining({
+        apiKey: "CODEX_AUTH_JSON_SECRET",
+        sourceId: expect.stringMatching(/^auth-provider-[a-f0-9]{16}$/),
+        toolId: "codex",
+      }),
+    ]);
+    expect(JSON.stringify(credentials)).not.toContain(
+      "OAUTH_ACCESS_TOKEN_IGNORED",
+    );
+  });
+
+  it("imports every configured Codex provider into the wallet", async () => {
+    directory = await mkdtemp(join(tmpdir(), "one-status-inventory-"));
+    const home = join(directory, "home");
+    const codexHome = join(home, ".codex");
+    await mkdir(codexHome, { recursive: true });
+    await writeFile(
+      join(codexHome, "config.toml"),
+      `model = "gpt-active"\nmodel_provider = "provider-a"\n[model_providers.provider-a]\nname = "Provider A"\nbase_url = "https://a.example.test/v1"\nenv_key = "PROVIDER_A_KEY"\n[model_providers.provider-b]\nname = "Provider B"\nbase_url = "https://b.example.test/v1"\nexperimental_bearer_token = "PROVIDER_B_SECRET"\n`,
+    );
+
+    const credentials = await discoverLocalModelCredentials({
+      homeDir: home,
+      environment: {
+        HOME: home,
+        CODEX_HOME: codexHome,
+        PATH: "",
+        PROVIDER_A_KEY: "PROVIDER_A_SECRET",
+      },
+      ccSwitchDbPath: join(home, "missing-cc-switch.db"),
+    });
+
+    expect(credentials).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          apiKey: "PROVIDER_A_SECRET",
+          model: expect.objectContaining({
+            modelId: "gpt-active",
+            providerId: "provider-a",
+          }),
+          toolId: "codex",
+        }),
+        expect.objectContaining({
+          apiKey: "PROVIDER_B_SECRET",
+          model: expect.objectContaining({
+            providerId: "provider-b",
+            endpoint: "https://b.example.test/v1",
+          }),
+          toolId: "codex",
+        }),
+      ]),
+    );
+    expect(credentials.find((entry) => entry.model.providerId === "provider-b")
+      ?.model.modelId).toBeUndefined();
+  });
+
+  it("imports saved Codex and Claude profiles from a CC Switch database", async () => {
+    directory = await mkdtemp(join(tmpdir(), "one-status-inventory-"));
+    const home = join(directory, "home");
+    const databasePath = join(home, ".cc-switch", "cc-switch.db");
+    await mkdir(join(home, ".cc-switch"), { recursive: true });
+    const database = new DatabaseSync(databasePath);
+    database.exec(`CREATE TABLE providers (
+      id TEXT NOT NULL,
+      app_type TEXT NOT NULL,
+      name TEXT NOT NULL,
+      settings_config TEXT NOT NULL,
+      sort_index INTEGER,
+      PRIMARY KEY (id, app_type)
+    )`);
+    const insert = database.prepare(
+      "INSERT INTO providers (id, app_type, name, settings_config, sort_index) VALUES (?, ?, ?, ?, ?)",
+    );
+    insert.run(
+      "codex-saved",
+      "codex",
+      "Saved Codex",
+      JSON.stringify({
+        auth: { OPENAI_API_KEY: "CC_SWITCH_CODEX_SECRET" },
+        config:
+          'model = "gpt-saved"\nmodel_provider = "saved-provider"\n[model_providers.saved-provider]\nbase_url = "https://saved.example.test/v1"\n',
+      }),
+      1,
+    );
+    insert.run(
+      "claude-saved",
+      "claude",
+      "Saved Claude",
+      JSON.stringify({
+        model: "claude-saved-model",
+        env: {
+          ANTHROPIC_AUTH_TOKEN: "CC_SWITCH_CLAUDE_SECRET",
+          ANTHROPIC_BASE_URL: "https://claude-saved.example.test/v1",
+        },
+      }),
+      2,
+    );
+    database.close();
+
+    const credentials = await discoverLocalModelCredentials({
+      homeDir: home,
+      environment: { HOME: home, PATH: "" },
+      ccSwitchDbPath: databasePath,
+    });
+
+    expect(credentials).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          apiKey: "CC_SWITCH_CODEX_SECRET",
+          model: expect.objectContaining({
+            modelId: "gpt-saved",
+            providerId: "saved-provider",
+            providerLabel: "Saved Codex",
+          }),
+          toolId: "codex",
+        }),
+        expect.objectContaining({
+          apiKey: "CC_SWITCH_CLAUDE_SECRET",
+          model: expect.objectContaining({
+            modelId: "claude-saved-model",
+            providerLabel: "Saved Claude",
+          }),
+          toolId: "claude-code",
+        }),
+      ]),
+    );
   });
 
   it("keeps a shell-owned Codex environment credential unverified", async () => {

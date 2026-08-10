@@ -103,6 +103,55 @@ describe("dashboard device control routes", () => {
     expect(source.body).not.toContain(API_KEY);
     expect(permissionVault.getModelCredential("user-1", SOURCE_ID)).toBe(API_KEY);
 
+    const deniedReveal = await app.inject({
+      method: "POST",
+      url: `/v1/dashboard/model-wallet/${SOURCE_ID}/reveal`,
+      headers,
+      payload: { password: "wrong-password" },
+    });
+    expect(deniedReveal.statusCode).toBe(403);
+    expect(deniedReveal.headers["cache-control"]).toContain("no-store");
+    expect(deniedReveal.body).not.toContain(API_KEY);
+
+    const revealed = await app.inject({
+      method: "POST",
+      url: `/v1/dashboard/model-wallet/${SOURCE_ID}/reveal`,
+      headers,
+      payload: { password: "123456" },
+    });
+    expect(revealed.statusCode).toBe(200);
+    expect(revealed.headers["cache-control"]).toContain("no-store");
+    expect(revealed.headers.pragma).toBe("no-cache");
+    expect(revealed.json()).toEqual({ apiKey: API_KEY, sourceId: SOURCE_ID });
+
+    const changedPassword = await app.inject({
+      method: "POST",
+      url: "/v1/dashboard/model-wallet/password",
+      headers,
+      payload: { currentPassword: "123456", newPassword: "654321" },
+    });
+    expect(changedPassword.statusCode).toBe(200);
+    expect(changedPassword.headers["cache-control"]).toContain("no-store");
+    expect(changedPassword.json()).toEqual({ changed: true });
+    const oldPasswordReveal = await app.inject({
+      method: "POST",
+      url: `/v1/dashboard/model-wallet/${SOURCE_ID}/reveal`,
+      headers,
+      payload: { password: "123456" },
+    });
+    expect(oldPasswordReveal.statusCode).toBe(403);
+    const newPasswordReveal = await app.inject({
+      method: "POST",
+      url: `/v1/dashboard/model-wallet/${SOURCE_ID}/reveal`,
+      headers,
+      payload: { password: "654321" },
+    });
+    expect(newPasswordReveal.statusCode).toBe(200);
+    expect(newPasswordReveal.json()).toEqual({
+      apiKey: API_KEY,
+      sourceId: SOURCE_ID,
+    });
+
     const model = await app.inject({
       method: "PUT",
       url: `/v1/dashboard/models/${MODEL_ID}`,

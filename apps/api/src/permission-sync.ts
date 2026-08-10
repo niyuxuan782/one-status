@@ -257,6 +257,11 @@ function mergePermissionBundles(
       remote.updatedAt,
     ),
     version: 1,
+    ...mergeWalletPassword(
+      base.walletPassword,
+      local.walletPassword,
+      remote.walletPassword,
+    ),
   };
 }
 
@@ -271,7 +276,25 @@ function normalizePermissionBundle(
     providers: value.providers ?? [],
     updatedAt: value.updatedAt ?? EMPTY_UPDATED_AT,
     version: 1,
+    ...(value.walletPassword
+      ? { walletPassword: value.walletPassword }
+      : {}),
   };
+}
+
+function mergeWalletPassword(
+  base: PermissionVaultBundle["walletPassword"],
+  local: PermissionVaultBundle["walletPassword"],
+  remote: PermissionVaultBundle["walletPassword"],
+): Pick<PermissionVaultBundle, "walletPassword"> | Record<string, never> {
+  const localChanged = !sameRecord(local, base);
+  const remoteChanged = !sameRecord(remote, base);
+  const selected = !localChanged
+    ? remote
+    : !remoteChanged || sameRecord(local, remote)
+      ? local
+      : remote;
+  return selected ? { walletPassword: selected } : {};
 }
 
 function mergeRecords<T>(

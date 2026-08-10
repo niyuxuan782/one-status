@@ -36,7 +36,7 @@ const cask = `cask "one-status" do
   end
 
   name "One Status"
-  desc "Manage AI tools, models, Persona, and work state across devices"
+  desc "Manage AI tools, encrypted credentials, memory, and work state"
   homepage "https://niyuxuan782.github.io/one-status/"
 
   depends_on :macos

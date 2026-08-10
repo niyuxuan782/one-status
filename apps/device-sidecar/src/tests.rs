@@ -456,6 +456,76 @@ wire_api = "responses"
 }
 
 #[test]
+fn usage_aggregates_codex_and_claude_sessions_without_returning_content() {
+    let home = TempDir::new().unwrap();
+    let codex_session = home.path().join(".codex/sessions/2026/08/10/rollout.jsonl");
+    let codex_lines = [
+        json!({"type":"session_meta","payload":{"id":"thread-1"}}),
+        json!({"type":"turn_context","payload":{"model":"gpt-5.4"}}),
+        json!({"type":"event_msg","timestamp":"2026-08-10T01:00:00Z","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100,"cached_input_tokens":50,"output_tokens":10},"last_token_usage":{"input_tokens":100,"cached_input_tokens":50,"output_tokens":10}}}}),
+        json!({"type":"event_msg","timestamp":"2026-08-10T01:01:00Z","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":200,"cached_input_tokens":100,"output_tokens":20}}}}),
+    ];
+    write(
+        &codex_session,
+        codex_lines
+            .iter()
+            .map(Value::to_string)
+            .collect::<Vec<_>>()
+            .join("\n")
+            .as_bytes(),
+    );
+
+    let claude_session = home.path().join(".claude/projects/project-a/session.jsonl");
+    let claude_lines = [
+        json!({"type":"assistant","timestamp":"2026-08-10T02:00:00Z","message":{"id":"msg-1","model":"claude-opus-4-6","usage":{"input_tokens":3,"output_tokens":10,"cache_read_input_tokens":20,"cache_creation_input_tokens":30}}}),
+        json!({"type":"assistant","timestamp":"2026-08-10T02:01:00Z","message":{"id":"msg-1","model":"claude-opus-4-6","stop_reason":"end_turn","usage":{"input_tokens":3,"output_tokens":15,"cache_read_input_tokens":20,"cache_creation_input_tokens":30}}}),
+    ];
+    write(
+        &claude_session,
+        claude_lines
+            .iter()
+            .map(Value::to_string)
+            .collect::<Vec<_>>()
+            .join("\n")
+            .as_bytes(),
+    );
+
+    let (exit, response) = run(
+        CommandName::Usage,
+        json!({"home": home.path(), "maxFilesPerTool": 20}),
+    );
+    assert_eq!(exit, 0, "{response}");
+    assert_eq!(response["data"]["filesScanned"], 2);
+    assert_eq!(response["data"]["entries"].as_array().unwrap().len(), 2);
+    let serialized = response.to_string();
+    assert!(!serialized.contains("thread-1"));
+    assert!(!serialized.contains("msg-1"));
+    assert!(serialized.contains("gpt-5.4"));
+    assert!(serialized.contains("claude-opus-4-6"));
+    let codex = response["data"]["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["tool"] == "codex")
+        .unwrap();
+    assert_eq!(codex["inputTokens"], 200);
+    assert_eq!(codex["cachedInputTokens"], 100);
+    assert_eq!(codex["outputTokens"], 20);
+    assert_eq!(codex["requests"], 2);
+    let claude = response["data"]["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["tool"] == "claude-code")
+        .unwrap();
+    assert_eq!(claude["inputTokens"], 3);
+    assert_eq!(claude["cachedInputTokens"], 20);
+    assert_eq!(claude["cacheCreationInputTokens"], 30);
+    assert_eq!(claude["outputTokens"], 15);
+    assert_eq!(claude["requests"], 1);
+}
+
+#[test]
 fn cursor_writes_only_the_extension_manifest() {
     let home = TempDir::new().unwrap();
     let settings = home

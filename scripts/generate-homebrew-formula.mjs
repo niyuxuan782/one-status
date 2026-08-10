@@ -62,7 +62,7 @@ export async function generateHomebrewFormula({
     throw new Error("Incomplete Homebrew Device Sidecar target map.");
   }
   const formula = `class OneStatus < Formula
-  desc "Manage AI tools, models, Persona, and work state across devices"
+  desc "Manage AI tools, encrypted credentials, memory, and work state"
   homepage "https://github.com/niyuxuan782/one-status"
   url "${releaseUrl(baseUrl, cliName)}"
   sha256 "${cliSha}"

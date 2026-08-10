@@ -7,12 +7,13 @@ use serde_json::Value;
 #[serde(rename_all = "lowercase")]
 pub enum CommandName {
     Scan,
+    Usage,
     Preview,
     Apply,
     Rollback,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ToolId {
     Codex,
@@ -114,6 +115,19 @@ pub struct ScanRequest {
     pub include_models: bool,
 }
 
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct UsageRequest {
+    #[serde(default)]
+    pub home: Option<PathBuf>,
+    #[serde(default = "default_usage_file_limit")]
+    pub max_files_per_tool: usize,
+}
+
+fn default_usage_file_limit() -> usize {
+    100
+}
+
 fn default_true() -> bool {
     true
 }
@@ -171,6 +185,33 @@ pub struct DeviceScan {
     pub tools: Vec<ToolInventory>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageScan {
+    pub scanned_at: String,
+    pub scope: String,
+    pub files_scanned: usize,
+    pub truncated: bool,
+    pub entries: Vec<ModelUsage>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelUsage {
+    pub tool: ToolId,
+    pub model_id: String,
+    pub data_source: String,
+    pub input_tokens: u64,
+    pub cached_input_tokens: u64,
+    pub cache_creation_input_tokens: u64,
+    pub output_tokens: u64,
+    pub requests: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latest_at: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]

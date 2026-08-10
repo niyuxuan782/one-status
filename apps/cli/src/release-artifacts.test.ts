@@ -112,7 +112,7 @@ describe("Device Sidecar release artifacts", () => {
       await mkdir(resolve(sidecarStage, "licenses", "cc-switch"), {
         recursive: true,
       });
-      const version = "0.7.0";
+      const version = "0.8.0";
       const platform = process.platform === "darwin" ? "mac" : "linux";
       const arch = process.arch === "arm64" ? "arm64" : "x64";
       const cliName = `one-status-${version}.tgz`;

@@ -6,21 +6,21 @@
     <meta name="theme-color" content="#111315" />
     <meta
       name="description"
-      content="One Status 是跨设备的个人 AI 工具控制中心，统一管理设备上的 AI 工具、模型来源、Persona 和工作状态。"
+      content="One Status 是跨设备的个人 AI 控制中心，通过端到端加密的密钥钱包统一管理 AI 工具、可配模型、记忆、连接与项目状态。"
     />
-    <meta property="og:title" content="One Status - 管理所有设备上的 AI 工具、模型和个人偏好" />
+    <meta property="og:title" content="One Status - 所有设备上的 AI 工具与密钥钱包" />
     <meta
       property="og:description"
-      content="跨设备查看 Codex、Claude Code 与 Cursor，统一管理模型来源，通过 Persona Skill 积累加密记忆，并继续 Git Handoff。"
+      content="自动扫描 Codex、Claude Code 与 Cursor 配置，加密同步密钥和可配模型，并持续整理记忆、连接与 Handoff。"
     />
     <meta property="og:type" content="website" />
     <meta property="og:url" content="https://niyuxuan782.github.io/one-status/" />
-    <meta property="og:image" content="https://niyuxuan782.github.io/one-status/assets/one-status-dashboard-v0.7.jpg" />
+    <meta property="og:image" content="https://niyuxuan782.github.io/one-status/assets/one-status-wallet-overview.jpg" />
     <link rel="canonical" href="https://niyuxuan782.github.io/one-status/" />
     <link rel="icon" href="./assets/favicon.svg" type="image/svg+xml" />
     <link rel="manifest" href="./site.webmanifest" />
     <link rel="stylesheet" href="./styles.css" />
-    <title>One Status - Personal AI Tool Control Center</title>
+    <title>One Status - Personal AI Control Center</title>
   </head>
   <body>
     <header class="site-header">
@@ -28,12 +28,13 @@
         <span class="brand-mark">OS</span>
         <span>One Status</span>
       </a>
-      <nav aria-label="官网导航">
-        <a href="#devices">设备与模型</a>
-        <a href="#persona">Persona</a>
-        <a href="#handoff">Handoff</a>
-        <a href="#install">安装</a>
-        <a href="#security">隐私</a>
+      <nav aria-label="产品导航">
+        <a href="#overview">概览</a>
+        <a href="#wallet">密钥钱包</a>
+        <a href="#projects">项目</a>
+        <a href="#memory">记忆</a>
+        <a href="#connections">连接</a>
+        <a href="#security">安全</a>
       </nav>
       <a
         class="header-github"
@@ -50,16 +51,16 @@
       <section class="hero" aria-labelledby="hero-title">
         <img
           class="hero-visual"
-          src="./assets/one-status-dashboard-v0.7.jpg"
-          alt="One Status v0.7 真实桌面工作台，显示设备、AI 工具、当前模型与来源"
+          src="./assets/one-status-wallet-overview.jpg"
+          alt="One Status 概览，显示在线设备、AI 工具、可配模型、用量和密钥钱包状态"
         />
         <div class="hero-scrim" aria-hidden="true"></div>
         <div class="hero-content">
-          <p class="eyebrow"><span></span> PERSONAL AI TOOL CONTROL CENTER</p>
+          <p class="eyebrow"><span></span> PERSONAL AI CONTROL CENTER</p>
           <h1 id="hero-title">One Status</h1>
-          <p class="hero-line">一处管理所有设备上的 AI 工具、模型和个人偏好。</p>
+          <p class="hero-line">所有设备上的 AI 工具、密钥、模型和记忆，集中在一处。</p>
           <p class="hero-copy">
-            跨设备查看 Codex、Claude Code 与 Cursor，统一管理模型来源，通过 Persona Skill 积累加密记忆，并在任何设备继续工作。
+            自动扫描 Codex、Claude Code 与 Cursor 配置，把密钥和可配模型收进 E2EE 钱包，并同步项目、记忆、连接与工作状态。
           </p>
           <div class="hero-actions">
             <a class="button button-primary" href="#install">
@@ -77,118 +78,141 @@
           </div>
           <p class="release-line">
             <span class="status-dot"></span>
-            <span id="release-label">v0.7.0</span>
-            <span>Apache-2.0</span>
+            <span id="release-label">v0.8.0</span>
+            <span>Open Core</span>
             <span>macOS · Windows · Linux</span>
-            <span>Device Sidecar included</span>
+            <span>Private by design</span>
           </p>
         </div>
-        <a class="hero-next" href="#devices" aria-label="查看设备与模型总览">查看设备总览</a>
+        <a class="hero-next" href="#overview" aria-label="查看产品概览">查看产品概览</a>
       </section>
 
       <section class="signal-band" aria-label="产品主线">
-        <div><strong>Devices</strong><span>在线状态与后台版本</span></div>
-        <div><strong>AI Tools</strong><span>Codex · Claude · Cursor</span></div>
-        <div><strong>Models</strong><span>官方 · 第三方 · 本地</span></div>
-        <div><strong>Persona</strong><span>加密个人偏好</span></div>
+        <div><strong>Overview</strong><span>设备 · 工具 · 模型 · 用量</span></div>
+        <div><strong>Key Wallet</strong><span>自动扫描 · E2EE 同步</span></div>
+        <div><strong>Memory</strong><span>后台生成 · 用户确认</span></div>
+        <div><strong>Connections</strong><span>授权与能力统一管理</span></div>
       </section>
 
-      <section class="device-section" id="devices" aria-labelledby="devices-title">
+      <section class="device-section" id="overview" aria-labelledby="overview-title">
         <div class="section-heading">
-          <p class="eyebrow dark"><span></span> DEVICE · TOOL · MODEL</p>
-          <h2 id="devices-title">每台设备，当前用了什么，一眼看清</h2>
+          <p class="eyebrow dark"><span></span> OVERVIEW</p>
+          <h2 id="overview-title">打开一处，看清每台设备的 AI 状态</h2>
           <p>
-            v0.7 首页围绕设备、AI 工具、模型来源和配置健康状态组织。后台读取本机 Agent 状态，在线设备立即应用确认后的变更，离线设备保存加密配置意图。
+            概览围绕在线设备、已安装工具、当前模型、可配模型和使用量组织。配置健康、待同步与失败状态保持可见，常用操作可以直接进入对应设备。
           </p>
         </div>
 
-        <div class="device-console" aria-label="v0.7 设备与 AI 工具矩阵示例">
+        <div class="device-console" aria-label="One Status 设备与 AI 工具概览示例">
           <div class="console-topbar">
-            <div><span class="console-mark">OS</span><strong>Devices</strong></div>
-            <span class="preview-label">v0.7 DEVICE VIEW</span>
+            <div><span class="console-mark">OS</span><strong>Overview</strong></div>
+            <span class="preview-label">3 DEVICES · 7 AI TOOLS</span>
+          </div>
+          <div class="overview-metrics" aria-label="概览指标">
+            <div><span>在线设备</span><strong>2 / 3</strong></div>
+            <div><span>AI 工具</span><strong>7</strong></div>
+            <div><span>可配模型</span><strong>18</strong></div>
+            <div><span>近期用量</span><strong>42.6M</strong><small>tokens</small></div>
           </div>
           <section class="device-block">
             <header>
-              <div><span class="online-dot"></span><strong>Ryan's MacBook Pro</strong><small>macOS · local 0.7.x</small></div>
+              <div><span class="online-dot"></span><strong>Ryan's MacBook Pro</strong><small>macOS · local 0.8.0 · 刚刚同步</small></div>
               <span class="health healthy">在线</span>
             </header>
-            <div class="tool-row tool-head"><span>AI 工具</span><span>当前模型</span><span>模型来源</span><span>状态</span><span></span></div>
-            <div class="tool-row"><span class="tool-name"><i>C</i>Codex</span><strong>GPT-5.4</strong><span>OpenAI</span><span class="health healthy">正常</span><span class="preview-action">切换</span></div>
-            <div class="tool-row"><span class="tool-name"><i>CL</i>Claude Code</span><strong>Claude Opus</strong><span>Anthropic</span><span class="health healthy">正常</span><span class="preview-action">切换</span></div>
-            <div class="tool-row"><span class="tool-name"><i>CU</i>Cursor</span><strong class="muted-value">未配置</strong><span class="muted-value">—</span><span class="health needs-config">待配置</span><span class="preview-action">配置</span></div>
+            <div class="tool-row tool-head"><span>AI 工具</span><span>当前模型</span><span>可配模型</span><span>近期用量</span><span></span></div>
+            <div class="tool-row"><span class="tool-name"><i>C</i>Codex</span><strong>GPT-5.6 Sol</strong><span>7 个模型</span><span class="usage-value">24.8M</span><span class="preview-action">切换</span></div>
+            <div class="tool-row"><span class="tool-name"><i>CL</i>Claude Code</span><strong>Claude Opus</strong><span>4 个模型</span><span class="usage-value">8.1M</span><span class="preview-action">切换</span></div>
+            <div class="tool-row"><span class="tool-name"><i>CU</i>Cursor</span><strong class="muted-value">未配置</strong><span>5 个模型</span><span class="muted-value">--</span><span class="preview-action">配置</span></div>
           </section>
           <section class="device-block offline">
             <header>
-              <div><span class="offline-dot"></span><strong>Office Mac mini</strong><small>macOS · last seen 18 分钟前</small></div>
+              <div><span class="offline-dot"></span><strong>Office Mac mini</strong><small>macOS · 18 分钟前 · 1 项待同步</small></div>
               <span class="health offline-label">离线</span>
             </header>
-            <div class="tool-row"><span class="tool-name"><i>C</i>Codex</span><strong>GPT-5.4</strong><span>第三方兼容 API</span><span class="health pending">待应用</span><span class="preview-action">查看</span></div>
-            <div class="tool-row"><span class="tool-name"><i>CL</i>Claude Code</span><strong>Claude Sonnet</strong><span>Anthropic</span><span class="health healthy">已同步</span><span class="preview-action">切换</span></div>
+            <div class="tool-row"><span class="tool-name"><i>C</i>Codex</span><strong>GPT-5.4</strong><span>6 个模型</span><span class="usage-value">9.7M</span><span class="preview-action">查看</span></div>
+            <div class="tool-row"><span class="tool-name"><i>CL</i>Claude Code</span><strong>Claude Sonnet</strong><span>3 个模型</span><span class="usage-value">3.2M</span><span class="health pending">待同步</span></div>
           </section>
         </div>
-        <p class="artifact-note">
-          上方展示跨设备配置流程。<a href="./assets/one-status-dashboard-v0.7.jpg" target="_blank">查看 v0.7 真实工作台截图</a>
-        </p>
+        <p class="artifact-note">界面示例展示最新产品信息结构；近期用量来自有界、去重后的 Codex 与 Claude Code 本机会话统计。</p>
       </section>
 
-      <section class="model-section" aria-labelledby="model-title">
+      <section class="model-section" id="wallet" aria-labelledby="wallet-title">
         <div class="section-heading light compact-heading">
-          <p class="eyebrow"><span></span> MODEL CONFIGURATION</p>
-          <h2 id="model-title">选择一次，发到指定设备与工具</h2>
-          <p>模型来源、API 协议、Endpoint、Credential 健康状态与配置目标集中管理。</p>
+          <p class="eyebrow"><span></span> KEY WALLET · E2EE</p>
+          <h2 id="wallet-title">扫描一次，让每台设备都能安全切换模型</h2>
+          <p>密钥钱包自动识别 Agent 配置、Codex Providers、CC Switch Profile、Endpoint、协议、密钥引用和可配模型。条目在客户端加密后同步，云端只保存密文。</p>
         </div>
-        <ol class="configuration-flow" aria-label="模型配置流程">
-          <li><span>01</span><strong>选择模型</strong><small>官方账号、API、第三方兼容、本地服务</small></li>
-          <li><span>02</span><strong>选择目标</strong><small>一台或多台设备上的指定 AI 工具</small></li>
-          <li><span>03</span><strong>预览并确认</strong><small>保留 MCP、Rules、Skills 等无关字段</small></li>
-          <li><span>04</span><strong>应用或排队</strong><small>在线立即执行，离线记录加密意图</small></li>
-          <li><span>05</span><strong>验证与恢复</strong><small>报告结果，失败时恢复原配置</small></li>
+        <ol class="configuration-flow" aria-label="密钥钱包工作流">
+          <li><span>01</span><strong>扫描配置</strong><small>只读识别 Codex、Claude Code、CC Switch 与本机模型服务</small></li>
+          <li><span>02</span><strong>加密入库</strong><small>密钥、Endpoint 和模型能力进入 E2EE 钱包</small></li>
+          <li><span>03</span><strong>选择模型</strong><small>按设备与 AI 工具查看当前可用模型</small></li>
+          <li><span>04</span><strong>直接切换</strong><small>无需钱包密码，也不会把密钥明文交给 Agent</small></li>
+          <li><span>05</span><strong>查看密钥</strong><small>查看或复制明文时必须验证钱包密码</small></li>
         </ol>
-        <div class="intent-strip" aria-label="配置意图状态">
-          <span>pending</span><i>→</i><span>applying</span><i>→</i><span class="success">applied</span><em>或</em><span class="failure">failed</span><i>→</i><span>rollback</span>
+        <div class="wallet-policy" aria-label="密钥钱包访问策略">
+          <div><span class="wallet-icon locked" aria-hidden="true"></span><strong>查看 / 复制</strong><small>初始密码 123456 · 可修改</small></div>
+          <i></i>
+          <div><span class="wallet-icon switch" aria-hidden="true"></span><strong>切换模型</strong><small>已授权即可</small></div>
+          <i></i>
+          <div><span class="wallet-icon agent" aria-hidden="true"></span><strong>Agent 调用</strong><small>仅受控引用</small></div>
         </div>
       </section>
 
-      <section class="persona-section" id="persona">
-        <div class="persona-copy">
-          <p class="eyebrow dark"><span></span> PERSONA SKILL</p>
-          <h2>让个人偏好随时间变得准确</h2>
+      <section class="memory-section" id="memory">
+        <div class="memory-copy">
+          <p class="eyebrow dark"><span></span> MEMORY</p>
+          <h2>记忆在后台形成，决定权始终留给用户</h2>
           <p>
-            Agent 检测到语言风格、工作习惯、技术偏好、长期目标或明确记忆请求后，通过 <code>persona.record</code> 生成结构化事件。记录在设备端加密，并由用户掌握编辑、删除和类别禁用权。
+            后台记忆生成机制从明确记忆请求、项目文档、Handoff、Git 事实和重复习惯中提炼结构化候选。记忆页面统一完成确认、编辑、删除和类别控制。
           </p>
           <ul>
-            <li><span>01</span> Persona Events 保留时间、Agent、项目和置信度</li>
-            <li><span>02</span> Persona Profile 合并重复观察并更新次数</li>
-            <li><span>03</span> 完整原始会话默认留在本机</li>
+            <li><span>01</span> 记录观察时间、来源 Agent、项目与置信度</li>
+            <li><span>02</span> 合并重复观察，持续更新出现次数</li>
+            <li><span>03</span> 原始会话默认留在本机</li>
           </ul>
-          <p class="roadmap-note">v0.7 已在 Codex 与 Claude Code 中安装统一 Persona Skill，并通过 E2EE Status 在两端读取同一份 Profile。</p>
+          <p class="roadmap-note">跨设备只同步经过 E2EE 的结构化记忆。后台生成机制不会出现在主导航中。</p>
         </div>
-        <div class="persona-timeline" aria-label="Persona Events 示例">
-          <header><strong>Persona Events</strong><span>Encrypted sync</span></header>
+        <div class="memory-timeline" aria-label="记忆记录示例">
+          <header><strong>Memory</strong><span>2 条待确认 · Encrypted sync</span></header>
           <article>
-            <time>2026-08-09 · 22:30</time>
-            <span class="persona-category">LANGUAGE STYLE</span>
+            <time>今天 · 22:30</time>
+            <span class="memory-category">输出偏好</span>
             <p>偏好简洁、直接的中文技术回答</p>
-            <footer><span>Codex</span><span>one-status</span><span>explicit</span></footer>
+            <footer><span>Codex</span><span>one-status</span><span>明确表达</span></footer>
           </article>
           <article>
-            <time>2026-08-08 · 16:12</time>
-            <span class="persona-category tech">TECH HABIT</span>
+            <time>昨天 · 16:12</time>
+            <span class="memory-category tech">技术习惯</span>
             <p>JavaScript 项目优先使用 pnpm</p>
-            <footer><span>Claude Code</span><span>one-status</span><span>observed × 3</span></footer>
+            <footer><span>Claude Code</span><span>出现 3 次</span><span>待确认</span></footer>
           </article>
           <div class="profile-summary">
-            <span>Profile updated</span><strong>2 active preferences</strong><small>Last observed today</small>
+            <span>后台已更新</span><strong>12 条有效记忆</strong><small>2 条等待确认</small>
           </div>
         </div>
       </section>
 
-      <section class="continuity-section" id="handoff">
+      <section class="connections-section" id="connections" aria-labelledby="connections-title">
+        <div class="section-heading">
+          <p class="eyebrow dark"><span></span> CONNECTIONS · CAPABILITIES</p>
+          <h2 id="connections-title">连接服务时，能力和权限一起就位</h2>
+          <p>连接页面把账号授权、工具能力、Agent 范围和审计状态放在同一行。Capability Pack 继续负责内部适配，用户无需管理另一套安装入口。</p>
+        </div>
+        <div class="connection-table" role="table" aria-label="第三方连接与能力示例">
+          <div class="connection-row connection-head" role="row"><span>服务</span><span>已启用能力</span><span>Agent 访问</span><span>状态</span></div>
+          <div class="connection-row" role="row"><strong><i>GH</i>GitHub</strong><span>仓库读取 · Issue 创建 · PR 评论</span><span>Codex 读写 · Claude 只读</span><span class="health healthy">已连接</span></div>
+          <div class="connection-row" role="row"><strong><i>GC</i>Google Calendar</strong><span>日程读取 · 空闲查询 · 创建日程</span><span>Codex 读取</span><span class="health healthy">已连接</span></div>
+          <div class="connection-row" role="row"><strong><i>SL</i>Slack</strong><span>频道读取 · 搜索 · 消息发送</span><span>等待 Agent 授权</span><span class="health pending">待设置</span></div>
+        </div>
+        <p class="connection-note">第三方服务只授权 One Status 一次；每个 Agent 只连接 One Status，并拥有独立的 action 权限。</p>
+      </section>
+
+      <section class="continuity-section" id="projects">
         <div class="continuity-copy">
-          <p class="eyebrow dark"><span></span> HANDOFF · AVAILABLE TODAY</p>
-          <h2>从一台设备的最后一步继续</h2>
+          <p class="eyebrow dark"><span></span> PROJECTS · HANDOFF</p>
+          <h2>从另一台设备的最后一步继续</h2>
           <p>
-            程序采集 Git branch、commit、dirty state 和测试状态，生成可审计的 Handoff。Secret 扫描与用户确认通过后才会提交并推送。
+            项目页面管理本地仓库、GitHub 映射、同步状态和 Handoff。程序采集 branch、commit、dirty state 与测试结果，Secret 扫描和用户确认通过后才会推送。
           </p>
           <ul>
             <li><span>✓</span> 精确 Git commit 与文件 SHA-256</li>
@@ -201,20 +225,20 @@
           <pre><code><span># One Status Handoff</span>
 
 Current Goal
-Validate Open and Continue
+Connect Key Wallet to device overview
 
 Completed
-✓ OAuth Gateway
 ✓ Encrypted Status sync
-✓ Public Homebrew release
+✓ GitHub connection
+✓ Secret scan passed
 
 Next
-→ Continue on Mac B
+→ Continue on Mac B with Codex
 
 Git State
 branch: main
-commit: 11d9e9fa9de3
-secretScan: passed</code></pre>
+commit: 4df024b30a21
+dirty: false</code></pre>
         </div>
       </section>
 
@@ -237,21 +261,13 @@ secretScan: passed</code></pre>
             <div>
               <span class="install-label">推荐</span>
               <h3>One Status Desktop</h3>
-              <p>安装后从 Applications 或开始菜单启动，独立窗口直接展示 GUI。当前下载版本为 v0.7.0。</p>
+              <p>安装后从 Applications 或开始菜单启动。当前下载版本为 v0.8.0。</p>
             </div>
             <div class="download-grid">
-              <a id="download-mac-arm" href="https://github.com/niyuxuan782/one-status/releases/latest">
-                <strong>macOS Apple Silicon</strong><span>.dmg · M1 及更新机型</span>
-              </a>
-              <a id="download-mac-intel" href="https://github.com/niyuxuan782/one-status/releases/latest">
-                <strong>macOS Intel</strong><span>.dmg · Intel Mac</span>
-              </a>
-              <a id="download-windows" href="https://github.com/niyuxuan782/one-status/releases/latest">
-                <strong>Windows</strong><span>.exe · Windows 10/11 x64</span>
-              </a>
-              <a id="download-linux" href="https://github.com/niyuxuan782/one-status/releases/latest">
-                <strong>Linux</strong><span>.AppImage · x64</span>
-              </a>
+              <a id="download-mac-arm" href="https://github.com/niyuxuan782/one-status/releases/latest"><strong>macOS Apple Silicon</strong><span>.dmg · M1 及更新机型</span></a>
+              <a id="download-mac-intel" href="https://github.com/niyuxuan782/one-status/releases/latest"><strong>macOS Intel</strong><span>.dmg · Intel Mac</span></a>
+              <a id="download-windows" href="https://github.com/niyuxuan782/one-status/releases/latest"><strong>Windows</strong><span>.exe · Windows 10/11 x64</span></a>
+              <a id="download-linux" href="https://github.com/niyuxuan782/one-status/releases/latest"><strong>Linux</strong><span>.AppImage · x64</span></a>
             </div>
           </div>
 
@@ -300,7 +316,7 @@ brew services start niyuxuan782/tap/one-status</code>
             <div>
               <span class="install-label">Node.js 22+</span>
               <h3>CLI / MCP</h3>
-              <p>适合开发者、自托管节点和无桌面环境；安装器会同时安装原生 Device Sidecar，并接入 Codex 与 Claude Code。</p>
+              <p>适合开发者、自托管节点和无桌面环境；安装器会同时安装原生 Device Sidecar。</p>
             </div>
             <div class="command-block wide">
               <div><span>Install CLI</span><button data-copy="curl -fsSL https://niyuxuan782.github.io/one-status/install.sh | bash -s -- --cli">复制</button></div>
@@ -313,21 +329,21 @@ brew services start niyuxuan782/tap/one-status</code>
 
       <section class="security-section" id="security">
         <div>
-          <p class="eyebrow"><span></span> PRIVATE BY DESIGN</p>
-          <h2>服务器无需读取你的工作上下文</h2>
-          <p>Persona、Preferences、Task State 和配置意图在设备端加密。API Key 与 OAuth Token 留在 Permission Vault，Agent 只获得被允许的动作。</p>
+          <p class="eyebrow"><span></span> SECURITY · SETTINGS</p>
+          <h2>切换保持顺手，密钥明文始终受保护</h2>
+          <p>钱包条目、记忆、任务状态和配置意图在设备端加密。模型切换只使用已授权引用；查看或复制密钥必须输入钱包密码。Agent 只获得连接允许的动作。</p>
         </div>
         <div class="security-flow" aria-label="端到端加密流程">
-          <div><strong>Device A</strong><span>Encrypt locally</span></div>
+          <div><strong>Device A</strong><span>Scan and encrypt locally</span></div>
           <i>→</i>
-          <div class="cipher"><strong>Ciphertext</strong><span>Sync intent &amp; state</span></div>
+          <div class="cipher"><strong>E2EE Ciphertext</strong><span>Keys · memory · intent</span></div>
           <i>→</i>
           <div><strong>Device B</strong><span>Decrypt and apply locally</span></div>
         </div>
         <div class="security-links">
-          <a href="https://github.com/niyuxuan782/one-status/blob/main/docs/v0.7-product.md" target="_blank" rel="noreferrer">v0.7 Product Scope</a>
           <a href="https://github.com/niyuxuan782/one-status/blob/main/docs/threat-model.md" target="_blank" rel="noreferrer">Threat Model</a>
           <a href="https://github.com/niyuxuan782/one-status/blob/main/docs/open-core.md" target="_blank" rel="noreferrer">Open Core Policy</a>
+          <a href="https://github.com/niyuxuan782/one-status/releases/tag/v0.8.0" target="_blank" rel="noreferrer">SHA-256 verified downloads</a>
           <a href="http://127.0.0.1:8787/">打开本机工作台</a>
         </div>
       </section>
@@ -336,7 +352,7 @@ brew services start niyuxuan782/tap/one-status</code>
         <div>
           <p class="eyebrow dark"><span></span> OPEN CORE</p>
           <h2>本地核心开放审计</h2>
-          <p>Desktop、CLI、MCP、加密实现和 Sync API 使用 Apache-2.0。模型配置 Sidecar 的开发实现已固定 CC Switch 3.19.2 来源 commit，并随 v0.7 原生产物保留 MIT notice 与版权声明。</p>
+          <p>Desktop、CLI、MCP、加密实现和 Sync API 使用 Apache-2.0。模型配置 Sidecar 固定 CC Switch 3.19.2 来源 commit，并在原生产物中保留 MIT notice 与版权声明。</p>
         </div>
         <div class="contribute-actions">
           <a class="button button-ink" href="https://github.com/niyuxuan782/one-status" target="_blank" rel="noreferrer">GitHub 源码</a>
@@ -356,7 +372,7 @@ brew services start niyuxuan782/tap/one-status</code>
       </div>
     </footer>
 
-    <div class="toast" role="status" aria-live="polite" hidden>已复制</div>
+    <div class="toast" hidden>已复制到剪贴板</div>
     <script src="./app.js" defer></script>
   </body>
 </html>

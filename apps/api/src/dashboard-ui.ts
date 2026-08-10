@@ -74,18 +74,11 @@ export function renderDashboardPage(csrfToken: string): string {
     <aside class="sidebar" id="sidebar">
       <div class="brand"><span class="brand-mark"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="12" fill="#8edab9"/><path d="M18 24c0-5 4-9 10-9h8c6 0 10 4 10 9v16c0 5-4 9-10 9h-8c-6 0-10-4-10-9V24Zm9-2c-2 0-3 1-3 3v14c0 2 1 3 3 3h10c2 0 3-1 3-3V25c0-2-1-3-3-3H27Z" fill="#15271f"/></svg></span><span>One Status</span></div>
       <nav class="nav" aria-label="主导航">
-        ${navLink("/", "devices", "设备与工具")}
-        ${navLink("/models", "database", "模型与来源")}
-        ${navLink("/status", "status", "状态")}
+        ${navLink("/", "overview", "概览")}
+        ${navLink("/models", "key", "密钥钱包")}
         ${navLink("/projects", "projects", "项目")}
-        ${navLink("/handoffs", "cloud", "Handoff")}
-        ${navLink("/environment", "settings", "Agents 与工具")}
-        ${navLink("/capabilities", "capabilities", "能力包")}
         ${navLink("/memory", "brain", "记忆")}
-        ${navLink("/persona", "status", "Persona")}
-        ${navLink("/integrations", "integrations", "连接与权限")}
-        ${navLink("/devices", "devices", "设备")}
-        ${navLink("/activity", "activity", "活动")}
+        ${navLink("/integrations", "integrations", "连接")}
         ${navLink("/security", "shield", "安全")}
       </nav>
       <div class="sidebar-footer">
@@ -96,7 +89,7 @@ export function renderDashboardPage(csrfToken: string): string {
     <div class="workspace">
       <header class="topbar">
         <button class="icon-button mobile-menu" id="mobile-menu" type="button" title="打开导航">${iconMap.menu}</button>
-        <div><p class="eyebrow">ONE STATUS</p><h1 id="page-title">设备与工具</h1></div>
+        <div><p class="eyebrow">ONE STATUS</p><h1 id="page-title">概览</h1></div>
         <div class="topbar-actions">
           <span class="sync-state" id="sync-state"><span></span>已同步</span>
           <button class="icon-button" id="refresh" type="button" title="刷新">${iconMap.refresh}</button>
@@ -250,6 +243,9 @@ a { color: inherit; }
 .intent-pending, .intent-applying { color: #46618f; background: #e5ebf4; }
 .model-table td small { color: var(--muted); }
 .model-table code { overflow-wrap: anywhere; white-space: normal; }
+.wallet-secret { display: grid; gap: 6px; justify-items: start; }
+.wallet-secret code { min-width: 96px; color: var(--ink); font-size: 12px; letter-spacing: 0; }
+.wallet-revealed { user-select: none; color: var(--ink); border-color: var(--line-strong); background: var(--surface-subtle); }
 .result-cell { max-width: 320px; overflow-wrap: anywhere; white-space: normal; }
 .configuration-targets { display: grid; gap: 10px; }
 .configuration-device { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 0; padding: 12px; border: 1px solid var(--line); border-radius: 8px; }
@@ -389,6 +385,13 @@ a { color: inherit; }
 .capability-target strong, .capability-target small { display: block; }
 .capability-target small { margin-top: 2px; color: var(--muted); }
 .approval-section + .approval-section { margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--line); }
+.provider-capabilities { display: grid; gap: 9px; margin-top: 14px; padding-top: 13px; border-top: 1px solid var(--line); }
+.provider-capability { display: grid; gap: 9px; padding: 2px 0; }
+.provider-capability + .provider-capability { padding-top: 12px; border-top: 1px solid var(--line); }
+.provider-capability-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.provider-capability-head strong, .provider-capability-head small { display: block; }
+.provider-capability-head small { margin-top: 3px; color: var(--muted); font-size: 9px; }
+.provider-capability-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
 .approval-section > p { overflow-wrap: anywhere; }
 .connection { margin-top: 14px; padding-top: 13px; border-top: 1px solid var(--line); }
 .connection-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
@@ -522,8 +525,11 @@ a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outlin
   .main { padding: 22px 16px 42px; }
   .form-grid { grid-template-columns: 1fr; }
   .metrics { grid-template-columns: 1fr 1fr; }
-  .preference-row, .memory-row { grid-template-columns: 1fr auto; gap: 8px; }
-  .preference-row > :first-child, .memory-row > :first-child { grid-column: 1; }
+  .preference-row { grid-template-columns: 1fr auto; gap: 8px; }
+  .preference-row > :first-child { grid-column: 1; }
+  .memory-row { grid-template-columns: 1fr; align-items: start; gap: 8px; }
+  .memory-row > * { grid-column: 1; min-width: 0; }
+  .memory-row .row-actions { justify-content: flex-start; flex-wrap: wrap; }
   .preview-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .provider-card .card-actions { flex-wrap: wrap; }
   .device-head { flex-direction: column; }
@@ -544,12 +550,17 @@ a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outlin
   .source-table td:nth-child(2)::before { content: "类型"; }
   .source-table td:nth-child(3)::before { content: "协议 / Endpoint"; }
   .source-table td:nth-child(4)::before { content: "AI 工具"; }
-  .source-table td:nth-child(5)::before { content: "Credential"; }
+  .source-table td:nth-child(5)::before { content: "API Key"; }
   .source-table td:nth-child(6)::before { content: "验证"; }
   .models-table td:nth-child(2)::before { content: "来源"; }
   .models-table td:nth-child(3)::before { content: "模型 ID"; }
   .models-table td:nth-child(4)::before { content: "AI 工具"; }
   .models-table td:nth-child(5)::before { content: "已配置"; }
+  .overview-model-table td:nth-child(2)::before { content: "密钥来源"; }
+  .overview-model-table td:nth-child(3)::before { content: "兼容工具"; }
+  .overview-model-table td:nth-child(4)::before { content: "已配置"; }
+  .overview-model-table td:nth-child(5)::before { content: "消耗量"; }
+  .overview-model-table td:nth-child(6)::before { content: "最近统计"; }
 }
 @media (max-width: 430px) {
   .metrics { grid-template-columns: 1fr; }
@@ -610,24 +621,17 @@ function dashboardClient(): void {
   let onboardingMode: "login" | "register" = "register";
   let pendingCapabilityInstall: any;
   let pendingModelConfiguration: any;
-  let personaView: "profile" | "events" | "policy" = "profile";
+  let memoryView: "records" | "profile" | "events" | "policy" = "records";
   let toastTimer: number | undefined;
 
   gatewayAddress.textContent = location.host;
 
   const routes: Record<string, { label: string; render: () => string }> = {
-    "/": { label: "设备与工具", render: renderOverview },
-    "/models": { label: "模型与来源", render: renderModels },
-    "/status": { label: "状态", render: renderStatus },
+    "/": { label: "概览", render: renderOverview },
+    "/models": { label: "密钥钱包", render: renderModels },
     "/projects": { label: "项目", render: renderProjects },
-    "/handoffs": { label: "Handoff", render: renderHandoffs },
-    "/environment": { label: "Agents 与工具", render: renderEnvironment },
-    "/capabilities": { label: "能力包", render: renderCapabilities },
     "/memory": { label: "记忆", render: renderMemory },
-    "/persona": { label: "Persona", render: renderPersona },
-    "/integrations": { label: "连接与权限", render: renderIntegrations },
-    "/devices": { label: "设备", render: renderDevices },
-    "/activity": { label: "活动", render: renderActivity },
+    "/integrations": { label: "连接", render: renderIntegrations },
     "/security": { label: "安全", render: renderSecurity },
   };
 
@@ -690,13 +694,13 @@ function dashboardClient(): void {
         return openModelSourceModal(target.dataset.id);
       }
       if (action === "delete-model-source") {
-        if (confirm("删除这个模型来源？关联模型和待执行配置也会删除。")) {
+        if (confirm("删除这份密钥配置？关联模型和待执行配置也会删除。")) {
           await api(
             `/v1/dashboard/model-sources/${encodeURIComponent(target.dataset.id || "")}`,
             { method: "DELETE" },
           );
           await load(false);
-          toast("模型来源已删除");
+          toast("密钥配置已删除");
         }
         return;
       }
@@ -719,8 +723,17 @@ function dashboardClient(): void {
           toolId: target.dataset.tool,
         });
       }
-      if (action === "set-persona-view") {
-        personaView = (target.dataset.view || "profile") as typeof personaView;
+      if (action === "reveal-model-credential") {
+        return openWalletPasswordModal(
+          target.dataset.id!,
+          target.dataset.mode === "copy" ? "copy" : "view",
+        );
+      }
+      if (action === "change-wallet-password") {
+        return openWalletPasswordChangeModal();
+      }
+      if (action === "set-memory-view") {
+        memoryView = (target.dataset.view || "records") as typeof memoryView;
         renderRoute();
         return;
       }
@@ -728,13 +741,13 @@ function dashboardClient(): void {
         return openPersonaEventModal(target.dataset.id!);
       }
       if (action === "delete-persona-event") {
-        if (confirm("删除这条 Persona 观察？Profile 会根据剩余记录重新生成。")) {
+        if (confirm("删除这条观察记录？用户细节会根据剩余记录重新生成。")) {
           await api(
             `/v1/dashboard/persona/events/${encodeURIComponent(target.dataset.id || "")}`,
             { method: "DELETE" },
           );
           await load(false);
-          toast("Persona 记录已删除");
+          toast("观察记录已删除");
         }
         return;
       }
@@ -822,12 +835,12 @@ function dashboardClient(): void {
         return openCapabilityModal(target.dataset.pack!);
       }
       if (action === "remove-capability") {
-        if (confirm("移除这个能力包的跨设备安装记录？已生成的本机文件会保留，便于恢复或手动删除。")) {
+        if (confirm("停用这项连接能力？已生成的本机文件会保留，便于恢复或手动删除。")) {
           await api(`/v1/dashboard/capabilities/${encodeURIComponent(target.dataset.pack || "")}`, {
             method: "DELETE",
           });
           await load(false);
-          toast("能力包安装记录已移除");
+          toast("连接能力已停用");
         }
         return;
       }
@@ -1153,7 +1166,7 @@ function dashboardClient(): void {
           },
         });
         closeModal();
-        toast("模型来源已保存");
+        toast("密钥配置已保存");
       }
       if (form.dataset.form === "model") {
         const id = stringValue(data, "id");
@@ -1210,6 +1223,45 @@ function dashboardClient(): void {
         closeModal();
         toast("模型配置已提交；离线设备会在上线后应用");
       }
+      if (form.dataset.form === "wallet-reveal") {
+        const sourceId = stringValue(data, "sourceId");
+        const mode = stringValue(data, "mode") === "copy" ? "copy" : "view";
+        const result = await api(
+          `/v1/dashboard/model-wallet/${encodeURIComponent(sourceId)}/reveal`,
+          {
+            method: "POST",
+            body: { password: stringValue(data, "password") },
+          },
+        );
+        const secret = revealedModelCredential(result);
+        if (mode === "copy") {
+          await copyToClipboard(secret);
+          closeModal();
+          toast("密钥已复制，本次授权不会保留");
+          return;
+        }
+        openModal(
+          "查看 API Key",
+          `<p class="oauth-help">页面关闭后会立即清除本次明文展示。明文区域禁止选择；复制操作需要重新输入钱包密码。</p><code class="recovery-key wallet-revealed">${escapeHtml(secret)}</code><div class="form-actions"><button class="button" data-close-modal type="button">${icon("check")}关闭</button></div>`,
+        );
+        return;
+      }
+      if (form.dataset.form === "wallet-password-change") {
+        const newPassword = stringValue(data, "newPassword");
+        if (newPassword !== stringValue(data, "confirmPassword")) {
+          throw new Error("两次输入的新钱包密码不一致。");
+        }
+        await api("/v1/dashboard/model-wallet/password", {
+          method: "POST",
+          body: {
+            currentPassword: stringValue(data, "currentPassword"),
+            newPassword,
+          },
+        });
+        closeModal();
+        toast("钱包密码已更新并加密同步");
+        return;
+      }
       if (form.dataset.form === "persona-event") {
         const id = stringValue(data, "id");
         await api(
@@ -1224,13 +1276,13 @@ function dashboardClient(): void {
           },
         );
         closeModal();
-        toast("Persona 记录已更新");
+        toast("观察记录已更新");
       }
       if (form.dataset.form === "persona-policy") {
         const customBlocked = csv(stringValue(data, "customBlockedCategories"));
         const allowedConfidences = data.getAll("allowedConfidences").map(String);
         if (allowedConfidences.length === 0) {
-          throw new Error("至少保留一种可记录的 Confidence。");
+          throw new Error("至少保留一种可记录的可信度。");
         }
         await api("/v1/dashboard/persona/policy", {
           method: "PUT",
@@ -1245,7 +1297,7 @@ function dashboardClient(): void {
             allowedConfidences,
           },
         });
-        toast("Persona 记录策略已保存");
+        toast("记忆记录策略已保存");
       }
       if (form.dataset.form === "capability") {
         const packId = stringValue(data, "packId");
@@ -1272,7 +1324,7 @@ function dashboardClient(): void {
         }
         await saveCapabilityIntent(packId, targets, enabled);
         closeModal();
-        toast("能力包目标已保存并同步");
+        toast("Agent 安装目标已保存并同步");
       }
       if (form.dataset.form === "capability-apply") {
         if (!pendingCapabilityInstall) throw new Error("安装预览已失效。");
@@ -1296,7 +1348,7 @@ function dashboardClient(): void {
         );
         pendingCapabilityInstall = undefined;
         closeModal();
-        toast("能力包已安装并同步");
+        toast("连接能力已安装并同步");
       }
       if (form.dataset.form === "provider") {
         const provider = stringValue(data, "provider");
@@ -1352,18 +1404,6 @@ function dashboardClient(): void {
       }
       appShell.classList.remove("onboarding");
       snapshot = await api("/v1/dashboard/snapshot");
-      if (location.pathname === "/environment") {
-        inventory = await api("/v1/dashboard/local-inventory");
-      }
-      if (location.pathname === "/handoffs") {
-        [handoffs, inventory] = await Promise.all([
-          api("/v1/dashboard/handoffs"),
-          api("/v1/dashboard/local-inventory"),
-        ]);
-      }
-      if (location.pathname === "/activity") {
-        handoffs = await api("/v1/dashboard/handoffs");
-      }
       syncState.className = "sync-state";
       syncState.innerHTML = "<span></span>版本 " + snapshot.version;
       renderRoute();
@@ -1407,13 +1447,28 @@ function dashboardClient(): void {
 
   function renderOverview(): string {
     const devices = snapshot.account.devices;
+    const control = snapshot.status.deviceControl;
+    const models = Object.values(control.models) as any[];
+    const installedToolCount = Object.values(control.reports).reduce(
+      (total: number, report: any) =>
+        total + report.tools.filter((tool: any) => tool.installed).length,
+      0,
+    );
     return `
-      ${sectionHeader(
-        "设备与 AI 工具",
-        `${devices.length} 台设备 · ${devices.filter((device: any) => device.online).length} 台在线`,
+      ${pageLead(
+        `${devices.length} 台设备 · ${devices.filter((device: any) => device.online).length} 台在线 · ${installedToolCount} 个已安装工具`,
         `<button class="button secondary" data-action="sync-device-control" type="button">${icon("refresh")}扫描当前设备</button>`,
       )}
-      <div class="device-matrix">${devices.map((device: any) => renderDeviceBlock(device)).join("")}</div>`;
+      <div class="device-matrix">${devices.map((device: any) => renderDeviceBlock(device)).join("")}</div>
+      <section class="data-section mt-20">
+        ${sectionHeader("可配置模型", `${models.length} 个模型 · ${snapshot.modelUsage?.scannedAt ? `用量统计于 ${formatDate(snapshot.modelUsage.scannedAt)}` : "等待本机会话用量扫描"}`)}
+        ${models.length ? `<div class="table-wrap"><table class="model-table overview-model-table"><thead><tr><th>模型</th><th>密钥来源</th><th>兼容工具</th><th>已配置</th><th>消耗量</th><th>最近统计</th><th></th></tr></thead><tbody>${models.map((model: any) => {
+          const source = control.sources[model.sourceId];
+          const configured = Object.values(control.reports).flatMap((report: any) => report.tools).filter((tool: any) => tool.currentModelRef === model.id).length;
+          const usage = modelUsageSummary(model);
+          return `<tr><td><strong>${escapeHtml(model.name)}</strong><br><small>${escapeHtml(model.modelId)}</small></td><td><strong>${escapeHtml(source?.label || model.sourceId)}</strong><br><small>${escapeHtml(endpointHost(source?.endpoint) || modelSourceKindLabel(source?.kind))}</small></td><td>${renderToolTags(model.supportedTools)}</td><td>${configured} 个工具</td><td><strong>${escapeHtml(usage.primary)}</strong><br><small>${escapeHtml(usage.detail)}</small></td><td>${usage.updatedAt ? formatDate(usage.updatedAt) : "等待扫描"}</td><td><button class="button secondary" data-action="configure-model" data-model="${escapeHtml(model.id)}" type="button">切换</button></td></tr>`;
+        }).join("")}</tbody></table></div>` : emptyState("database", "暂无可配置模型", "密钥钱包完成自动扫描后会在这里显示模型")}
+      </section>`;
   }
 
   function renderModels(): string {
@@ -1423,15 +1478,16 @@ function dashboardClient(): void {
     const intents = (Object.values(control.intents) as any[]).sort(
       (left, right) => right.updatedAt.localeCompare(left.updatedAt),
     );
-    const actions = `<div class="header-actions"><button class="button secondary" data-action="add-model-source" type="button">${icon("plus")}来源</button><button class="button" data-action="add-model" type="button" ${sources.length ? "" : "disabled"}>${icon("plus")}模型</button></div>`;
+    const actions = `<div class="header-actions"><button class="button secondary" data-action="add-model-source" type="button">${icon("plus")}添加密钥</button><button class="button" data-action="add-model" type="button" ${sources.length ? "" : "disabled"}>${icon("plus")}添加模型</button></div>`;
     return `
-      ${sectionHeader("模型与来源", `${sources.length} 个来源 · ${models.length} 个模型`, actions)}
+      ${pageLead(`${sources.length} 份加密配置 · ${models.length} 个模型`, actions)}
       <section class="data-section">
-        <div class="panel-title"><h3>模型来源</h3><span>${sources.length}</span></div>
-        ${sources.length ? `<div class="table-wrap"><table class="model-table source-table"><thead><tr><th>来源</th><th>类型</th><th>协议 / Endpoint</th><th>AI 工具</th><th>Credential</th><th>验证</th><th></th></tr></thead><tbody>${sources.map((source: any) => {
+        <div class="panel-title"><h3>API、Endpoint 与模型来源</h3><span>E2EE 同步</span></div>
+        ${sources.length ? `<div class="table-wrap"><table class="model-table source-table wallet-table"><thead><tr><th>名称</th><th>类型</th><th>协议 / Endpoint</th><th>AI 工具</th><th>API Key</th><th>验证</th><th></th></tr></thead><tbody>${sources.map((source: any) => {
           const credential = (snapshot.modelCredentialSources || []).find((entry: any) => entry.sourceId === source.id);
-          return `<tr><td><strong>${escapeHtml(source.label)}</strong><br><small>${escapeHtml(source.id)}</small></td><td>${escapeHtml(modelSourceKindLabel(source.kind))}</td><td><strong>${escapeHtml(modelProtocolLabel(source.protocol))}</strong><br><small>${escapeHtml(endpointHost(source.endpoint) || "默认 Endpoint")}</small></td><td>${renderToolTags(source.supportedTools)}</td><td><span class="health-state health-${escapeHtml(source.credentialStatus)}">${escapeHtml(credentialStatusLabel(source.credentialStatus))}</span></td><td>${formatDate(source.lastVerifiedAt || credential?.updatedAt)}</td><td><div class="row-actions"><button class="button secondary" data-action="edit-model-source" data-id="${escapeHtml(source.id)}" type="button">编辑</button><button class="icon-button" data-action="delete-model-source" data-id="${escapeHtml(source.id)}" type="button" title="删除来源">${icon("trash")}</button></div></td></tr>`;
-        }).join("")}</tbody></table></div>` : emptyState("database", "暂无模型来源", "")}
+          const hasCredential = Boolean(credential) && source.credentialStatus !== "missing";
+          return `<tr><td><strong>${escapeHtml(source.label)}</strong><br><small>${escapeHtml(source.id)}</small></td><td>${escapeHtml(modelSourceKindLabel(source.kind))}</td><td><strong>${escapeHtml(modelProtocolLabel(source.protocol))}</strong><br><small>${escapeHtml(endpointHost(source.endpoint) || "默认 Endpoint")}</small></td><td>${renderToolTags(source.supportedTools)}</td><td><div class="wallet-secret"><code>${hasCredential ? "••••••••••••" : "未保存"}</code><span class="health-state health-${escapeHtml(source.credentialStatus)}">${escapeHtml(credentialStatusLabel(source.credentialStatus))}</span></div></td><td>${formatDate(source.lastVerifiedAt || credential?.updatedAt)}</td><td><div class="row-actions">${hasCredential ? `<button class="button secondary" data-action="reveal-model-credential" data-mode="view" data-id="${escapeHtml(source.id)}" type="button">${icon("key")}查看</button><button class="icon-button" data-action="reveal-model-credential" data-mode="copy" data-id="${escapeHtml(source.id)}" type="button" title="验证密码并复制密钥" aria-label="验证密码并复制密钥">${icon("copy")}</button>` : ""}<button class="button secondary" data-action="edit-model-source" data-id="${escapeHtml(source.id)}" type="button">编辑</button><button class="icon-button" data-action="delete-model-source" data-id="${escapeHtml(source.id)}" type="button" title="删除密钥配置">${icon("trash")}</button></div></td></tr>`;
+        }).join("")}</tbody></table></div>` : emptyState("key", "密钥钱包为空", "当前设备扫描到的 AI 配置会自动加密进入钱包")}
       </section>
       <section class="data-section mt-20">
         <div class="panel-title"><h3>模型</h3><span>${models.length}</span></div>
@@ -1449,19 +1505,6 @@ function dashboardClient(): void {
           return `<tr><td>${escapeHtml(device?.name || intent.deviceId)}</td><td>${escapeHtml(agentLabel(intent.toolId))}</td><td>${escapeHtml(model?.name || intent.modelId)}</td><td><span class="intent-status intent-${escapeHtml(intent.status)}">${escapeHtml(intentStatusLabel(intent.status))}</span></td><td>${formatDate(intent.updatedAt)}</td><td class="result-cell">${escapeHtml(intent.error || (intent.status === "applied" ? "已应用" : intent.status === "rollback" ? "已恢复原配置" : "—"))}</td></tr>`;
         }).join("")}</tbody></table></div>` : emptyState("activity", "暂无配置任务", "")}
       </section>`;
-  }
-
-  function renderPersona(): string {
-    const persona = snapshot.status.persona;
-    const views = [
-      { id: "profile", label: "Profile" },
-      { id: "events", label: `Events ${persona.events.length}` },
-      { id: "policy", label: "Policy" },
-    ];
-    return `
-      ${sectionHeader("Persona", `${Object.keys(persona.profile).length} 项当前偏好 · ${persona.events.length} 条观察`)}
-      <div class="section-header persona-toolbar"><div class="segmented" role="tablist">${views.map((view) => `<button class="${personaView === view.id ? "active" : ""}" data-action="set-persona-view" data-view="${view.id}" type="button">${view.label}</button>`).join("")}</div><p>${persona.policy.enabled ? "记录已启用" : "记录已暂停"}</p></div>
-      ${personaView === "events" ? renderPersonaEvents(persona.events) : personaView === "policy" ? renderPersonaPolicy(persona) : renderPersonaProfile(persona)}`;
   }
 
   function renderStatus(): string {
@@ -1495,7 +1538,7 @@ function dashboardClient(): void {
     const projects = Object.values(snapshot.status.projects) as any[];
     const tasks = Object.values(snapshot.status.tasks) as any[];
     return `
-      ${sectionHeader("项目", `${projects.length} 个项目 · ${snapshot.status.workspace.activeProjectId ? "已设置活动项目" : "无活动项目"}`, `<button class="button" data-action="add-project" type="button">${icon("plus")}新建项目</button>`)}
+      ${pageLead(`${projects.length} 个项目 · ${snapshot.status.workspace.activeProjectId ? "已设置活动项目" : "无活动项目"}`, `<button class="button" data-action="add-project" type="button">${icon("plus")}新建项目</button>`)}
       ${projects.length ? `<div class="card-grid">${projects.map((project) => `
         <article class="item-card ${project.id === snapshot.status.workspace.activeProjectId ? "active spotlight" : ""}">
           <div class="card-head"><div><h3>${escapeHtml(project.name)}</h3><p>${escapeHtml(project.id)}</p></div>${project.id === snapshot.status.workspace.activeProjectId ? '<span class="scope">活动</span>' : ""}</div>
@@ -1584,36 +1627,27 @@ function dashboardClient(): void {
       ${inventory.warnings.length ? `<section class="panel"><div class="panel-title"><h3>扫描提示</h3><span>${inventory.warnings.length}</span></div>${inventory.warnings.map((warning: string) => `<p>${escapeHtml(warning)}</p>`).join("")}</section>` : ""}`;
   }
 
-  function renderCapabilities(): string {
-    const catalog = snapshot.capabilityPacks || [];
+  function renderProviderCapabilities(providerId: string): string {
+    const catalog = (snapshot.capabilityPacks || []).filter(
+      (entry: any) => entry.manifest.authorization?.provider === providerId,
+    );
+    if (catalog.length === 0) return "";
     const installations = snapshot.status.capabilities?.installations || {};
-    const installed = Object.values(installations).filter((entry: any) => entry.enabled);
-    const targetCount = new Set(installed.flatMap((entry: any) => entry.targets || [])).size;
-    return `
-      ${sectionHeader("能力包", `${catalog.length} 个内置能力包 · ${installed.length} 个已启用`)}
-      <div class="metrics">
-        ${metric("capabilities", "能力包", catalog.length, `${installed.length} 个已启用`)}
-        ${metric("integrations", "Gateway Actions", catalog.reduce((total: number, entry: any) => total + entry.manifest.tools.length, 0), "统一权限入口")}
-        ${metric("devices", "目标平台", targetCount, "跨设备同步安装意图")}
-        ${metric("shield", "授权主体", snapshot.integrations.connections.length, "One Status Permission Vault")}
-      </div>
-      <div class="card-grid">${catalog.map((entry: any) => {
+    return `<div class="provider-capabilities">${catalog.map((entry: any) => {
         const pack = entry.manifest;
         const installation = installations[pack.name];
         const writeCount = pack.tools.filter((tool: any) => tool.readOnly === false).length;
-        const provider = pack.authorization?.provider;
-        const connected = provider
-          ? snapshot.integrations.connections.some((connection: any) => connection.provider === provider)
-          : true;
-        return `<article class="item-card capability-card">
-          <div class="card-head"><div class="capability-heading"><span class="provider-icon">${icon("capabilities")}</span><div><h3>${escapeHtml(pack.displayName)}</h3><p>${installation?.enabled ? `已启用 · ${installation.targets.length} 个目标` : "尚未启用"}</p></div></div><span class="connection-status ${connected ? "connected" : "expired"}">${connected ? "授权就绪" : "需要连接"}</span></div>
-          <div class="card-body"><p>${escapeHtml(pack.description)}</p><div class="capability-meta"><span class="tag">v${escapeHtml(pack.version)}</span><span class="tag">${pack.tools.length} actions</span><span class="tag">${writeCount} 写入确认</span><span class="tag">${escapeHtml(providerLabel(provider || ""))}</span></div>${installation ? `<div class="tag-list mt-12">${installation.targets.map((target: string) => `<span class="scope">${escapeHtml(capabilityTargetLabel(target))}</span>`).join("")}</div>` : ""}</div>
-          <div class="card-actions"><small>${installation ? `摘要 ${escapeHtml(entry.digest.slice(0, 19))}…` : `${pack.adapters.length} 种适配目标`}</small><div class="provider-buttons">${installation ? `<button class="button secondary" data-action="remove-capability" data-pack="${escapeHtml(pack.name)}" type="button">移除</button>` : ""}<button class="button" data-action="configure-capability" data-pack="${escapeHtml(pack.name)}" type="button">${icon("settings")}${installation ? "配置目标" : "选择目标"}</button></div></div>
-        </article>`;
+        return `<section class="provider-capability">
+          <div class="provider-capability-head"><div><strong>${escapeHtml(capabilityDisplayName(pack))}</strong><small>${pack.tools.length} 项操作 · ${writeCount} 项写入确认</small></div><span class="connection-status ${installation?.enabled ? "connected" : "expired"}">${installation?.enabled ? "已启用" : "待安装"}</span></div>
+          <p>${escapeHtml(capabilityDescription(pack))}</p>
+          <div class="tag-list">${pack.tools.slice(0, 4).map((tool: any) => `<span class="tag">${escapeHtml(tool.id)}</span>`).join("")}${pack.tools.length > 4 ? `<span class="tag">+${pack.tools.length - 4}</span>` : ""}</div>
+          <div class="provider-capability-actions"><div class="tag-list">${installation?.targets?.length ? installation.targets.map((target: string) => `<span class="scope">${escapeHtml(capabilityTargetLabel(target))}</span>`).join("") : '<span class="tag">尚未选择 Agent</span>'}</div><div class="provider-buttons">${installation ? `<button class="button secondary" data-action="remove-capability" data-pack="${escapeHtml(pack.name)}" type="button">停用</button>` : ""}<button class="button secondary" data-action="configure-capability" data-pack="${escapeHtml(pack.name)}" type="button">${icon("settings")}${installation ? "配置 Agent" : "安装到 Agent"}</button></div></div>
+        </section>`;
       }).join("")}</div>`;
   }
 
   function renderMemory(): string {
+    const persona = snapshot.status.persona;
     const candidates = snapshot.status.memory.filter((entry: any) => entry.state === "candidate");
     const memories = snapshot.status.memory.filter((entry: any) =>
       memoryFilter === "all"
@@ -1622,10 +1656,19 @@ function dashboardClient(): void {
           ? entry.state === "candidate"
           : entry.scope === memoryFilter,
     );
-    return `
-      ${sectionHeader("记忆", `${snapshot.status.memory.length} 条加密记录 · ${candidates.length} 条待确认`, `<button class="button" data-action="add-memory" type="button">${icon("plus")}添加记忆</button>`)}
+    const views = [
+      { id: "records", label: `记忆 ${snapshot.status.memory.length}` },
+      { id: "profile", label: `用户细节 ${Object.keys(persona.profile).length}` },
+      { id: "events", label: `观察记录 ${persona.events.length}` },
+      { id: "policy", label: "记录策略" },
+    ];
+    const recordList = `
       <div class="section-header"><div class="segmented">${["all", "candidate", "user", "project", "session"].map((scope) => `<button class="${memoryFilter === scope ? "active" : ""}" data-action="filter-memory" data-scope="${scope}" type="button">${scope === "all" ? "全部" : scope === "candidate" ? `待确认 ${candidates.length}` : scopeLabel(scope)}</button>`).join("")}</div><p>${memories.length} 条</p></div>
       ${memories.length ? `<div class="memory-list">${memories.map((entry: any) => `<div class="memory-row"><div><span class="scope">${scopeLabel(entry.scope)}</span>${entry.state === "candidate" ? '<span class="task-status task-in_progress mt-6">待确认</span>' : ""}</div><div><p>${escapeHtml(entry.content)}</p><div class="tag-list">${entry.tags.map((tag: string) => `<span class="tag">${escapeHtml(tag)}</span>`).join("")}</div><small>${escapeHtml(memoryOriginLabel(entry))} · ${formatDate(entry.updatedAt)}</small></div><div class="row-actions">${entry.state === "candidate" ? `<button class="button" data-action="confirm-memory" data-id="${escapeHtml(entry.id)}" type="button">${icon("check")}确认</button>` : ""}<button class="button secondary" data-action="edit-memory" data-id="${escapeHtml(entry.id)}" type="button">编辑</button><button class="icon-button" data-action="delete-memory" data-id="${escapeHtml(entry.id)}" type="button" title="删除">${icon("trash")}</button></div></div>`).join("")}</div>` : emptyState("brain", "当前筛选下没有记忆", "当前记忆列表为空")}`;
+    return `
+      ${pageLead(`${snapshot.status.memory.length} 条加密记录 · ${persona.events.length} 条用户观察`, memoryView === "records" ? `<button class="button" data-action="add-memory" type="button">${icon("plus")}添加记忆</button>` : "")}
+      <div class="section-header persona-toolbar"><div class="segmented" role="tablist" aria-label="记忆视图">${views.map((view) => `<button class="${memoryView === view.id ? "active" : ""}" data-action="set-memory-view" data-view="${view.id}" type="button">${view.label}</button>`).join("")}</div><p>${persona.policy.enabled ? "记忆观察已启用" : "记忆观察已暂停"}</p></div>
+      ${memoryView === "records" ? recordList : memoryView === "events" ? renderPersonaEvents(persona.events) : memoryView === "policy" ? renderPersonaPolicy(persona) : renderPersonaProfile(persona)}`;
   }
 
   function renderIntegrations(): string {
@@ -1640,8 +1683,9 @@ function dashboardClient(): void {
         }).join("")}</div></section>`
       : "";
     return `
-      ${sectionHeader("连接与权限", `${integrations.connections.length} 个连接 · ${integrations.grants.length} 条 Agent 授权`)}
+      ${pageLead(`${integrations.connections.length} 个服务账号 · ${integrations.grants.length} 条 Agent 授权`)}
       ${approvalPanel}
+      <section class="data-section mt-20"><div class="panel-title"><h3>服务账号与权限</h3><span>${integrations.providers.length} 个服务</span></div>
       <div class="card-grid">${integrations.providers.map((provider: any) => {
         const connections = integrations.connections.filter((connection: any) => connection.provider === provider.id);
         const tokenMode = provider.authMode === "token";
@@ -1650,11 +1694,11 @@ function dashboardClient(): void {
           : "";
         return `<article class="item-card provider-card provider-${provider.id}"><span class="provider-line"></span>
           <div class="card-head"><div class="provider-heading"><span class="provider-icon">${providerIcon(provider.id)}</span><div><h3>${escapeHtml(provider.label)}</h3><p>${connections.length ? `${connections.length} 个账号已连接` : provider.configured ? tokenMode ? "API Key 已配置" : "OAuth App 已配置" : provider.id === "github" ? "可配置 OAuth App 或导入 gh" : tokenMode ? "需要配置 API Key" : "需要配置 OAuth App"}</p></div></div><button class="icon-button" data-action="configure-provider" data-provider="${provider.id}" type="button" title="配置">${icon("settings")}</button></div>
-          <div class="card-body">${escapeHtml(provider.description)}<div class="tag-list provider-scopes">${provider.scopes.map((scope: string) => `<span class="tag">${escapeHtml(shortScope(scope))}</span>`).join("")}</div></div>
+          <div class="card-body">${escapeHtml(provider.description)}<div class="tag-list provider-scopes">${provider.scopes.map((scope: string) => `<span class="tag">${escapeHtml(shortScope(scope))}</span>`).join("")}</div>${renderProviderCapabilities(provider.id)}</div>
           ${connections.map((connection: any) => renderConnection(connection, provider)).join("")}
           <div class="card-actions"><small>${connections.length ? connections.length + " 个账号" : provider.configured ? tokenMode ? "可以导入用户 Token" : "可以开始账号授权" : provider.id === "github" ? "gh 登录可直接导入" : tokenMode ? "先保存 API Key" : "先完成 App 配置"}</small><div class="provider-buttons">${cliImport}<button class="button ${provider.configured ? "" : "secondary"}" data-action="connect-provider" data-provider="${provider.id}" type="button" ${provider.configured ? "" : "disabled"}>${icon("key")}${tokenMode ? "导入 Token" : connections.length ? "连接其他账号" : "连接账号"}</button></div></div>
         </article>`;
-      }).join("")}</div>`;
+      }).join("")}</div></section>`;
   }
 
   function renderConnection(connection: any, provider: any): string {
@@ -1695,8 +1739,8 @@ function dashboardClient(): void {
   function renderPersonaProfile(persona: any): string {
     const entries = Object.values(persona.profile) as any[];
     return entries.length
-      ? `<div class="table-wrap"><table class="persona-table"><thead><tr><th>类别</th><th>当前偏好</th><th>Confidence</th><th>观察</th><th>最近观察</th><th></th></tr></thead><tbody>${entries.sort((left, right) => left.category.localeCompare(right.category)).map((entry: any) => `<tr><td><span class="scope">${escapeHtml(personaCategoryLabel(entry.category))}</span><br><small>${escapeHtml(entry.category)}</small></td><td class="persona-content">${escapeHtml(entry.content)}</td><td>${escapeHtml(confidenceLabel(entry.confidence))}</td><td>${entry.observationCount} 次</td><td>${formatDate(entry.lastObservedAt)}</td><td><button class="button secondary" data-action="edit-persona-event" data-id="${escapeHtml(entry.sourceEventIds[0])}" type="button">编辑记录</button></td></tr>`).join("")}</tbody></table></div>`
-      : emptyState("status", "暂无 Persona Profile", "");
+      ? `<div class="table-wrap"><table class="persona-table"><thead><tr><th>类别</th><th>当前用户细节</th><th>可信度</th><th>观察</th><th>最近观察</th><th></th></tr></thead><tbody>${entries.sort((left, right) => left.category.localeCompare(right.category)).map((entry: any) => `<tr><td><span class="scope">${escapeHtml(personaCategoryLabel(entry.category))}</span><br><small>${escapeHtml(entry.category)}</small></td><td class="persona-content">${escapeHtml(entry.content)}</td><td>${escapeHtml(confidenceLabel(entry.confidence))}</td><td>${entry.observationCount} 次</td><td>${formatDate(entry.lastObservedAt)}</td><td><button class="button secondary" data-action="edit-persona-event" data-id="${escapeHtml(entry.sourceEventIds[0])}" type="button">编辑记录</button></td></tr>`).join("")}</tbody></table></div>`
+      : emptyState("brain", "暂无用户细节", "有效观察会在本机归并为用户习惯、偏好、目标与规划");
   }
 
   function renderPersonaEvents(eventsValue: any[]): string {
@@ -1707,9 +1751,9 @@ function dashboardClient(): void {
       ? `<div class="persona-events">${events.map((entry: any) => {
           const agents = [...new Set(entry.observations.map((observation: any) => agentLabel(observation.sourceAgent)))];
           const projects = [...new Set(entry.observations.map((observation: any) => observation.sourceProject).filter(Boolean))];
-          return `<article class="persona-event"><div class="persona-event-meta"><span class="scope">${escapeHtml(personaCategoryLabel(entry.category))}</span><span>${escapeHtml(confidenceLabel(entry.confidence))}</span><span>${entry.observationCount} 次</span></div><p>${escapeHtml(entry.content)}</p><footer><div><strong>${escapeHtml(agents.join("、"))}</strong><small>${projects.length ? `项目 ${escapeHtml(projects.join("、"))} · ` : ""}${formatDate(entry.observedAt)} → ${formatDate(entry.lastObservedAt)}</small></div><div class="row-actions"><button class="button secondary" data-action="edit-persona-event" data-id="${escapeHtml(entry.id)}" type="button">编辑</button><button class="icon-button" data-action="delete-persona-event" data-id="${escapeHtml(entry.id)}" type="button" title="删除 Persona 记录">${icon("trash")}</button></div></footer></article>`;
+          return `<article class="persona-event"><div class="persona-event-meta"><span class="scope">${escapeHtml(personaCategoryLabel(entry.category))}</span><span>${escapeHtml(confidenceLabel(entry.confidence))}</span><span>${entry.observationCount} 次</span></div><p>${escapeHtml(entry.content)}</p><footer><div><strong>${escapeHtml(agents.join("、"))}</strong><small>${projects.length ? `项目 ${escapeHtml(projects.join("、"))} · ` : ""}${formatDate(entry.observedAt)} → ${formatDate(entry.lastObservedAt)}</small></div><div class="row-actions"><button class="button secondary" data-action="edit-persona-event" data-id="${escapeHtml(entry.id)}" type="button">编辑</button><button class="icon-button" data-action="delete-persona-event" data-id="${escapeHtml(entry.id)}" type="button" title="删除观察记录">${icon("trash")}</button></div></footer></article>`;
         }).join("")}</div>`
-      : emptyState("status", "暂无 Persona Events", "");
+      : emptyState("brain", "暂无观察记录", "Agent 识别到用户细节后会在本机生成带来源的结构化记录");
   }
 
   function renderPersonaPolicy(persona: any): string {
@@ -1720,9 +1764,9 @@ function dashboardClient(): void {
     const customBlocked = [...blocked].filter((category) => !standard.has(String(category)));
     return `<form class="persona-policy" data-form="persona-policy">
       <section class="policy-section"><div><h3>自动记录</h3><p>${persona.policy.updatedAt ? `更新于 ${formatDate(persona.policy.updatedAt)}` : "使用默认策略"}</p></div><label class="toggle"><input type="checkbox" name="enabled" ${persona.policy.enabled ? "checked" : ""}><span></span><strong>${persona.policy.enabled ? "启用" : "暂停"}</strong></label></section>
-      <section class="policy-section policy-stack"><div><h3>允许的 Confidence</h3></div><div class="policy-options">${["explicit", "observed", "inferred"].map((confidence) => `<label class="check-row"><input type="checkbox" name="allowedConfidences" value="${confidence}" ${allowed.has(confidence) ? "checked" : ""}><span><strong>${escapeHtml(confidenceLabel(confidence))}</strong></span></label>`).join("")}</div></section>
+      <section class="policy-section policy-stack"><div><h3>允许的可信度</h3></div><div class="policy-options">${["explicit", "observed", "inferred"].map((confidence) => `<label class="check-row"><input type="checkbox" name="allowedConfidences" value="${confidence}" ${allowed.has(confidence) ? "checked" : ""}><span><strong>${escapeHtml(confidenceLabel(confidence))}</strong></span></label>`).join("")}</div></section>
       <section class="policy-section policy-stack"><div><h3>类别策略</h3><p>${blocked.size} 个类别已停止记录</p></div><div class="policy-category-grid">${categories.map((category) => `<label class="policy-category"><input type="checkbox" name="blockedCategories" value="${escapeHtml(category)}" ${blocked.has(category) ? "checked" : ""}><span><strong>${escapeHtml(personaCategoryLabel(category))}</strong><small>${escapeHtml(category)}</small></span></label>`).join("")}</div><div class="field full"><label for="customBlockedCategories">其他禁用类别</label><input id="customBlockedCategories" name="customBlockedCategories" type="text" value="${escapeHtml(customBlocked.join(", "))}"></div></section>
-      <div class="form-actions"><button class="button" type="submit">${icon("save")}保存 Policy</button></div>
+      <div class="form-actions"><button class="button" type="submit">${icon("save")}保存记录策略</button></div>
     </form>`;
   }
 
@@ -1770,7 +1814,7 @@ function dashboardClient(): void {
       snapshot.integrations.connections.map((connection: any) => [connection.id, connection]),
     );
     return `
-      ${sectionHeader("安全", "密钥、设备、连接和 Agent 权限的当前状态")}
+      ${pageLead("密钥、设备、连接和 Agent 权限的当前状态")}
       <div class="metrics">
         ${metric("shield", "Status 加密", "AES-256-GCM", `Version ${snapshot.version}`)}
         ${metric("key", "Permission Vault", vault ? "已封装" : "仅本机", vault?.algorithm || "等待首次连接")}
@@ -1783,6 +1827,7 @@ function dashboardClient(): void {
           <div class="link-row"><div><strong>同步服务器</strong><small>${escapeHtml(snapshot.profile.baseUrl)}</small></div><span class="current-device">HTTPS</span></div>
           <div class="link-row"><div><strong>Status Envelope</strong><small>明文只在当前设备解密</small></div><span class="scope">AES-256-GCM</span></div>
           <div class="link-row"><div><strong>Permission Vault Bundle</strong><small>${vault ? `更新于 ${formatDate(vault.updatedAt)}` : "连接 OAuth 后生成"}</small></div><span class="scope">${vault ? "二次加密" : "LOCAL"}</span></div>
+          <div class="link-row"><div><strong>密钥钱包密码</strong><small>查看或复制 API Key 时验证；模型切换不需要</small></div><button class="button secondary" data-action="change-wallet-password" type="button">修改密码</button></div>
           <div class="link-row"><div><strong>设备会话</strong><small>到期时间 ${formatDate(snapshot.profile.tokenExpiresAt)}</small></div><span class="current-device">当前设备</span></div>
         </section>
         <section class="panel">
@@ -1913,9 +1958,28 @@ function dashboardClient(): void {
     openModal(memory ? "编辑记忆" : "添加记忆", `<form data-form="memory"><input type="hidden" name="id" value="${escapeHtml(memory?.id || "")}"><div class="form-grid"><div class="field"><label>范围</label><select name="scope">${["user", "project", "session"].map((scope) => `<option value="${scope}" ${scope === (memory?.scope || "user") ? "selected" : ""}>${scopeLabel(scope)}</option>`).join("")}</select></div><div class="field"><label>项目</label><select name="projectId"><option value="">无</option>${Object.values(snapshot.status.projects).map((project: any) => `<option value="${escapeHtml(project.id)}" ${project.id === memory?.projectId ? "selected" : ""}>${escapeHtml(project.name)}</option>`).join("")}</select></div>${textareaField("内容", "content", memory?.content || "")}${field("标签", "tags", memory?.tags?.join(", ") || "", "text", "full")}${memory ? `<div class="field full"><label>来源</label><code class="handoff-path">${escapeHtml(memoryOriginLabel(memory))}</code><small>编辑会保留原始来源和创建时间。</small></div>` : ""}</div>${modalActions()}</form>`);
   }
 
+  function openWalletPasswordModal(
+    sourceId: string,
+    mode: "view" | "copy",
+  ): void {
+    const source = snapshot.status.deviceControl.sources[sourceId];
+    if (!source) throw new Error("密钥配置已变化，请刷新后重试。");
+    openModal(
+      mode === "copy" ? "验证并复制密钥" : "验证并查看密钥",
+      `<form data-form="wallet-reveal"><input type="hidden" name="sourceId" value="${escapeHtml(sourceId)}"><input type="hidden" name="mode" value="${mode}"><div class="form-grid"><div class="field full"><label for="walletPassword">钱包密码</label><input id="walletPassword" name="password" type="password" required autocomplete="current-password" inputmode="numeric"><small>${escapeHtml(source.label)} · 初始密码为 123456</small></div><p class="oauth-help full">密码只用于本次明文访问。切换密钥与模型无需输入钱包密码。</p></div>${modalActions(mode === "copy" ? "验证并复制" : "验证并查看")}</form>`,
+    );
+  }
+
+  function openWalletPasswordChangeModal(): void {
+    openModal(
+      "修改密钥钱包密码",
+      `<form data-form="wallet-password-change"><div class="form-grid"><div class="field full"><label for="currentWalletPassword">当前密码</label><input id="currentWalletPassword" name="currentPassword" type="password" required autocomplete="current-password"><small>首次修改时使用初始密码 123456。</small></div><div class="field"><label for="newWalletPassword">新密码</label><input id="newWalletPassword" name="newPassword" type="password" minlength="6" required autocomplete="new-password"></div><div class="field"><label for="confirmWalletPassword">确认新密码</label><input id="confirmWalletPassword" name="confirmPassword" type="password" minlength="6" required autocomplete="new-password"></div><p class="oauth-help full">新密码的 scrypt verifier 会随加密 Permission Vault 同步到账号设备。</p></div>${modalActions("更新密码")}</form>`,
+    );
+  }
+
   function openModelSourceModal(id?: string): void {
     const source = id ? snapshot.status.deviceControl.sources[id] : undefined;
-    if (id && !source) throw new Error("模型来源已变化，请刷新后重试。");
+    if (id && !source) throw new Error("密钥配置已变化，请刷新后重试。");
     const protocol = source?.protocol || "openai";
     const availableTools = supportedToolsForProtocol(protocol);
     const selectedTools = new Set<string>(
@@ -1925,7 +1989,7 @@ function dashboardClient(): void {
       (entry: any) => entry.sourceId === id,
     );
     openModal(
-      source ? "编辑模型来源" : "添加模型来源",
+      source ? "编辑密钥配置" : "添加密钥配置",
       `<form data-form="model-source"><div class="form-grid">
         ${field("来源 ID", "id", source?.id || "", "text", "full", source ? "readonly" : 'required pattern="[A-Za-z0-9][A-Za-z0-9._:-]*"')}
         ${field("显示名称", "label", source?.label || "", "text", "full", "required")}
@@ -1933,8 +1997,8 @@ function dashboardClient(): void {
         <div class="field"><label for="protocol">API 协议</label><select id="protocol" name="protocol">${["openai", "anthropic", "ollama", "azure-openai", "custom"].map((protocol) => `<option value="${protocol}" ${protocol === (source?.protocol || "openai") ? "selected" : ""}>${modelProtocolLabel(protocol)}</option>`).join("")}</select></div>
         ${field("Endpoint", "endpoint", source?.endpoint || "", "url", "full", 'placeholder="https://api.example.com/v1"')}
         <div class="field full"><label>支持的 AI 工具</label><div class="capability-targets">${agentToolChoices(selectedTools, "supportedTools", availableTools)}</div></div>
-        <div class="field full"><label for="apiKey">API Key</label><input id="apiKey" name="apiKey" type="password" autocomplete="new-password" placeholder="${credentialStored ? "已保存；留空继续使用" : "按来源类型填写"}"><small>Credential 只写入 Permission Vault。</small></div>
-        ${credentialStored ? '<label class="check-row full"><input type="checkbox" name="clearCredential"><span><strong>清除已保存的 Credential</strong></span></label>' : ""}
+        <div class="field full"><label for="apiKey">API Key</label><input id="apiKey" name="apiKey" type="password" autocomplete="new-password" placeholder="${credentialStored ? "已加密保存；留空继续使用" : "按来源类型填写"}"><small>API Key 进入端到端加密的账号钱包，不进入普通状态和 Agent 上下文。</small></div>
+        ${credentialStored ? '<label class="check-row full"><input type="checkbox" name="clearCredential"><span><strong>清除钱包中的 API Key</strong></span></label>' : ""}
       </div>${modalActions()}</form>`,
     );
   }
@@ -2017,11 +2081,11 @@ function dashboardClient(): void {
 
   function openPersonaEventModal(id: string): void {
     const entry = snapshot.status.persona.events.find((event: any) => event.id === id);
-    if (!entry) throw new Error("Persona 记录已变化，请刷新后重试。");
+    if (!entry) throw new Error("观察记录已变化，请刷新后重试。");
     const sources = entry.observations.map((observation: any) => `${agentLabel(observation.sourceAgent)}${observation.sourceProject ? ` · ${observation.sourceProject}` : ""} · ${formatDate(observation.observedAt)} · ${confidenceLabel(observation.confidence)}`).join("\n");
     openModal(
-      "编辑 Persona Event",
-      `<form data-form="persona-event"><input type="hidden" name="id" value="${escapeHtml(entry.id)}"><div class="form-grid">${field("类别", "category", entry.category, "text", "full", 'required pattern="[a-z][a-z0-9_]*"')}${textareaField("内容", "content", entry.content)}<div class="field full"><label for="confidence">Confidence</label><select id="confidence" name="confidence">${["explicit", "observed", "inferred"].map((confidence) => `<option value="${confidence}" ${confidence === entry.confidence ? "selected" : ""}>${confidenceLabel(confidence)}</option>`).join("")}</select></div><div class="field full"><label>观察来源</label><pre class="handoff-markdown">${escapeHtml(sources)}</pre><small>${entry.observationCount} 次观察 · 首次 ${formatDate(entry.observedAt)} · 最近 ${formatDate(entry.lastObservedAt)}</small></div></div>${modalActions()}</form>`,
+      "编辑观察记录",
+      `<form data-form="persona-event"><input type="hidden" name="id" value="${escapeHtml(entry.id)}"><div class="form-grid">${field("类别", "category", entry.category, "text", "full", 'required pattern="[a-z][a-z0-9_]*"')}${textareaField("内容", "content", entry.content)}<div class="field full"><label for="confidence">可信度</label><select id="confidence" name="confidence">${["explicit", "observed", "inferred"].map((confidence) => `<option value="${confidence}" ${confidence === entry.confidence ? "selected" : ""}>${confidenceLabel(confidence)}</option>`).join("")}</select></div><div class="field full"><label>观察来源</label><pre class="handoff-markdown">${escapeHtml(sources)}</pre><small>${entry.observationCount} 次观察 · 首次 ${formatDate(entry.observedAt)} · 最近 ${formatDate(entry.lastObservedAt)}</small></div></div>${modalActions()}</form>`,
       true,
     );
   }
@@ -2030,7 +2094,7 @@ function dashboardClient(): void {
     const entry = (snapshot.capabilityPacks || []).find(
       (candidate: any) => candidate.manifest.name === packId,
     );
-    if (!entry) throw new Error("能力包不存在。");
+    if (!entry) throw new Error("连接能力不存在。");
     const pack = entry.manifest;
     const installation = snapshot.status.capabilities?.installations?.[packId];
     const selected = new Set(installation?.targets || []);
@@ -2045,8 +2109,8 @@ function dashboardClient(): void {
     const targetRows = targets.map((target) => `<label class="capability-target"><input type="checkbox" name="targets" value="${target.id}" ${selected.has(target.id) ? "checked" : ""}><span><strong>${target.label}</strong><small>${target.detail}</small></span></label>`).join("");
     const writeActions = pack.tools.filter((tool: any) => tool.readOnly === false);
     openModal(
-      pack.displayName,
-      `<form data-form="capability"><input type="hidden" name="packId" value="${escapeHtml(packId)}"><div class="form-grid"><div class="field full"><label>目标平台</label><div class="capability-targets">${targetRows}</div></div><label class="check-row full"><input type="checkbox" name="enabled" ${installation?.enabled === false ? "" : "checked"}><span><strong>启用能力包</strong><small>同步全部目标的安装意图；Codex、Claude Code 与 Markdown 会先展示本机写入预览</small></span></label><div class="field full"><label>Gateway Actions</label><div class="tag-list">${pack.tools.map((tool: any) => `<span class="tag">${escapeHtml(tool.id)}${tool.readOnly === false ? " · 确认" : ""}</span>`).join("")}</div><small>${writeActions.length} 个写操作需要明确确认；Provider Token 留在 Permission Vault。</small></div></div>${modalActions("保存目标")}</form>`,
+      capabilityDisplayName(pack),
+      `<form data-form="capability"><input type="hidden" name="packId" value="${escapeHtml(packId)}"><div class="form-grid"><div class="field full"><label>目标 Agent</label><div class="capability-targets">${targetRows}</div></div><label class="check-row full"><input type="checkbox" name="enabled" ${installation?.enabled === false ? "" : "checked"}><span><strong>启用这项连接能力</strong><small>同步全部 Agent 的安装意图；Codex、Claude Code 与 Markdown 会先展示本机写入预览</small></span></label><div class="field full"><label>Gateway Actions</label><div class="tag-list">${pack.tools.map((tool: any) => `<span class="tag">${escapeHtml(tool.id)}${tool.readOnly === false ? " · 确认" : ""}</span>`).join("")}</div><small>${writeActions.length} 个写操作需要明确确认；Provider Token 留在 Permission Vault。</small></div></div>${modalActions("保存目标")}</form>`,
     );
   }
 
@@ -2061,7 +2125,7 @@ function dashboardClient(): void {
       return `<section class="approval-section"><div class="panel-title"><h3>${escapeHtml(capabilityTargetLabel(plan.target))}</h3><span>${plan.preview.creates} 新建 · ${plan.preview.updates} 更新 · ${(plan.removals || []).length} 清理</span></div><p><code>${escapeHtml(plan.root)}</code></p>${rows ? `<div class="table-wrap"><table><thead><tr><th>文件</th><th>变化</th></tr></thead><tbody>${rows}</tbody></table></div>` : '<p class="oauth-help">本机文件已经与当前编译结果一致。</p>'}${commands ? `<div class="field full mt-12"><label>平台注册命令</label>${commands}</div>` : ""}</section>`;
     }).join("");
     openModal(
-      "确认安装能力包",
+      "确认安装连接能力",
       `<form data-form="capability-apply">${sections}<label class="check-row mt-12"><input type="checkbox" name="confirmInstall"><span><strong>确认写入以上文件并执行列出的注册命令</strong><small>安装器会重新验证摘要和路径，变化后会中止。</small></span></label>${modalActions("确认安装")}</form>`,
     );
   }
@@ -2227,6 +2291,9 @@ function dashboardClient(): void {
   function sectionHeader(heading: string, description: string, action = ""): string {
     return `<div class="section-header"><div><h2>${heading}</h2><p>${description}</p></div>${action}</div>`;
   }
+  function pageLead(description: string, action = ""): string {
+    return `<div class="section-header page-lead"><p>${description}</p>${action}</div>`;
+  }
   function field(label: string, name: string, value: string, type = "text", className = "", attributes = ""): string {
     return `<div class="field ${className}"><label for="${name}">${label}</label><input id="${name}" name="${name}" type="${type}" value="${escapeHtml(value)}" ${attributes}></div>`;
   }
@@ -2308,6 +2375,109 @@ function dashboardClient(): void {
     } catch {
       return value;
     }
+  }
+  function modelUsageSummary(model: any): {
+    detail: string;
+    primary: string;
+    updatedAt?: string;
+  } {
+    const control = snapshot.status.deviceControl;
+    const usageCollection = snapshot.modelUsage || control.usage || {};
+    const collectedEntries = Array.isArray(usageCollection)
+      ? usageCollection
+      : Array.isArray(usageCollection.entries)
+        ? usageCollection.entries
+        : [];
+    const directEntries = collectedEntries.filter((entry: any) =>
+      [model.id, model.modelId].includes(entry.modelId) ||
+      entry.modelRef === model.id ||
+      entry.id === model.id,
+    );
+    const syncedEntries = Object.entries(control.reports).flatMap(
+      ([deviceId, report]: [string, any]) =>
+        (report.modelUsage?.entries || []).map((entry: any) => ({
+          ...entry,
+          deviceId,
+        })),
+    ).filter((entry: any) =>
+      [model.id, model.modelId].includes(entry.modelId) ||
+      entry.modelRef === model.id ||
+      entry.id === model.id,
+    );
+    const syncedFallback = directEntries.length
+      ? syncedEntries.filter(
+          (entry: any) => entry.deviceId !== snapshot.profile.deviceId,
+        )
+      : syncedEntries;
+    const direct = Array.isArray(usageCollection)
+      ? undefined
+      : usageCollection[model.id] || usageCollection[model.modelId];
+    const reported = (Object.values(control.reports) as any[])
+      .flatMap((report: any) => report.tools || [])
+      .filter((tool: any) =>
+        tool.currentModelRef === model.id || tool.currentModelId === model.modelId,
+      )
+      .map((tool: any) => tool.usage || tool.modelUsage)
+      .filter(Boolean);
+    const entries = directEntries.length || syncedFallback.length
+      ? [...directEntries, ...syncedFallback]
+      : direct
+        ? [direct]
+        : model.usage
+          ? [model.usage]
+          : reported;
+    if (entries.length === 0) {
+      return { primary: "尚无用量", detail: "等待本机会话扫描" };
+    }
+    const input = sumUsage(entries, ["inputTokens", "input_tokens", "input"]);
+    const output = sumUsage(entries, ["outputTokens", "output_tokens", "output"]);
+    const cached = sumUsage(entries, ["cachedInputTokens", "cacheReadTokens", "cached_tokens"]);
+    const cacheCreated = sumUsage(entries, ["cacheCreationInputTokens"]);
+    const explicitTotal = sumUsage(entries, ["totalTokens", "total_tokens", "tokens"]);
+    const total = explicitTotal || input + output;
+    const requests = sumUsage(entries, ["requests", "requestCount", "sessions"]);
+    const costUsd = sumUsage(entries, ["costUsd", "cost_usd", "estimatedCostUsd"]);
+    const details = [
+      input ? `输入 ${formatCompactNumber(input)}` : "",
+      output ? `输出 ${formatCompactNumber(output)}` : "",
+      cached ? `缓存 ${formatCompactNumber(cached)}` : "",
+      cacheCreated ? `缓存写入 ${formatCompactNumber(cacheCreated)}` : "",
+      requests ? `${formatCompactNumber(requests)} 次调用` : "",
+      costUsd ? `$${costUsd.toFixed(costUsd < 1 ? 4 : 2)}` : "",
+    ].filter(Boolean);
+    const updatedAt = entries
+      .map((entry: any) => entry.latestAt || entry.updatedAt || entry.scannedAt || entry.observedAt)
+      .filter(Boolean)
+      .sort()
+      .at(-1);
+    return {
+      primary: total ? `${formatCompactNumber(total)} tokens` : "0 tokens",
+      detail: details.join(" · ") || "已完成本地统计",
+      ...(updatedAt ? { updatedAt } : {}),
+    };
+  }
+  function sumUsage(entries: any[], keys: string[]): number {
+    return entries.reduce((total, entry) => {
+      const value = keys.map((key) => entry?.[key]).find(Number.isFinite);
+      return total + (typeof value === "number" ? value : 0);
+    }, 0);
+  }
+  function formatCompactNumber(value: number): string {
+    return new Intl.NumberFormat("zh-CN", {
+      maximumFractionDigits: value >= 1_000 ? 1 : 0,
+      notation: value >= 1_000 ? "compact" : "standard",
+    }).format(value);
+  }
+  function revealedModelCredential(result: any): string {
+    const value =
+      result?.apiKey ??
+      result?.secret ??
+      result?.credential?.apiKey ??
+      result?.credential;
+    if (typeof value !== "string" || value.length === 0) {
+      throw new Error("钱包未返回可查看的 API Key。");
+    }
+    return value;
   }
   function operatingSystemLabel(value: string): string {
     if (value === "macos") return "macOS";
@@ -2404,6 +2574,14 @@ function dashboardClient(): void {
     if (target === "markdown") return "Markdown";
     if (target === "sdk") return "SDK";
     return target === "codex" ? "Codex" : target;
+  }
+  function capabilityDisplayName(pack: any): string {
+    return pack.name === "persona" ? "记忆生成" : pack.displayName;
+  }
+  function capabilityDescription(pack: any): string {
+    return pack.name === "persona"
+      ? "持续识别用户习惯、表达风格、工作方式、目标与规划，并生成可追溯的结构化记忆。"
+      : pack.description;
   }
   function connectionDisplayStatus(connection: any): { key: string; label: string } {
     const status = connection.status;

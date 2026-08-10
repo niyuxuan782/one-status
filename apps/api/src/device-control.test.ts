@@ -17,6 +17,8 @@ import {
   type ModelConfigurationAdapter,
 } from "./device-control.js";
 import type { LocalInventorySnapshot } from "./local-inventory.js";
+import type { LocalModelUsageSnapshot } from "./device-sidecar.js";
+import { PermissionVault } from "./permission-vault.js";
 
 const DEVICE_A = "2e0f24e2-b009-4091-b6d9-5236abe1ff00";
 const DEVICE_B = "f541fe2b-9302-4185-b5c1-82b5d2bba96f";
@@ -61,6 +63,141 @@ describe("DeviceControlService", () => {
       ],
     });
     expect(JSON.stringify(snapshot.status)).not.toContain(API_KEY);
+  });
+
+  it("publishes redacted per-model usage with the encrypted device report", async () => {
+    const usage: LocalModelUsageSnapshot = {
+      scannedAt: "2026-08-10T02:00:00.000Z",
+      scope: "latest-100-session-files-per-tool",
+      filesScanned: 4,
+      truncated: false,
+      entries: [
+        {
+          tool: "codex",
+          modelId: "gpt-5.4",
+          dataSource: "codex-session",
+          inputTokens: 12_000,
+          cachedInputTokens: 10_000,
+          cacheCreationInputTokens: 0,
+          outputTokens: 800,
+          requests: 3,
+          latestAt: "2026-08-10T01:59:00.000Z",
+        },
+      ],
+      warnings: ["local-only-warning"],
+    };
+    service = createService(backend, () => inventory, configurator, {
+      async scan() {
+        return usage;
+      },
+    });
+
+    const snapshot = await service.synchronizeCurrentDevice();
+
+    expect(snapshot.status.deviceControl.reports[DEVICE_A]?.modelUsage)
+      .toMatchObject({
+        scannedAt: usage.scannedAt,
+        filesScanned: 4,
+        entries: [
+          {
+            toolId: "codex",
+            modelId: "gpt-5.4",
+            inputTokens: 12_000,
+            cachedInputTokens: 10_000,
+            outputTokens: 800,
+            requests: 3,
+          },
+        ],
+      });
+    expect(JSON.stringify(snapshot.status)).not.toContain("local-only-warning");
+  });
+
+  it("automatically imports discovered credentials into the encrypted Vault", async () => {
+    const fingerprint = "a".repeat(64);
+    const sourceId = `third-party-a-${fingerprint.slice(0, 16)}`;
+    const discoveredKey = "automatically-discovered-private-key";
+    const vault = new PermissionVault({
+      path: ":memory:",
+      key: new Uint8Array(32).fill(41),
+    });
+    backend.status = createEmptyStatus();
+    seedCatalog(backend.status);
+    backend.status.deviceControl.sources[SOURCE_ID]!.credentialStatus = "missing";
+    inventory.agents[0]!.model!.credentialFingerprint = fingerprint;
+    service = new DeviceControlService(
+      backend,
+      {
+        async refresh() {
+          return inventory;
+        },
+        async discoverModelCredentials() {
+          return [
+            {
+              apiKey: discoveredKey,
+              credentialFingerprint: fingerprint,
+              model: inventory.agents[0]!.model!,
+              sourceId,
+              toolId: "codex" as const,
+            },
+            {
+              apiKey: "dormant-provider-private-key",
+              credentialFingerprint: "b".repeat(64),
+              model: {
+                modelId: "gpt-dormant",
+                providerId: "dormant-provider",
+                providerLabel: "Dormant provider",
+                sourceKind: "compatible-api" as const,
+                protocol: "openai" as const,
+                endpoint: "https://dormant.example.test/v1",
+                endpointHost: "dormant.example.test",
+                credentialFingerprint: "b".repeat(64),
+                credentialStatus: "available" as const,
+                health: "healthy" as const,
+              },
+              sourceId: `dormant-provider-${"b".repeat(16)}`,
+              toolId: "codex" as const,
+            },
+          ];
+        },
+      },
+      vault,
+      configurator,
+    );
+
+    const snapshot = await service.synchronizeCurrentDevice();
+    const firstStatuses = vault.listModelCredentialStatus("user-1");
+    await service.synchronizeCurrentDevice();
+
+    expect(vault.getModelCredential("user-1", sourceId)).toBe(discoveredKey);
+    expect(vault.listModelCredentialStatus("user-1")).toEqual(firstStatuses);
+    expect(snapshot.status.deviceControl.sources[sourceId]).toMatchObject({
+      credentialRef: `model-source:${sourceId}`,
+      credentialStatus: "available",
+    });
+    expect(snapshot.status.deviceControl.sources[SOURCE_ID]).toBeUndefined();
+    expect(snapshot.status.deviceControl.models[MODEL_ID]).toBeUndefined();
+    expect(
+      snapshot.status.deviceControl.reports[DEVICE_A]?.tools[0],
+    ).toMatchObject({
+      sourceId,
+      currentModelId: "gpt-5.4",
+    });
+    const dormantSourceId = `dormant-provider-${"b".repeat(16)}`;
+    expect(snapshot.status.deviceControl.sources[dormantSourceId]).toMatchObject({
+      label: "Dormant provider",
+      endpoint: "https://dormant.example.test/v1",
+      credentialStatus: "available",
+    });
+    expect(
+      Object.values(snapshot.status.deviceControl.models).find(
+        (entry) => entry.sourceId === dormantSourceId,
+      ),
+    ).toMatchObject({ modelId: "gpt-dormant" });
+    expect(JSON.stringify(snapshot.status)).not.toContain(discoveredKey);
+    expect(JSON.stringify(snapshot.status)).not.toContain(
+      "dormant-provider-private-key",
+    );
+    vault.close();
   });
 
   it("reports model credentials from Permission Vault availability", async () => {
@@ -435,6 +572,7 @@ function createService(
   backend: MemoryDeviceBackend,
   refresh: () => LocalInventorySnapshot,
   configurator: ModelConfigurationAdapter,
+  modelUsage?: { scan(): Promise<LocalModelUsageSnapshot> },
 ): DeviceControlService {
   return new DeviceControlService(
     backend,
@@ -448,6 +586,7 @@ function createService(
       },
     },
     configurator,
+    modelUsage,
   );
 }
 

@@ -6,7 +6,10 @@ import type { FastifyInstance } from "fastify";
 import { createApp } from "./app.js";
 import { LocalDashboardBackend } from "./dashboard-backend.js";
 import { DeviceControlService } from "./device-control.js";
-import { SidecarModelConfigurationAdapter } from "./device-sidecar.js";
+import {
+  SidecarModelConfigurationAdapter,
+  SidecarModelUsageReader,
+} from "./device-sidecar.js";
 import { PermissionVaultGitHubCredentialProvider } from "./github-git-credentials.js";
 import { HandoffService } from "./handoff.js";
 import { LocalInventoryService } from "./local-inventory.js";
@@ -47,6 +50,7 @@ export async function startApiServer(
     : undefined;
   const backend = dashboardEnabled ? new LocalDashboardBackend() : undefined;
   const inventory = dashboardEnabled ? new LocalInventoryService() : undefined;
+  const modelUsage = dashboardEnabled ? new SidecarModelUsageReader() : undefined;
   const workspaceStore = dashboardEnabled
     ? new LocalWorkspaceStore(
         resolve(options.workspaceDbPath ?? `${dbPath}.workspace`),
@@ -73,6 +77,7 @@ export async function startApiServer(
           inventory,
           permissionVault,
           new SidecarModelConfigurationAdapter(),
+          modelUsage,
         )
       : undefined;
   let stopDeviceControl: (() => void) | undefined;
@@ -96,6 +101,7 @@ export async function startApiServer(
             }),
             inventory,
             deviceControl: deviceControl!,
+            modelUsage: modelUsage!,
             onboarding: new LocalOnboardingService(
               options.defaultSyncUrl ??
                 process.env.ONE_STATUS_DEFAULT_SYNC_URL ??

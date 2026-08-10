@@ -1,6 +1,6 @@
 [package]
 name = "one-status-device-sidecar"
-version = "0.7.0"
+version = "0.8.0"
 description = "Local AI tool inventory and atomic model configuration sidecar for One Status"
 edition = "2021"
 rust-version = "1.85"

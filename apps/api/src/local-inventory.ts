@@ -9,6 +9,7 @@ import {
   stat,
 } from "node:fs/promises";
 import { constants } from "node:fs";
+import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import {
   basename,
@@ -19,6 +20,9 @@ import {
 } from "node:path";
 import { parse as parseToml } from "smol-toml";
 import { parse as parseYaml } from "yaml";
+import type { DatabaseSync as DatabaseSyncType } from "node:sqlite";
+
+const nodeRequire = createRequire(import.meta.url);
 
 const MAX_CONFIG_BYTES = 2 * 1024 * 1024;
 const MAX_SKILL_BYTES = 128 * 1024;
@@ -37,6 +41,7 @@ export interface LocalAgentAsset {
 }
 
 export interface LocalAgentModelConfiguration {
+  credentialFingerprint?: string;
   modelId?: string;
   providerId: string;
   providerLabel: string;
@@ -51,6 +56,14 @@ export interface LocalAgentModelConfiguration {
   endpointHost?: string;
   credentialStatus: "available" | "missing" | "not-required" | "unverified";
   health: "healthy" | "unconfigured" | "error" | "unknown";
+}
+
+export interface LocalModelCredentialDiscovery {
+  apiKey: string;
+  credentialFingerprint: string;
+  model: LocalAgentModelConfiguration;
+  sourceId: string;
+  toolId: "claude-code" | "codex";
 }
 
 export interface LocalProjectAsset {
@@ -109,6 +122,7 @@ export interface LocalInventorySnapshot {
 }
 
 export interface LocalInventoryOptions {
+  ccSwitchDbPath?: string;
   environment?: NodeJS.ProcessEnv;
   homeDir?: string;
   runCommand?: (
@@ -139,6 +153,10 @@ export class LocalInventoryService {
       this.#refreshing = undefined;
     }
   }
+
+  async discoverModelCredentials(): Promise<LocalModelCredentialDiscovery[]> {
+    return discoverLocalModelCredentials(this.options);
+  }
 }
 
 export async function scanLocalInventory(
@@ -160,6 +178,11 @@ export async function scanLocalInventory(
     "toml",
     warnings,
   );
+  const codexAuth = await readStructuredFile(
+    join(environment.CODEX_HOME ?? join(home, ".codex"), "auth.json"),
+    "json",
+    warnings,
+  );
   const claudeConfig = await readStructuredFile(
     join(home, ".claude.json"),
     "json",
@@ -177,7 +200,7 @@ export async function scanLocalInventory(
       executables.codex,
       runCommand,
       runAgentCommands,
-      readCodexModelConfiguration(codexConfig, environment),
+      readCodexModelConfiguration(codexConfig, codexAuth, environment),
     ),
     inspectAgent(
       "claude-code",
@@ -250,25 +273,92 @@ export async function scanLocalInventory(
   };
 }
 
+export async function discoverLocalModelCredentials(
+  options: LocalInventoryOptions = {},
+): Promise<LocalModelCredentialDiscovery[]> {
+  const environment = options.environment ?? process.env;
+  const home = options.homeDir ?? homedir();
+  const warnings: string[] = [];
+  const codexHome = environment.CODEX_HOME ?? join(home, ".codex");
+  const [codexConfig, codexAuth, claudeSettings] = await Promise.all([
+    readStructuredFile(join(codexHome, "config.toml"), "toml", warnings),
+    readStructuredFile(join(codexHome, "auth.json"), "json", warnings),
+    readStructuredFile(
+      join(home, ".claude", "settings.json"),
+      "json",
+      warnings,
+    ),
+  ]);
+  const candidates: Array<{
+    apiKey?: string;
+    model: LocalAgentModelConfiguration;
+    toolId: LocalModelCredentialDiscovery["toolId"];
+  }> = [
+    ...readCodexCredentialCandidates(codexConfig, codexAuth, environment),
+    {
+      apiKey: readClaudeApiKey(claudeSettings, environment),
+      model: readClaudeModelConfiguration(claudeSettings, environment),
+      toolId: "claude-code",
+    },
+    ...readCcSwitchCredentialCandidates(
+      options.ccSwitchDbPath ?? join(home, ".cc-switch", "cc-switch.db"),
+      environment,
+    ),
+  ];
+  const discoveries = new Map<string, LocalModelCredentialDiscovery>();
+  for (const candidate of candidates) {
+    if (!candidate.apiKey || !candidate.model.credentialFingerprint) continue;
+    const sourceId = localModelSourceId(candidate.model);
+    discoveries.set(sourceId, {
+      apiKey: candidate.apiKey,
+      credentialFingerprint: candidate.model.credentialFingerprint,
+      model: candidate.model,
+      sourceId,
+      toolId: candidate.toolId,
+    });
+  }
+  return [...discoveries.values()];
+}
+
 function readCodexModelConfiguration(
   config: Record<string, unknown>,
+  auth: Record<string, unknown>,
   environment: NodeJS.ProcessEnv,
 ): LocalAgentModelConfiguration {
-  const modelId = stringProperty(config, "model");
   const providerId = stringProperty(config, "model_provider") ?? "openai";
+  return readCodexProviderModelConfiguration(
+    providerId,
+    config,
+    auth,
+    environment,
+    true,
+  );
+}
+
+function readCodexProviderModelConfiguration(
+  providerId: string,
+  config: Record<string, unknown>,
+  auth: Record<string, unknown>,
+  environment: NodeJS.ProcessEnv,
+  active: boolean,
+): LocalAgentModelConfiguration {
+  const modelId = active ? stringProperty(config, "model") : undefined;
   const providers = isRecord(config.model_providers)
     ? config.model_providers
     : {};
   const provider = isRecord(providers[providerId]) ? providers[providerId] : {};
   const endpoint = safeModelEndpoint(stringProperty(provider, "base_url"));
-  const credentialEnvironment = stringProperty(provider, "env_key");
   const embeddedBearerAvailable = Boolean(
     stringProperty(provider, "experimental_bearer_token"),
   );
-  const credentialAvailable = Boolean(
-    embeddedBearerAvailable ||
-      environment[credentialEnvironment ?? "OPENAI_API_KEY"],
+  const apiKey = readCodexProviderApiKey(
+    providerId,
+    provider,
+    auth,
+    environment,
+    active,
   );
+  const credentialAvailable = Boolean(apiKey);
   const sourceKind = sourceKindForEndpoint(
     endpoint,
     credentialAvailable,
@@ -281,6 +371,9 @@ function readCodexModelConfiguration(
   );
   return {
     ...(modelId ? { modelId } : {}),
+    ...(apiKey
+      ? { credentialFingerprint: modelCredentialFingerprint(apiKey) }
+      : {}),
     providerId,
     providerLabel:
       stringProperty(provider, "name") ??
@@ -315,12 +408,8 @@ function readClaudeModelConfiguration(
     stringProperty(settingsEnvironment, "ANTHROPIC_BASE_URL") ??
       environment.ANTHROPIC_BASE_URL,
   );
-  const credentialAvailable = Boolean(
-    stringProperty(settingsEnvironment, "ANTHROPIC_API_KEY") ??
-      environment.ANTHROPIC_API_KEY ??
-      stringProperty(settingsEnvironment, "ANTHROPIC_AUTH_TOKEN") ??
-      environment.ANTHROPIC_AUTH_TOKEN,
-  );
+  const apiKey = readClaudeApiKey(settings, environment);
+  const credentialAvailable = Boolean(apiKey);
   const sourceKind = sourceKindForEndpoint(
     endpoint,
     credentialAvailable,
@@ -329,6 +418,9 @@ function readClaudeModelConfiguration(
   const providerId = endpoint ? `anthropic-${shortHash(endpoint)}` : "anthropic";
   return {
     modelId,
+    ...(apiKey
+      ? { credentialFingerprint: modelCredentialFingerprint(apiKey) }
+      : {}),
     providerId,
     providerLabel: endpoint ? "Anthropic compatible" : "Anthropic",
     sourceKind,
@@ -343,6 +435,227 @@ function readClaudeModelConfiguration(
     ),
     health: "healthy",
   };
+}
+
+function readCodexApiKey(
+  config: Record<string, unknown>,
+  auth: Record<string, unknown>,
+  environment: NodeJS.ProcessEnv,
+): string | undefined {
+  const providerId = stringProperty(config, "model_provider") ?? "openai";
+  const providers = isRecord(config.model_providers)
+    ? config.model_providers
+    : {};
+  const provider = isRecord(providers[providerId]) ? providers[providerId] : {};
+  return readCodexProviderApiKey(
+    providerId,
+    provider,
+    auth,
+    environment,
+    true,
+  );
+}
+
+function readCodexProviderApiKey(
+  providerId: string,
+  provider: Record<string, unknown>,
+  auth: Record<string, unknown>,
+  environment: NodeJS.ProcessEnv,
+  allowDefaultCredential: boolean,
+): string | undefined {
+  const embedded = stringProperty(provider, "experimental_bearer_token");
+  if (embedded) return embedded;
+  const environmentKey = stringProperty(provider, "env_key");
+  if (environmentKey) return normalizedSecret(environment[environmentKey]);
+  if (!allowDefaultCredential && providerId !== "openai") return undefined;
+  return (
+    normalizedSecret(stringProperty(auth, "OPENAI_API_KEY")) ??
+    normalizedSecret(environment.OPENAI_API_KEY)
+  );
+}
+
+function readCodexCredentialCandidates(
+  config: Record<string, unknown>,
+  auth: Record<string, unknown>,
+  environment: NodeJS.ProcessEnv,
+): Array<{
+  apiKey?: string;
+  model: LocalAgentModelConfiguration;
+  toolId: "codex";
+}> {
+  const activeProviderId = stringProperty(config, "model_provider") ?? "openai";
+  const providers = isRecord(config.model_providers)
+    ? config.model_providers
+    : {};
+  const providerIds = new Set([
+    activeProviderId,
+    ...Object.keys(providers).slice(0, 500),
+  ]);
+  return [...providerIds].map((providerId) => {
+    const provider = isRecord(providers[providerId]) ? providers[providerId] : {};
+    return {
+      apiKey: readCodexProviderApiKey(
+        providerId,
+        provider,
+        auth,
+        environment,
+        providerId === activeProviderId,
+      ),
+      model: readCodexProviderModelConfiguration(
+        providerId,
+        config,
+        auth,
+        environment,
+        providerId === activeProviderId,
+      ),
+      toolId: "codex" as const,
+    };
+  });
+}
+
+function readCcSwitchCredentialCandidates(
+  databasePath: string,
+  environment: NodeJS.ProcessEnv,
+): Array<{
+  apiKey?: string;
+  model: LocalAgentModelConfiguration;
+  toolId: LocalModelCredentialDiscovery["toolId"];
+}> {
+  let database: DatabaseSyncType | undefined;
+  try {
+    const { DatabaseSync } = nodeRequire("node:sqlite") as typeof import("node:sqlite");
+    database = new DatabaseSync(databasePath, { readOnly: true });
+    const table = database
+      .prepare(
+        "SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = 'providers'",
+      )
+      .get() as { present?: number } | undefined;
+    if (!table?.present) return [];
+    const rows = database
+      .prepare(
+        `SELECT id, app_type, name, settings_config
+          FROM providers
+          WHERE app_type IN ('codex', 'claude')
+          ORDER BY app_type, id
+          LIMIT 1000`,
+      )
+      .all() as Array<{
+        app_type: "claude" | "codex";
+        id: string;
+        name: string;
+        settings_config: string;
+      }>;
+    const candidates: ReturnType<typeof readCcSwitchCredentialCandidates> = [];
+    for (const row of rows) {
+      if (row.settings_config.length > MAX_CONFIG_BYTES) continue;
+      let settings: Record<string, unknown>;
+      try {
+        const parsed = JSON.parse(row.settings_config) as unknown;
+        if (!isRecord(parsed)) continue;
+        settings = parsed;
+      } catch {
+        continue;
+      }
+      if (row.app_type === "claude") {
+        const model = readClaudeModelConfiguration(settings, environment);
+        model.providerLabel = row.name || model.providerLabel;
+        candidates.push({
+          apiKey: readClaudeApiKey(settings, environment),
+          model,
+          toolId: "claude-code",
+        });
+        continue;
+      }
+      const auth = isRecord(settings.auth) ? settings.auth : {};
+      const configText = stringProperty(settings, "config") ?? "";
+      let config: Record<string, unknown> = {};
+      try {
+        const parsed = parseToml(configText) as unknown;
+        if (isRecord(parsed)) config = parsed;
+      } catch {
+        // A saved credential can still be imported when its optional TOML is invalid.
+      }
+      const fallbackProviderId = `cc-switch-${normalizeControlId(row.id)}`;
+      const providerId = stringProperty(config, "model_provider") ?? fallbackProviderId;
+      const providers = isRecord(config.model_providers)
+        ? config.model_providers
+        : {};
+      const provider = isRecord(providers[providerId]) ? providers[providerId] : {};
+      const apiKey = readCodexProviderApiKey(
+        providerId,
+        provider,
+        auth,
+        environment,
+        true,
+      );
+      const model = readCodexProviderModelConfiguration(
+        providerId,
+        config,
+        auth,
+        environment,
+        true,
+      );
+      model.providerLabel = row.name || model.providerLabel;
+      if (apiKey && !model.credentialFingerprint) {
+        model.credentialFingerprint = modelCredentialFingerprint(apiKey);
+        model.credentialStatus = "available";
+      }
+      candidates.push({ apiKey, model, toolId: "codex" });
+    }
+    return candidates;
+  } catch {
+    return [];
+  } finally {
+    database?.close();
+  }
+}
+
+function readClaudeApiKey(
+  settings: Record<string, unknown>,
+  environment: NodeJS.ProcessEnv,
+): string | undefined {
+  const settingsEnvironment = isRecord(settings.env) ? settings.env : {};
+  return (
+    normalizedSecret(stringProperty(settingsEnvironment, "ANTHROPIC_API_KEY")) ??
+    normalizedSecret(environment.ANTHROPIC_API_KEY) ??
+    normalizedSecret(
+      stringProperty(settingsEnvironment, "ANTHROPIC_AUTH_TOKEN"),
+    ) ??
+    normalizedSecret(environment.ANTHROPIC_AUTH_TOKEN)
+  );
+}
+
+export function localModelSourceId(
+  model: Pick<
+    LocalAgentModelConfiguration,
+    "credentialFingerprint" | "providerId"
+  >,
+): string {
+  const base = normalizeControlId(model.providerId);
+  return model.credentialFingerprint
+    ? `${base}-${model.credentialFingerprint.slice(0, 16)}`
+    : base;
+}
+
+function modelCredentialFingerprint(apiKey: string): string {
+  return createHash("sha256")
+    .update("one-status/model-credential/v1\0", "utf8")
+    .update(apiKey, "utf8")
+    .digest("hex");
+}
+
+function normalizedSecret(value?: string): string | undefined {
+  const normalized = value?.trim();
+  return normalized && normalized.length <= 32_000 ? normalized : undefined;
+}
+
+function normalizeControlId(value: string): string {
+  const normalized = value
+    .trim()
+    .replace(/[^A-Za-z0-9._:-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 160);
+  return normalized || `source-${shortHash(value)}`;
 }
 
 function sourceKindForEndpoint(
