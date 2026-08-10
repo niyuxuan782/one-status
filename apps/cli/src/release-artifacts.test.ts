@@ -66,6 +66,7 @@ describe("Device Sidecar release artifacts", () => {
     expect(desktopPackage.build.mac.notarize).toBe(true);
     expect(workflow).toContain("APPLE_APP_SPECIFIC_PASSWORD:");
     expect(workflow).toContain("CSC_LINK:");
+    expect(workflow).not.toContain('CSC_IDENTITY_AUTO_DISCOVERY: "false"');
     expect(workflow).toContain("xcrun stapler validate \"$app_path\"");
     expect(workflow.match(/xcrun notarytool submit "\$image"/g)).toHaveLength(1);
     expect(workflow.match(/xcrun stapler staple "\$image"/g)).toHaveLength(1);

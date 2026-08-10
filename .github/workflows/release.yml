@@ -67,7 +67,6 @@ jobs:
             rustTarget: x86_64-unknown-linux-gnu
     runs-on: ${{ matrix.os }}
     env:
-      CSC_IDENTITY_AUTO_DISCOVERY: "false"
       ONE_STATUS_SIDECAR_TARGET: ${{ matrix.rustTarget }}
     steps:
       - uses: actions/checkout@v4
