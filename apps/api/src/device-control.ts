@@ -115,6 +115,7 @@ export class DeviceControlService {
         Pick<
           PermissionVault,
           | "isModelCredentialIgnored"
+          | "ignoreModelCredential"
           | "deleteModelCredential"
           | "setDiscoveredModelCredential"
           | "setModelCredential"
@@ -323,40 +324,49 @@ export class DeviceControlService {
     const identityKey = await this.modelSourceIdentityKey?.();
     const resolveModelSourceId = (model: LocalAgentModelConfiguration) =>
       localModelSourceId(model, identityKey);
-    const ignoredSourceIds = new Set(
-      inventory.agents
-        .map((agent) =>
-          agent.model ? resolveModelSourceId(agent.model) : undefined,
-        )
-        .filter(
-          (sourceId): sourceId is string =>
-            sourceId !== undefined &&
-            Boolean(
-              this.permissionVault.isModelCredentialIgnored?.(
-                snapshot.profile.userId,
-                sourceId,
-              ),
-            ),
+    const isIgnoredModelSource = (
+      model: LocalAgentModelConfiguration,
+      sourceId: string,
+    ) =>
+      modelSourceAliases(model, sourceId).some((candidate) =>
+        this.permissionVault.isModelCredentialIgnored?.(
+          snapshot.profile.userId,
+          candidate,
         ),
-    );
+      );
+    const ignoredSourceIds = new Set<string>();
+    const preserveIgnoredModelSource = (
+      model: LocalAgentModelConfiguration,
+      sourceId: string,
+    ): boolean => {
+      if (!isIgnoredModelSource(model, sourceId)) return false;
+      ignoredSourceIds.add(sourceId);
+      this.permissionVault.ignoreModelCredential?.(
+        snapshot.profile.userId,
+        sourceId,
+      );
+      return true;
+    };
+    for (const agent of inventory.agents) {
+      if (!agent.model) continue;
+      const sourceId = resolveModelSourceId(agent.model);
+      preserveIgnoredModelSource(agent.model, sourceId);
+    }
     let discoveries: LocalModelCredentialDiscovery[] = [];
     if (
       this.inventory.discoverModelCredentials &&
       (this.permissionVault.setDiscoveredModelCredential ||
         this.permissionVault.setModelCredential)
     ) {
-      discoveries = (await this.inventory.discoverModelCredentials())
-        .map((discovery) => ({
+      const discoveredCredentials =
+        (await this.inventory.discoverModelCredentials()).map((discovery) => ({
           ...discovery,
           sourceId: resolveModelSourceId(discovery.model),
-        }))
-        .filter(
-          (discovery) =>
-            !this.permissionVault.isModelCredentialIgnored?.(
-              snapshot.profile.userId,
-              discovery.sourceId,
-            ),
-        );
+        }));
+      discoveries = discoveredCredentials.filter(
+        (discovery) =>
+          !preserveIgnoredModelSource(discovery.model, discovery.sourceId),
+      );
       for (const discovery of discoveries) {
         if (this.permissionVault.setDiscoveredModelCredential) {
           this.permissionVault.setDiscoveredModelCredential(
@@ -1045,14 +1055,25 @@ function migrateDiscoveredSourceId(
 function migrationSourceIds(
   discovery: LocalModelCredentialDiscovery,
 ): string[] {
-  return [
-    legacyLocalModelSourceId(discovery.model.providerId),
-    interimLocalModelSourceId(discovery.model),
-    localModelSourceId(discovery.model),
-  ].filter(
-    (sourceId): sourceId is string =>
-      Boolean(sourceId) && sourceId !== discovery.sourceId,
+  return modelSourceAliases(discovery.model, discovery.sourceId).filter(
+    (sourceId) => sourceId !== discovery.sourceId,
   );
+}
+
+function modelSourceAliases(
+  model: LocalAgentModelConfiguration,
+  sourceId: string,
+): string[] {
+  return [
+    ...new Set(
+      [
+        sourceId,
+        legacyLocalModelSourceId(model.providerId),
+        interimLocalModelSourceId(model),
+        localModelSourceId(model),
+      ].filter((candidate): candidate is string => Boolean(candidate)),
+    ),
+  ];
 }
 
 type ModelSourceIdResolver = (model: LocalAgentModelConfiguration) => string;
@@ -1150,18 +1171,9 @@ function uniqueTools(tools: AgentToolId[]): AgentToolId[] {
 }
 
 function compatibleAgentTools(
-  model: Pick<
-    LocalAgentModelConfiguration,
-    "protocol" | "sourceKind"
-  >,
+  model: Pick<LocalAgentModelConfiguration, "protocol">,
   origin: AgentToolId,
 ): AgentToolId[] {
-  if (
-    model.sourceKind === "compatible-api" ||
-    model.sourceKind === "custom-endpoint"
-  ) {
-    return uniqueTools([origin, "codex", "claude-code", "cursor"]);
-  }
   if (model.protocol === "anthropic") {
     return uniqueTools([origin, "claude-code", "cursor"]);
   }

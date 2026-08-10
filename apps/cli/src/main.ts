@@ -22,6 +22,7 @@ import {
 } from "@one-status/local-config";
 import {
   ONE_STATUS_VERSION,
+  removeDeviceControlState,
   type CapabilityTarget,
   type MemoryScope,
   type StatusDocument,
@@ -452,10 +453,17 @@ async function useServer(flags: Map<string, string>): Promise<void> {
 
 async function revokeDevice(flags: Map<string, string>): Promise<void> {
   const deviceId = requiredFlag(flags, "id");
-  const profile = await loadLocalProfile();
+  const { profile, vault } = await openVault();
   const client = new OneStatusClient({
     baseUrl: profile.baseUrl,
     token: profile.token,
+  });
+  const account = await client.getAccount();
+  if (!account.devices.some((device) => device.id === deviceId)) {
+    throw new Error(`Device was not found: ${deviceId}`);
+  }
+  await vault.mutate((status) => {
+    removeDeviceControlState(status, deviceId);
   });
   await client.revokeDevice(deviceId);
   if (deviceId === profile.deviceId) {

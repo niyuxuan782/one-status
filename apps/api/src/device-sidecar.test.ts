@@ -164,6 +164,28 @@ describe("SidecarModelConfigurationAdapter", () => {
       changes: [expect.objectContaining({ sensitive: true })],
     });
   });
+
+  it("does not relabel an OpenAI-compatible endpoint as Anthropic", async () => {
+    let request: unknown;
+    const runner: DeviceSidecarRunner = {
+      async run<T>(_command: SidecarCommand, input: unknown): Promise<T> {
+        request = input;
+        return { ...previewResult, tool: "claude-code" } as T;
+      },
+    };
+    const adapter = new SidecarModelConfigurationAdapter({ runner });
+
+    await adapter.preview({
+      apiKey: "secret",
+      model,
+      source,
+      toolId: "claude-code",
+    });
+
+    expect(request).toMatchObject({
+      profile: { apiProtocol: "openai-responses" },
+    });
+  });
 });
 
 describe("SidecarModelUsageReader", () => {

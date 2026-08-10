@@ -14,6 +14,7 @@ import {
   modelApiProtocolSchema,
   modelSourceKindSchema,
   ONE_STATUS_VERSION,
+  removeDeviceControlState,
 } from "@one-status/protocol";
 import {
   deletePersonaEvent,
@@ -58,10 +59,7 @@ import type {
 import type { LocalOnboardingService } from "./onboarding.js";
 import type { DeviceControlService } from "./device-control.js";
 import type { LocalModelUsageSnapshot } from "./device-sidecar.js";
-import {
-  readStoredModelUsage,
-  removeStoredModelUsage,
-} from "./model-usage.js";
+import { readStoredModelUsage } from "./model-usage.js";
 
 const dashboardPaths = new Set([
   "/",
@@ -985,15 +983,7 @@ export function registerDashboardRoutes(
       const { id } = deviceParameterSchema.parse(request.params);
       await runtime.backend.revokeDevice(id);
       await runtime.backend.mutateStatus((status) => {
-        delete status.deviceControl.reports[id];
-        for (const [intentId, intent] of Object.entries(
-          status.deviceControl.intents,
-        )) {
-          if (intent.deviceId === id) {
-            delete status.deviceControl.intents[intentId];
-          }
-        }
-        removeStoredModelUsage(status, id);
+        removeDeviceControlState(status, id);
       });
       return { revoked: true };
     });

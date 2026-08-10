@@ -350,7 +350,7 @@ function sidecarInvocation(input: ModelConfigurationInput): {
     modelId: input.model.modelId,
     modelName: input.model.name,
     source: sourceKind(input.source.kind),
-    apiProtocol: apiProtocol(input.source.protocol, input.toolId),
+    apiProtocol: apiProtocol(input.source.protocol),
     ...(input.source.endpoint ? { endpoint: input.source.endpoint } : {}),
     ...(credentialEnvVar ? { credentialEnvVar } : {}),
   };
@@ -456,9 +456,7 @@ function sourceKind(kind: ModelSource["kind"]): string {
 
 function apiProtocol(
   protocol: ModelSource["protocol"],
-  toolId: AgentToolId,
 ): string {
-  if (toolId === "claude-code") return "anthropic";
   if (protocol === "anthropic") return "anthropic";
   if (protocol === "azure-openai" || protocol === "ollama") {
     return "openai-chat-completions";

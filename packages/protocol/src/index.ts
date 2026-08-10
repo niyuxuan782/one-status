@@ -964,6 +964,21 @@ export function createEmptyStatus(): StatusDocument {
   };
 }
 
+export function removeDeviceControlState(
+  status: StatusDocument,
+  deviceId: string,
+): void {
+  delete status.deviceControl.reports[deviceId];
+  for (const [intentId, intent] of Object.entries(status.deviceControl.intents)) {
+    if (intent.deviceId === deviceId) {
+      delete status.deviceControl.intents[intentId];
+    }
+  }
+  delete status.preferences[
+    `__one_status_internal:model-usage:v1:${deviceId}`
+  ];
+}
+
 export function parseStatusDocument(value: unknown): StatusDocument {
   const compatibleValue = stripTransientDeviceReportUsage(value);
   const current = statusDocumentSchema.safeParse(compatibleValue);

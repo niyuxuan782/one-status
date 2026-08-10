@@ -6,6 +6,7 @@ import {
   modelSourceSchema,
   parseStatusDocument,
   personaEventSchema,
+  removeDeviceControlState,
   statusDocumentSchema,
 } from "./index.js";
 
@@ -62,6 +63,42 @@ describe("status protocol", () => {
     expect(status.deviceControl.reports["device-a"]).toHaveProperty(
       "modelUsage",
     );
+  });
+
+  it("removes every device-owned control record after revocation", () => {
+    const status = createEmptyStatus();
+    status.deviceControl.reports["device-a"] = {
+      deviceId: "device-a",
+      deviceName: "Mac A",
+      operatingSystem: "macos",
+      osVersion: "25.0",
+      architecture: "arm64",
+      backgroundVersion: "0.8.0",
+      tools: [],
+      reportedAt: "2026-08-10T02:00:00.000Z",
+    };
+    status.deviceControl.intents["intent-a"] = {
+      id: "intent-a",
+      deviceId: "device-a",
+      toolId: "codex",
+      modelId: "model-a",
+      sourceId: "source-a",
+      status: "pending",
+      requestedAt: "2026-08-10T02:00:00.000Z",
+      requestedByDeviceId: "device-b",
+      updatedAt: "2026-08-10T02:00:00.000Z",
+      attempts: 0,
+    };
+    status.preferences["__one_status_internal:model-usage:v1:device-a"] =
+      "encrypted-device-usage";
+
+    removeDeviceControlState(status, "device-a");
+
+    expect(status.deviceControl.reports["device-a"]).toBeUndefined();
+    expect(status.deviceControl.intents["intent-a"]).toBeUndefined();
+    expect(
+      status.preferences["__one_status_internal:model-usage:v1:device-a"],
+    ).toBeUndefined();
   });
 
   it("migrates schema v1 memory into confirmed schema v4 memory", () => {

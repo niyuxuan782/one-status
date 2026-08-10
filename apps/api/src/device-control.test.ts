@@ -17,6 +17,7 @@ import {
   type ModelConfigurationAdapter,
 } from "./device-control.js";
 import {
+  interimLocalModelSourceId,
   localModelSourceId,
   type LocalInventorySnapshot,
 } from "./local-inventory.js";
@@ -190,7 +191,7 @@ describe("DeviceControlService", () => {
     expect(snapshot.status.deviceControl.sources[sourceId]).toMatchObject({
       credentialRef: `model-source:${sourceId}`,
       credentialStatus: "available",
-      supportedTools: ["codex", "claude-code", "cursor"],
+      supportedTools: ["codex", "cursor"],
     });
     expect(snapshot.status.deviceControl.sources[SOURCE_ID]).toBeUndefined();
     expect(snapshot.status.deviceControl.models[MODEL_ID]).toBeUndefined();
@@ -204,7 +205,7 @@ describe("DeviceControlService", () => {
       label: "Dormant provider",
       endpoint: "https://dormant.example.test/v1",
       credentialStatus: "available",
-      supportedTools: ["codex", "claude-code", "cursor"],
+      supportedTools: ["codex", "cursor"],
     });
     expect(
       Object.values(snapshot.status.deviceControl.models).find(
@@ -230,6 +231,53 @@ describe("DeviceControlService", () => {
     const afterDelete = await service.synchronizeCurrentDevice();
     expect(afterDelete.status.deviceControl.sources[sourceId]).toBeUndefined();
     expect(vault.getModelCredential("user-1", sourceId)).toBeUndefined();
+    vault.close();
+  });
+
+  it("preserves a legacy deletion when source IDs gain keyed identities", async () => {
+    const fingerprint = "d".repeat(64);
+    const statusKey = new Uint8Array(32).fill(61);
+    const model = {
+      ...inventory.agents[0]!.model!,
+      credentialFingerprint: fingerprint,
+    };
+    const legacySourceId = interimLocalModelSourceId(model)!;
+    const secureSourceId = localModelSourceId(model, statusKey);
+    const vault = new PermissionVault({
+      path: ":memory:",
+      key: new Uint8Array(32).fill(62),
+    });
+    vault.ignoreModelCredential("user-1", legacySourceId);
+    inventory.agents[0]!.model = model;
+    service = new DeviceControlService(
+      backend,
+      {
+        async refresh() {
+          return inventory;
+        },
+        async discoverModelCredentials() {
+          return [{
+            apiKey: "deleted-credential-must-stay-deleted",
+            credentialFingerprint: fingerprint,
+            model,
+            sourceId: legacySourceId,
+            toolId: "codex" as const,
+          }];
+        },
+      },
+      vault,
+      configurator,
+      undefined,
+      async () => statusKey,
+    );
+
+    const snapshot = await service.synchronizeCurrentDevice();
+
+    expect(vault.isModelCredentialIgnored("user-1", legacySourceId)).toBe(true);
+    expect(vault.isModelCredentialIgnored("user-1", secureSourceId)).toBe(true);
+    expect(vault.getModelCredential("user-1", secureSourceId)).toBeUndefined();
+    expect(snapshot.status.deviceControl.sources[secureSourceId]).toBeUndefined();
+    expect(JSON.stringify(snapshot.status)).not.toContain(fingerprint.slice(0, 16));
     vault.close();
   });
 
