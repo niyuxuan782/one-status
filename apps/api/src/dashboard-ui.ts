@@ -221,7 +221,7 @@ a { color: inherit; }
 .presence.online { color: var(--ok); }
 .presence.online i { background: var(--ok); box-shadow: 0 0 0 3px rgba(74,124,89,.12); }
 .presence.offline i { background: var(--faint); }
-.tool-matrix-head, .tool-matrix-row { display: grid; grid-template-columns: minmax(170px, 1.25fr) minmax(150px, 1fr) minmax(155px, 1fr) minmax(110px, .7fr) 78px; gap: 14px; align-items: center; }
+.tool-matrix-head, .tool-matrix-row { display: grid; grid-template-columns: minmax(170px, 1.25fr) minmax(150px, 1fr) minmax(155px, 1fr) minmax(110px, .7fr) minmax(200px, 1.15fr); gap: 14px; align-items: center; }
 .tool-matrix-head { min-height: 35px; padding: 0 18px; color: var(--muted); background: var(--surface-subtle); font-size: 9px; font-weight: 700; text-transform: uppercase; }
 .tool-matrix-row { min-height: 68px; padding: 11px 18px; border-top: 1px solid var(--line); }
 .tool-matrix-row:first-of-type { border-top: 0; }
@@ -243,9 +243,37 @@ a { color: inherit; }
 .intent-pending, .intent-applying { color: #46618f; background: #e5ebf4; }
 .model-table td small { color: var(--muted); }
 .model-table code { overflow-wrap: anywhere; white-space: normal; }
+.model-table td:first-child { min-width: 220px; white-space: normal; }
+.model-table td:first-child small { display: block; max-width: 360px; overflow-wrap: anywhere; }
+.models-table { min-width: 900px; }
+.models-table td:nth-child(3) { min-width: 140px; }
+.models-table td:nth-child(3) code { overflow-wrap: normal; white-space: nowrap; }
+.models-table td:nth-child(4) { min-width: 150px; }
+.models-table td:last-child { min-width: 176px; }
+.source-table td:first-child { min-width: 185px; }
+.source-table td:last-child { width: 166px; }
+.source-table .row-actions { min-width: 150px; flex-wrap: wrap; }
 .wallet-secret { display: grid; gap: 6px; justify-items: start; }
 .wallet-secret code { min-width: 96px; color: var(--ink); font-size: 12px; letter-spacing: 0; }
 .wallet-revealed { user-select: none; color: var(--ink); border-color: var(--line-strong); background: var(--surface-subtle); }
+.private-credential-table { min-width: 1060px; }
+.private-credential-table td:first-child { min-width: 190px; }
+.private-credential-table td:nth-child(2) { min-width: 180px; }
+.private-credential-table td:nth-child(3) { min-width: 170px; }
+.private-credential-table td:nth-child(4) { min-width: 150px; }
+.private-credential-table td:last-child { min-width: 190px; }
+.credential-field-list, .credential-secret-list { display: flex; flex-wrap: wrap; gap: 5px; }
+.credential-field, .credential-secret-key { display: inline-flex; max-width: 220px; min-height: 23px; align-items: center; gap: 4px; padding: 3px 7px; border: 1px solid var(--line); border-radius: 5px; color: var(--muted); background: var(--surface-2); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 9px; overflow-wrap: anywhere; }
+.credential-field strong { color: var(--ink); font-size: inherit; }
+.credential-secret-key { color: var(--ink); background: var(--surface-subtle); }
+.credential-access { display: grid; gap: 5px; justify-items: start; }
+.credential-access small { color: var(--muted); font-size: 9px; }
+.revealed-credential-list { display: grid; gap: 10px; margin: 14px 0; }
+.revealed-credential-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 9px; align-items: start; }
+.revealed-credential-row > div { min-width: 0; }
+.revealed-credential-row strong { display: block; margin-bottom: 5px; font-size: 11px; }
+.revealed-credential-row .recovery-key { margin: 0; max-height: 220px; overflow: auto; white-space: pre-wrap; }
+.field .credential-json { min-height: 132px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
 .result-cell { max-width: 320px; overflow-wrap: anywhere; white-space: normal; }
 .configuration-targets { display: grid; gap: 10px; }
 .configuration-device { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 0; padding: 12px; border: 1px solid var(--line); border-radius: 8px; }
@@ -310,6 +338,7 @@ a { color: inherit; }
 .project-spotlight p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.6; }
 .tag-list { display: flex; flex-wrap: wrap; gap: 6px; }
 .tag { display: inline-flex; align-items: center; min-height: 25px; padding: 0 9px; border: 1px dashed var(--line-strong); border-radius: 8px 4px 9px 5px / 5px 9px 4px 8px; background: transparent; color: var(--muted); font-size: 11px; }
+.tag.unavailable { border-style: solid; opacity: .72; }
 .link-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 0; border-top: 1px solid var(--line); font-size: 13px; }
 .link-row:first-child { border-top: 0; padding-top: 0; }
 .link-row:last-child { padding-bottom: 0; }
@@ -442,6 +471,8 @@ tbody tr:hover { background: rgba(193,95,60,.045); }
 tr:last-child td { border-bottom: 0; }
 .current-device { color: var(--ok); font-size: 10px; font-weight: 700; }
 .row-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
+.tool-configuration-actions { flex-wrap: wrap; }
+.configuration-unavailable { width: 100%; color: var(--muted); font-size: 9px; line-height: 1.4; text-align: right; }
 .task-status { display: inline-flex; min-height: 23px; align-items: center; padding: 0 8px; border-radius: 8px 4px 9px 5px / 5px 9px 4px 8px; font-size: 10px; font-weight: 700; white-space: nowrap; }
 .task-todo { color: #6d6553; background: #eee8d9; }
 .task-in_progress { color: #46618f; background: #e5ebf4; }
@@ -547,6 +578,8 @@ a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outlin
   .model-table tr { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 11px 12px; border-bottom: 1px solid var(--line); }
   .model-table tr:last-child { border-bottom: 0; }
   .model-table td { display: block; min-width: 0; padding: 6px; border: 0; white-space: normal; overflow-wrap: anywhere; }
+  .models-table { min-width: 0; }
+  .models-table td:nth-child(3) code { overflow-wrap: anywhere; white-space: normal; }
   .model-table td::before { display: block; margin-bottom: 3px; color: var(--muted); font-size: 8px; font-weight: 700; text-transform: uppercase; }
   .model-table td:first-child, .model-table td:last-child { grid-column: 1 / -1; }
   .model-table td:first-child::before { content: "记录"; }
@@ -556,6 +589,12 @@ a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outlin
   .source-table td:nth-child(4)::before { content: "AI 工具"; }
   .source-table td:nth-child(5)::before { content: "API Key"; }
   .source-table td:nth-child(6)::before { content: "验证"; }
+  .private-credential-table { min-width: 0; }
+  .private-credential-table td:nth-child(2)::before { content: "脱敏定位字段"; }
+  .private-credential-table td:nth-child(3)::before { content: "用途与标签"; }
+  .private-credential-table td:nth-child(4)::before { content: "Secret 字段"; }
+  .private-credential-table td:nth-child(5)::before { content: "Agent 访问"; }
+  .private-credential-table td:nth-child(6)::before { content: "更新"; }
   .models-table td:nth-child(2)::before { content: "来源"; }
   .models-table td:nth-child(3)::before { content: "模型 ID"; }
   .models-table td:nth-child(4)::before { content: "AI 工具"; }
@@ -590,6 +629,8 @@ a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outlin
   .tool-matrix-row > .row-actions { grid-column: 1; }
   .tool-matrix-row .button { width: 100%; }
   .configuration-device, .policy-options, .policy-category-grid { grid-template-columns: 1fr; }
+  .revealed-credential-row { grid-template-columns: 1fr; }
+  .revealed-credential-row .icon-button { justify-self: end; }
   .persona-toolbar { align-items: stretch; }
   .persona-toolbar .segmented { width: 100%; overflow-x: auto; }
   .persona-toolbar .segmented button { flex: 1 0 auto; }
@@ -601,6 +642,8 @@ export const dashboardJs = `const __name=(target,value)=>Object.defineProperty(t
 
 function dashboardClient(): void {
   type Snapshot = any;
+  const cursorConfigurationNotice =
+    "需要 One Status Cursor 扩展，当前版本暂不可配置";
   const icons = (window as unknown as { __ONE_STATUS_ICONS__: Record<string, string> })
     .__ONE_STATUS_ICONS__;
   const csrf = document
@@ -625,6 +668,7 @@ function dashboardClient(): void {
   let onboardingMode: "login" | "register" = "register";
   let pendingCapabilityInstall: any;
   let pendingModelConfiguration: any;
+  let transientRevealedSecrets: Record<string, string> | undefined;
   let memoryView: "records" | "profile" | "events" | "policy" = "records";
   let toastTimer: number | undefined;
 
@@ -678,6 +722,14 @@ function dashboardClient(): void {
         toast("已复制");
         return;
       }
+      if (action === "copy-revealed-secret") {
+        const key = target.dataset.key || "";
+        const value = transientRevealedSecrets?.[key];
+        if (!value) throw new Error("本次明文授权已失效，请重新验证钱包密码。");
+        await copyToClipboard(value);
+        toast(`${key} 已复制`);
+        return;
+      }
       if (action === "sync-device-control") {
         const button = target as HTMLButtonElement;
         const restore = setButtonBusy(button, "正在扫描");
@@ -722,6 +774,10 @@ function dashboardClient(): void {
         return;
       }
       if (action === "configure-model") {
+        if (target.dataset.tool === "cursor") {
+          toast(cursorConfigurationNotice, true);
+          return;
+        }
         return openModelConfigurationModal(target.dataset.model, {
           deviceId: target.dataset.device,
           toolId: target.dataset.tool,
@@ -732,6 +788,31 @@ function dashboardClient(): void {
           target.dataset.id!,
           target.dataset.mode === "copy" ? "copy" : "view",
         );
+      }
+      if (action === "add-private-credential") {
+        return openPrivateCredentialModal();
+      }
+      if (action === "edit-private-credential") {
+        return openPrivateCredentialModal(target.dataset.id);
+      }
+      if (action === "reveal-private-credential") {
+        return openPrivateCredentialPasswordModal(
+          target.dataset.id!,
+          target.dataset.mode === "copy" ? "copy" : "view",
+        );
+      }
+      if (action === "delete-private-credential") {
+        const credential = privateCredentialById(target.dataset.id);
+        const label = credential?.label || "这项私密凭据";
+        if (confirm(`删除“${label}”？此操作会同步到账号内其他设备。`)) {
+          await api(
+            `/v1/dashboard/private-credentials/${encodeURIComponent(target.dataset.id || "")}`,
+            { method: "DELETE" },
+          );
+          await load(false);
+          toast("私密凭据已删除");
+        }
+        return;
       }
       if (action === "change-wallet-password") {
         return openWalletPasswordChangeModal();
@@ -919,11 +1000,41 @@ function dashboardClient(): void {
         return;
       }
       if (action === "revoke-device") {
-        if (confirm("撤销该设备及其所有会话？")) {
+        if (confirm("解除该设备并撤销其所有会话？")) {
           await api(`/v1/dashboard/devices/${target.dataset.id}`, { method: "DELETE" });
           await load(false);
-          toast("设备已撤销");
+          toast("设备已解除");
         }
+        return;
+      }
+      if (action === "revoke-device-sessions") {
+        if (confirm("撤销该设备当前的所有登录会话？")) {
+          await api(`/v1/dashboard/devices/${target.dataset.id}/revoke-sessions`, { method: "POST" });
+          await load(false);
+          toast("设备登录已撤销");
+        }
+        return;
+      }
+      if (action === "block-device" || action === "unblock-device") {
+        const blocking = action === "block-device";
+        if (confirm(blocking ? "封禁该设备并立即撤销其登录？" : "解除该设备的登录封禁？")) {
+          await api(`/v1/dashboard/devices/${target.dataset.id}/block`, {
+            method: blocking ? "PUT" : "DELETE",
+          });
+          await load(false);
+          toast(blocking ? "设备已封禁" : "设备封禁已解除");
+        }
+        return;
+      }
+      if (action === "toggle-device-login-policy") {
+        const denyNewDeviceLogins = target.dataset.deny === "true";
+        await api("/v1/dashboard/device-login-policy", {
+          method: "PUT",
+          body: { denyNewDeviceLogins },
+        });
+        await load(false);
+        toast(denyNewDeviceLogins ? "已拒绝新设备登录" : "已允许新设备登录");
+        return;
       }
     } catch (error) {
       toast(readError(error), true);
@@ -957,11 +1068,19 @@ function dashboardClient(): void {
       }
       return;
     }
-    if (input.name === "protocol") {
+    if (input.name === "protocol" || input.name === "kind") {
       const form = input.closest<HTMLFormElement>(
         'form[data-form="model-source"]',
       );
-      if (form) updateSourceToolAvailability(form, input.value);
+      if (form) {
+        const kind = form.querySelector<HTMLSelectElement>('[name="kind"]')?.value || "official-api";
+        const protocol = form.querySelector<HTMLSelectElement>('[name="protocol"]')?.value || "openai";
+        updateSourceToolAvailability(form, kind, protocol);
+      }
+    }
+    if (input.name === "sourceId") {
+      const form = input.closest<HTMLFormElement>('form[data-form="model"]');
+      if (form) updateModelToolAvailability(form, input.value);
     }
   });
 
@@ -973,7 +1092,7 @@ function dashboardClient(): void {
     setBusy(form, true);
     try {
       if (form.dataset.form === "onboarding-register") {
-        const response = await api("/v1/dashboard/onboarding/register", {
+        await api("/v1/dashboard/onboarding/register", {
           method: "POST",
           body: {
             deviceName: stringValue(data, "deviceName"),
@@ -983,7 +1102,7 @@ function dashboardClient(): void {
           },
         });
         await load(false);
-        openModal("保存恢复密钥", `<p class="oauth-help">恢复密钥用于在新设备解密状态。服务器无法替你找回。</p><code class="recovery-key">${escapeHtml(response.statusKey)}</code><div class="form-actions"><button class="button secondary" data-action="copy-value" data-value="${escapeHtml(response.statusKey)}" type="button">${icon("copy")}复制</button><button class="button" data-close-modal type="button">${icon("check")}我已保存</button></div>`);
+        toast("账号已创建，当前设备已连接");
         return;
       }
       if (form.dataset.form === "onboarding-login") {
@@ -994,11 +1113,10 @@ function dashboardClient(): void {
             email: stringValue(data, "email"),
             password: stringValue(data, "password"),
             serverUrl: stringValue(data, "serverUrl"),
-            statusKey: stringValue(data, "statusKey"),
           },
         });
         await load(false);
-        toast("设备已连接，加密状态已恢复");
+        toast("设备已登录，状态已自动恢复");
         return;
       }
       if (form.dataset.form === "context") {
@@ -1163,6 +1281,7 @@ function dashboardClient(): void {
             label: stringValue(data, "label"),
             kind: stringValue(data, "kind"),
             protocol: stringValue(data, "protocol"),
+            apiFormat: stringValue(data, "apiFormat") || undefined,
             endpoint: stringValue(data, "endpoint") || undefined,
             supportedTools: data.getAll("supportedTools").map(String),
             apiKey: stringValue(data, "apiKey") || undefined,
@@ -1171,6 +1290,48 @@ function dashboardClient(): void {
         });
         closeModal();
         toast("密钥配置已保存");
+      }
+      if (form.dataset.form === "private-credential") {
+        const id = stringValue(data, "id");
+        const purposes = csv(stringValue(data, "purposes"));
+        const secrets = parseCredentialMap(
+          stringValue(data, "secrets"),
+          "Secret",
+        );
+        if (purposes.length === 0) {
+          throw new Error("至少填写一个使用场景。");
+        }
+        if (!id && Object.keys(secrets).length === 0) {
+          throw new Error("新增凭据至少需要一个 Secret 字段。");
+        }
+        const body = {
+          accessPolicy: {
+            allowAgentRead: data.get("allowAgentRead") === "on",
+            allowedAgentIds: csv(stringValue(data, "allowedAgentIds")),
+            allowedProjectIds: csv(stringValue(data, "allowedProjectIds")),
+            deniedAgentIds: csv(stringValue(data, "deniedAgentIds")),
+            deniedProjectIds: csv(stringValue(data, "deniedProjectIds")),
+            requireApproval: data.get("requireApproval") === "on",
+          },
+          expiresAt: credentialExpiration(stringValue(data, "expiresAt")),
+          fields: parseCredentialMap(
+            stringValue(data, "fields"),
+            "定位字段",
+          ),
+          kind: stringValue(data, "kind"),
+          label: stringValue(data, "label"),
+          purposes,
+          tags: csv(stringValue(data, "tags")),
+          ...(Object.keys(secrets).length > 0 ? { secrets } : {}),
+        };
+        await api(
+          id
+            ? `/v1/dashboard/private-credentials/${encodeURIComponent(id)}`
+            : "/v1/dashboard/private-credentials",
+          { method: id ? "PUT" : "POST", body },
+        );
+        closeModal();
+        toast(id ? "私密凭据已更新" : "私密凭据已加密保存");
       }
       if (form.dataset.form === "model") {
         const id = stringValue(data, "id");
@@ -1247,6 +1408,37 @@ function dashboardClient(): void {
         openModal(
           "查看 API Key",
           `<p class="oauth-help">页面关闭后会立即清除本次明文展示。明文区域禁止选择；复制操作需要重新输入钱包密码。</p><code class="recovery-key wallet-revealed">${escapeHtml(secret)}</code><div class="form-actions"><button class="button" data-close-modal type="button">${icon("check")}关闭</button></div>`,
+        );
+        return;
+      }
+      if (form.dataset.form === "private-credential-reveal") {
+        const credentialId = stringValue(data, "credentialId");
+        const mode = stringValue(data, "mode") === "copy" ? "copy" : "view";
+        const result = await api(
+          `/v1/dashboard/private-credentials/${encodeURIComponent(credentialId)}/reveal`,
+          {
+            method: "POST",
+            body: { password: stringValue(data, "password") },
+          },
+        );
+        const credential = revealedPrivateCredential(result);
+        const entries = Object.entries(credential.secrets || {}) as Array<
+          [string, string]
+        >;
+        if (entries.length === 0) {
+          throw new Error("这项凭据没有可显示的 Secret。");
+        }
+        if (mode === "copy" && entries.length === 1) {
+          await copyToClipboard(entries[0]![1]);
+          closeModal();
+          toast(`${entries[0]![0]} 已复制，本次授权不会保留`);
+          return;
+        }
+        transientRevealedSecrets = Object.fromEntries(entries);
+        openModal(
+          mode === "copy" ? "选择要复制的凭据" : "查看私密凭据",
+          `<p class="oauth-help">页面关闭后会立即清除本次明文展示。每个复制按钮仅作用于对应字段。</p>${renderRevealedCredentialSecrets(entries)}<div class="form-actions"><button class="button" data-close-modal type="button">${icon("check")}关闭</button></div>`,
+          true,
         );
         return;
       }
@@ -1424,7 +1616,7 @@ function dashboardClient(): void {
     const deviceName = onboarding.deviceName || "Mac";
     const register = onboardingMode === "register";
     main.innerHTML = `<div class="onboarding-layout">
-      <div class="onboarding-head"><h2>${register ? "创建 One Status 账号" : "恢复已有状态"}</h2><p>${register ? "注册首台设备，并生成只显示一次的恢复密钥。" : "使用账号密码和恢复密钥连接这台设备。"}</p></div>
+      <div class="onboarding-head"><h2>${register ? "创建 One Status 账号" : "登录已有账号"}</h2><p>${register ? "注册账号并连接当前设备。" : "输入账号密码后直接恢复当前状态。"}</p></div>
       <section class="onboarding-form">
         <div class="segmented" role="group" aria-label="账号操作"><button class="${register ? "active" : ""}" data-action="set-onboarding-mode" data-mode="register" type="button">注册</button><button class="${register ? "" : "active"}" data-action="set-onboarding-mode" data-mode="login" type="button">登录已有账号</button></div>
         <form data-form="onboarding-${register ? "register" : "login"}"><div class="form-grid">
@@ -1432,10 +1624,9 @@ function dashboardClient(): void {
           ${field("邮箱", "email", "", "email", "", 'required autocomplete="email"')}
           ${field("设备名称", "deviceName", deviceName, "text", "", 'required autocomplete="off"')}
           ${field("账号密码", "password", "", "password", "full", `required minlength="10" autocomplete="${register ? "new-password" : "current-password"}"`)}
-          ${register ? "" : field("恢复密钥", "statusKey", "", "password", "full", 'required autocomplete="off" placeholder="os1_…"')}
-        </div><div class="form-actions"><button class="button" type="submit">${icon(register ? "key" : "cloud")}${register ? "创建账号" : "连接并解密"}</button></div></form>
+        </div><div class="form-actions"><button class="button" type="submit">${icon(register ? "key" : "cloud")}${register ? "创建账号" : "登录设备"}</button></div></form>
       </section>
-      <div class="onboarding-security">${icon("shield")}<span>密码仅用于登录；恢复密钥留在设备上。云端保存加密状态，OAuth 凭据在同步前会再次加密。</span></div>
+      <div class="onboarding-security">${icon("shield")}<span>内部状态密钥由账号密码自动加密和解封。云端保存加密状态，OAuth 凭据在同步前会再次加密。</span></div>
     </div>`;
   }
 
@@ -1459,12 +1650,15 @@ function dashboardClient(): void {
         total + report.tools.filter((tool: any) => tool.installed).length,
       0,
     );
+    const denyNewDeviceLogins = Boolean(
+      snapshot.account.deviceLoginPolicy?.denyNewDeviceLogins,
+    );
     return `
       ${pageLead(
         `${devices.length} 台设备 · ${devices.filter((device: any) => device.online).length} 台在线 · ${installedToolCount} 个已安装工具`,
-        `<button class="button secondary" data-action="sync-device-control" type="button">${icon("refresh")}扫描当前设备</button>`,
+        `<div class="header-actions"><button class="button secondary" data-action="toggle-device-login-policy" data-deny="${denyNewDeviceLogins ? "false" : "true"}" type="button">${icon("shield")}${denyNewDeviceLogins ? "允许新设备登录" : "拒绝新设备登录"}</button><button class="button secondary" data-action="sync-device-control" type="button">${icon("refresh")}扫描当前设备</button></div>`,
       )}
-      <div class="device-matrix">${devices.map((device: any) => renderDeviceBlock(device)).join("")}</div>
+      <div class="device-matrix">${devices.map((device: any) => renderDeviceBlock(device, true)).join("")}</div>
       <section class="data-section mt-20">
         ${sectionHeader("可配置模型", `${modelGroups.length} 个模型 · ${snapshot.modelUsage?.scannedAt ? `用量统计于 ${formatDate(snapshot.modelUsage.scannedAt)}` : "等待本机会话用量扫描"}`)}
         ${modelGroups.length ? `<div class="table-wrap"><table class="model-table overview-model-table"><thead><tr><th>模型</th><th>密钥来源</th><th>兼容工具</th><th>已配置</th><th>消耗量</th><th>最近统计</th><th></th></tr></thead><tbody>${modelGroups.map((group: any) => {
@@ -1473,7 +1667,11 @@ function dashboardClient(): void {
           const sourceHosts = [...new Set(sources.map((source: any) => endpointHost(source.endpoint) || modelSourceKindLabel(source.kind)).filter(Boolean))];
           const configured = Object.values(control.reports).flatMap((report: any) => report.tools).filter((tool: any) => tool.currentModelId === group.modelId).length;
           const usage = modelUsageSummary(group.modelId, sources.length);
-          return `<tr><td><strong>${escapeHtml(group.name)}</strong><br><small>${escapeHtml(group.modelId)}</small></td><td><strong>${escapeHtml(sourceLabels.join("、") || "未识别")}</strong><br><small>${escapeHtml(sourceHosts.join("、") || "默认 Endpoint")}</small></td><td>${renderToolTags(group.supportedTools)}</td><td>${configured} 个工具</td><td><strong>${escapeHtml(usage.primary)}</strong><br><small>${escapeHtml(usage.detail)}</small></td><td>${usage.updatedAt ? formatDate(usage.updatedAt) : "等待扫描"}</td><td><a class="button secondary" href="/models">配置</a></td></tr>`;
+          const configurable = group.supportedTools.some((tool: string) => canConfigureModelForTool(tool));
+          const action = configurable
+            ? '<a class="button secondary" href="/models">配置</a>'
+            : `<button class="button secondary" type="button" title="${escapeHtml(cursorConfigurationNotice)}" disabled>暂不可配置</button>`;
+          return `<tr><td><strong>${escapeHtml(group.name)}</strong><br><small>${escapeHtml(group.modelId)}</small></td><td><strong>${escapeHtml(sourceLabels.join("、") || "未识别")}</strong><br><small>${escapeHtml(sourceHosts.join("、") || "默认 Endpoint")}</small></td><td>${renderToolTags(group.supportedTools)}</td><td>${configured} 个工具</td><td><strong>${escapeHtml(usage.primary)}</strong><br><small>${escapeHtml(usage.detail)}</small></td><td>${usage.updatedAt ? formatDate(usage.updatedAt) : "等待扫描"}</td><td>${action}</td></tr>`;
         }).join("")}</tbody></table></div>` : emptyState("database", "暂无可配置模型", "密钥钱包完成自动扫描后会在这里显示模型")}
       </section>`;
   }
@@ -1482,18 +1680,37 @@ function dashboardClient(): void {
     const control = snapshot.status.deviceControl;
     const sources = Object.values(control.sources) as any[];
     const models = Object.values(control.models) as any[];
+    const modelWalletSourceIds = new Set(
+      (snapshot.modelCredentialSources || []).map(
+        (credential: any) => credential.sourceId,
+      ),
+    );
+    const privateCredentials = [...(snapshot.privateCredentials || [])]
+      .filter(
+        (credential: any) =>
+          credential.kind !== "model" ||
+          !modelWalletSourceIds.has(credential.fields?.sourceId),
+      )
+      .sort(
+        (left: any, right: any) => right.updatedAt.localeCompare(left.updatedAt),
+      );
     const intents = (Object.values(control.intents) as any[]).sort(
       (left, right) => right.updatedAt.localeCompare(left.updatedAt),
     );
-    const actions = `<div class="header-actions"><button class="button secondary" data-action="add-model-source" type="button">${icon("plus")}添加密钥</button><button class="button" data-action="add-model" type="button" ${sources.length ? "" : "disabled"}>${icon("plus")}添加模型</button></div>`;
+    const actions = `<div class="header-actions"><button class="button secondary" data-action="change-wallet-password" type="button">${icon("key")}修改密码</button><button class="button secondary" data-action="add-model-source" type="button">${icon("plus")}添加模型密钥</button><button class="button secondary" data-action="add-model" type="button" ${sources.length ? "" : "disabled"}>${icon("plus")}添加模型</button><button class="button" data-action="add-private-credential" type="button">${icon("plus")}添加凭据 / 卡密</button></div>`;
     return `
-      ${pageLead(`${sources.length} 份加密配置 · ${models.length} 个模型`, actions)}
+      ${pageLead(`${privateCredentials.length} 项私密凭据 · ${sources.length} 份模型密钥 · ${models.length} 个模型`, actions)}
+      <p class="oauth-help">${escapeHtml(cursorConfigurationNotice)}</p>
       <section class="data-section">
+        <div class="panel-title"><h3>私密凭据与卡密</h3><span>${privateCredentials.length} 项 · E2EE 同步</span></div>
+        ${privateCredentials.length ? `<div class="table-wrap"><table class="model-table private-credential-table"><thead><tr><th>名称 / 类型</th><th>脱敏定位字段</th><th>用途与标签</th><th>Secret 字段</th><th>Agent 访问</th><th>更新</th><th></th></tr></thead><tbody>${privateCredentials.map((credential: any) => `<tr><td><strong>${escapeHtml(credential.label)}</strong><br><small>${escapeHtml(privateCredentialKindLabel(credential.kind))} · ${escapeHtml(credential.id)}</small></td><td>${renderMaskedCredentialFields(credential.fields)}</td><td>${renderCredentialPurposeTags(credential)}</td><td>${renderMaskedCredentialSecrets(credential.secrets)}</td><td>${renderCredentialAccess(credential)}</td><td>${formatDate(credential.updatedAt)}${credential.expiresAt ? `<br><small>${credentialExpired(credential.expiresAt) ? "已过期" : `到期 ${formatDate(credential.expiresAt)}`}</small>` : ""}</td><td><div class="row-actions"><button class="button secondary" data-action="reveal-private-credential" data-mode="view" data-id="${escapeHtml(credential.id)}" type="button">${icon("key")}查看</button><button class="icon-button" data-action="reveal-private-credential" data-mode="copy" data-id="${escapeHtml(credential.id)}" type="button" title="验证密码并复制" aria-label="验证密码并复制">${icon("copy")}</button><button class="button secondary" data-action="edit-private-credential" data-id="${escapeHtml(credential.id)}" type="button">编辑</button><button class="icon-button" data-action="delete-private-credential" data-id="${escapeHtml(credential.id)}" type="button" title="删除私密凭据" aria-label="删除私密凭据">${icon("trash")}</button></div></td></tr>`).join("")}</tbody></table></div>` : emptyState("key", "暂无私密凭据", "SSH、云控制台、GitHub、数据库、卡密等凭据会在这里加密管理")}
+      </section>
+      <section class="data-section mt-20">
         <div class="panel-title"><h3>API、Endpoint 与模型来源</h3><span>E2EE 同步</span></div>
         ${sources.length ? `<div class="table-wrap"><table class="model-table source-table wallet-table"><thead><tr><th>名称</th><th>类型</th><th>协议 / Endpoint</th><th>AI 工具</th><th>API Key</th><th>验证</th><th></th></tr></thead><tbody>${sources.map((source: any) => {
           const credential = (snapshot.modelCredentialSources || []).find((entry: any) => entry.sourceId === source.id);
           const hasCredential = Boolean(credential) && source.credentialStatus !== "missing";
-          return `<tr><td><strong>${escapeHtml(source.label)}</strong><br><small>${escapeHtml(source.id)}</small></td><td>${escapeHtml(modelSourceKindLabel(source.kind))}</td><td><strong>${escapeHtml(modelProtocolLabel(source.protocol))}</strong><br><small>${escapeHtml(endpointHost(source.endpoint) || "默认 Endpoint")}</small></td><td>${renderToolTags(source.supportedTools)}</td><td><div class="wallet-secret"><code>${hasCredential ? "••••••••••••" : "未保存"}</code><span class="health-state health-${escapeHtml(source.credentialStatus)}">${escapeHtml(credentialStatusLabel(source.credentialStatus))}</span></div></td><td>${formatDate(source.lastVerifiedAt || credential?.updatedAt)}</td><td><div class="row-actions">${hasCredential ? `<button class="button secondary" data-action="reveal-model-credential" data-mode="view" data-id="${escapeHtml(source.id)}" type="button">${icon("key")}查看</button><button class="icon-button" data-action="reveal-model-credential" data-mode="copy" data-id="${escapeHtml(source.id)}" type="button" title="验证密码并复制密钥" aria-label="验证密码并复制密钥">${icon("copy")}</button>` : ""}<button class="button secondary" data-action="edit-model-source" data-id="${escapeHtml(source.id)}" type="button">编辑</button><button class="icon-button" data-action="delete-model-source" data-id="${escapeHtml(source.id)}" type="button" title="删除密钥配置">${icon("trash")}</button></div></td></tr>`;
+          return `<tr><td><strong>${escapeHtml(source.label)}</strong><br><small>${escapeHtml(source.id)}</small></td><td>${escapeHtml(modelSourceKindLabel(source.kind))}</td><td><strong>${escapeHtml(modelProtocolLabel(source.protocol))}</strong><br><small>${escapeHtml(source.apiFormat ? `${modelApiFormatLabel(source.apiFormat)} · ${endpointHost(source.endpoint) || "默认 Endpoint"}` : endpointHost(source.endpoint) || "自动适配")}</small></td><td>${renderToolTags(source.supportedTools)}</td><td><div class="wallet-secret"><code>${hasCredential ? "••••••••••••" : "未保存"}</code><span class="health-state health-${escapeHtml(source.credentialStatus)}">${escapeHtml(credentialStatusLabel(source.credentialStatus))}</span></div></td><td>${formatDate(source.lastVerifiedAt || credential?.updatedAt)}</td><td><div class="row-actions">${hasCredential ? `<button class="button secondary" data-action="reveal-model-credential" data-mode="view" data-id="${escapeHtml(source.id)}" type="button">${icon("key")}查看</button><button class="icon-button" data-action="reveal-model-credential" data-mode="copy" data-id="${escapeHtml(source.id)}" type="button" title="验证密码并复制密钥" aria-label="验证密码并复制密钥">${icon("copy")}</button>` : ""}<button class="button secondary" data-action="edit-model-source" data-id="${escapeHtml(source.id)}" type="button">编辑</button><button class="icon-button" data-action="delete-model-source" data-id="${escapeHtml(source.id)}" type="button" title="删除密钥配置">${icon("trash")}</button></div></td></tr>`;
         }).join("")}</tbody></table></div>` : emptyState("key", "密钥钱包为空", "当前设备扫描到的 AI 配置会自动加密进入钱包")}
       </section>
       <section class="data-section mt-20">
@@ -1501,7 +1718,8 @@ function dashboardClient(): void {
         ${models.length ? `<div class="table-wrap"><table class="model-table models-table"><thead><tr><th>模型</th><th>来源</th><th>模型 ID</th><th>AI 工具</th><th>已配置</th><th></th></tr></thead><tbody>${models.map((model: any) => {
           const source = control.sources[model.sourceId];
           const configured = Object.values(control.reports).flatMap((report: any) => report.tools).filter((tool: any) => tool.currentModelRef === model.id).length;
-          return `<tr><td><strong>${escapeHtml(model.name)}</strong><br><small>${escapeHtml(model.id)}</small></td><td>${escapeHtml(source?.label || model.sourceId)}</td><td><code>${escapeHtml(model.modelId)}</code></td><td>${renderToolTags(model.supportedTools)}</td><td>${configured} 个工具</td><td><div class="row-actions"><button class="button" data-action="configure-model" data-model="${escapeHtml(model.id)}" type="button">配置</button><button class="button secondary" data-action="edit-model" data-id="${escapeHtml(model.id)}" type="button">编辑</button><button class="icon-button" data-action="delete-model" data-id="${escapeHtml(model.id)}" type="button" title="删除模型">${icon("trash")}</button></div></td></tr>`;
+          const configurable = model.supportedTools.some((tool: string) => canConfigureModelForTool(tool));
+          return `<tr><td><strong>${escapeHtml(model.name)}</strong><br><small>${escapeHtml(model.id)}</small></td><td>${escapeHtml(source?.label || model.sourceId)}</td><td><code>${escapeHtml(model.modelId)}</code></td><td>${renderToolTags(model.supportedTools)}</td><td>${configured} 个工具</td><td><div class="row-actions"><button class="button" data-action="configure-model" data-model="${escapeHtml(model.id)}" type="button" title="${configurable ? "" : escapeHtml(cursorConfigurationNotice)}" ${configurable ? "" : "disabled"}>${configurable ? "配置" : "暂不可配置"}</button><button class="button secondary" data-action="edit-model" data-id="${escapeHtml(model.id)}" type="button">编辑</button><button class="icon-button" data-action="delete-model" data-id="${escapeHtml(model.id)}" type="button" title="删除模型">${icon("trash")}</button></div></td></tr>`;
         }).join("")}</tbody></table></div>` : emptyState("database", "暂无模型", "")}
       </section>
       <section class="data-section mt-20">
@@ -1724,12 +1942,14 @@ function dashboardClient(): void {
     const report = control.reports[device.id];
     const installedTools = report?.tools.filter((tool: any) => tool.installed) || [];
     const current = device.id === snapshot.profile.deviceId;
-    const online = current || device.online;
+    const online = !device.blocked && (current || device.online);
     const managementAction = management && !current
-      ? `<button class="button danger" data-action="revoke-device" data-id="${escapeHtml(device.id)}" type="button">撤销设备</button>`
+      ? `<div class="row-actions">${device.blocked
+        ? `<button class="button secondary" data-action="unblock-device" data-id="${escapeHtml(device.id)}" type="button">解除封禁</button>`
+        : `<button class="button secondary" data-action="revoke-device-sessions" data-id="${escapeHtml(device.id)}" type="button">撤销登录</button><button class="button danger" data-action="block-device" data-id="${escapeHtml(device.id)}" type="button">封禁</button>`}<button class="button secondary" data-action="revoke-device" data-id="${escapeHtml(device.id)}" type="button">解除设备</button></div>`
       : "";
     return `<article class="device-block">
-      <header class="device-head"><div><div class="device-title"><h3>${escapeHtml(device.name)}</h3>${current ? '<span class="scope">当前设备</span>' : ""}<span class="presence ${online ? "online" : "offline"}"><i></i>${online ? "在线" : "离线"}</span></div><p>${report ? `${escapeHtml(operatingSystemLabel(report.operatingSystem))} ${escapeHtml(report.osVersion)} · ${escapeHtml(report.architecture)}` : "等待设备后台上报"}</p></div><div class="device-head-side"><span>后台 ${escapeHtml(report?.backgroundVersion || "—")}</span><span>最后在线 ${formatDate(device.lastSeenAt)}</span>${managementAction}</div></header>
+      <header class="device-head"><div><div class="device-title"><h3>${escapeHtml(device.name)}</h3>${current ? '<span class="scope">当前设备</span>' : ""}${device.blocked ? '<span class="scope">已封禁</span>' : ""}<span class="presence ${online ? "online" : "offline"}"><i></i>${online ? "在线" : device.blocked ? "已封禁" : "离线"}</span></div><p>${report ? `${escapeHtml(operatingSystemLabel(report.operatingSystem))} ${escapeHtml(report.osVersion)} · ${escapeHtml(report.architecture)}` : "等待设备后台上报"}</p></div><div class="device-head-side"><span>后台 ${escapeHtml(report?.backgroundVersion || "—")}</span><span>最后在线 ${formatDate(device.lastSeenAt)}</span>${managementAction}</div></header>
       ${installedTools.length ? `<div class="tool-matrix"><div class="tool-matrix-head"><span>AI 工具</span><span>当前模型</span><span>模型来源</span><span>配置状态</span><span></span></div>${installedTools.map((tool: any) => {
         const source = tool.sourceId ? control.sources[tool.sourceId] : undefined;
         const model = tool.currentModelRef ? control.models[tool.currentModelRef] : undefined;
@@ -1737,8 +1957,14 @@ function dashboardClient(): void {
         const health = intent && ["pending", "applying", "failed", "rollback"].includes(intent.status)
           ? intent.status
           : tool.health;
-        const compatible = (Object.values(control.models) as any[]).filter((entry: any) => entry.supportedTools.includes(tool.toolId));
-        return `<div class="tool-matrix-row"><div class="tool-name"><span class="tool-glyph">${icon(tool.toolId === "cursor" ? "projects" : "terminal")}</span><div><strong>${escapeHtml(tool.name || agentLabel(tool.toolId))}</strong><small>${escapeHtml(tool.version || "版本未知")}</small></div></div><div><strong>${escapeHtml(model?.name || tool.currentModelId || "未配置")}</strong><small>${escapeHtml(tool.currentModelId || "")}</small></div><div><strong>${escapeHtml(source?.label || tool.sourceLabel || "—")}</strong><small>${escapeHtml(modelSourceKindLabel(source?.kind || tool.sourceKind))}${tool.endpointHost ? ` · ${escapeHtml(tool.endpointHost)}` : ""}</small></div><div><span class="intent-status intent-${escapeHtml(health)}">${escapeHtml(toolHealthLabel(health))}</span>${intent ? `<small>${formatDate(intent.updatedAt)}</small>` : ""}</div><div class="row-actions"><button class="button secondary" data-action="configure-model" data-device="${escapeHtml(device.id)}" data-tool="${escapeHtml(tool.toolId)}" data-model="${escapeHtml(tool.currentModelRef || "")}" type="button" ${compatible.length ? "" : "disabled"}>${tool.currentModelId ? "切换" : "配置"}</button></div></div>`;
+        const configurable = canConfigureModelForTool(tool.toolId);
+        const compatible = configurable
+          ? (Object.values(control.models) as any[]).filter((entry: any) => entry.supportedTools.includes(tool.toolId))
+          : [];
+        const unavailable = configurable
+          ? ""
+          : `<small class="configuration-unavailable">${escapeHtml(cursorConfigurationNotice)}</small>`;
+        return `<div class="tool-matrix-row"><div class="tool-name"><span class="tool-glyph">${icon(tool.toolId === "cursor" ? "projects" : "terminal")}</span><div><strong>${escapeHtml(tool.name || agentLabel(tool.toolId))}</strong><small>${escapeHtml(tool.version || "版本未知")}</small></div></div><div><strong>${escapeHtml(model?.name || tool.currentModelId || "未配置")}</strong><small>${escapeHtml(tool.currentModelId || "")}</small></div><div><strong>${escapeHtml(source?.label || tool.sourceLabel || "—")}</strong><small>${escapeHtml(modelSourceKindLabel(source?.kind || tool.sourceKind))}${tool.endpointHost ? ` · ${escapeHtml(tool.endpointHost)}` : ""}</small></div><div><span class="intent-status intent-${escapeHtml(health)}">${escapeHtml(toolHealthLabel(health))}</span>${intent ? `<small>${formatDate(intent.updatedAt)}</small>` : ""}</div><div class="row-actions tool-configuration-actions"><button class="button secondary" data-action="configure-model" data-device="${escapeHtml(device.id)}" data-tool="${escapeHtml(tool.toolId)}" data-model="${escapeHtml(tool.currentModelRef || "")}" type="button" ${compatible.length ? "" : "disabled"}>${configurable ? tool.currentModelId ? "切换" : "配置" : "暂不可配置"}</button>${unavailable}</div></div>`;
       }).join("")}</div>` : `<div class="device-empty"><span>${icon("terminal")}</span><p>${report ? "未检测到已安装的 AI 工具" : online ? "等待首次环境扫描" : "设备上线后获取工具清单"}</p>${current ? `<button class="button secondary" data-action="sync-device-control" type="button">${icon("refresh")}扫描</button>` : ""}</div>`}
     </article>`;
   }
@@ -1839,7 +2065,7 @@ function dashboardClient(): void {
         </section>
         <section class="panel">
           <div class="panel-title"><h3>安全边界</h3><span>${configuredProviders.length}/${snapshot.integrations.providers.length} PROVIDERS</span></div>
-          <div class="link-row"><div><strong>恢复密钥</strong><small>不会进入 Dashboard response 或云端明文</small></div>${icon("key")}</div>
+          <div class="link-row"><div><strong>状态密钥</strong><small>由账号密码自动加密，用户无需管理</small></div>${icon("key")}</div>
           <div class="link-row"><div><strong>OAuth Token</strong><small>Agent 只能调用已授权动作</small></div>${icon("shield")}</div>
           <div class="link-row"><div><strong>本机绝对路径</strong><small>保存在设备本地 workspace 数据库</small></div>${icon("database")}</div>
           <div class="link-row"><div><strong>原始会话记录</strong><small>默认留在 Agent 本机目录</small></div>${icon("terminal")}</div>
@@ -1965,6 +2191,51 @@ function dashboardClient(): void {
     openModal(memory ? "编辑记忆" : "添加记忆", `<form data-form="memory"><input type="hidden" name="id" value="${escapeHtml(memory?.id || "")}"><div class="form-grid"><div class="field"><label>范围</label><select name="scope">${["user", "project", "session"].map((scope) => `<option value="${scope}" ${scope === (memory?.scope || "user") ? "selected" : ""}>${scopeLabel(scope)}</option>`).join("")}</select></div><div class="field"><label>项目</label><select name="projectId"><option value="">无</option>${Object.values(snapshot.status.projects).map((project: any) => `<option value="${escapeHtml(project.id)}" ${project.id === memory?.projectId ? "selected" : ""}>${escapeHtml(project.name)}</option>`).join("")}</select></div>${textareaField("内容", "content", memory?.content || "")}${field("标签", "tags", memory?.tags?.join(", ") || "", "text", "full")}${memory ? `<div class="field full"><label>来源</label><code class="handoff-path">${escapeHtml(memoryOriginLabel(memory))}</code><small>编辑会保留原始来源和创建时间。</small></div>` : ""}</div>${modalActions()}</form>`);
   }
 
+  function openPrivateCredentialModal(id?: string): void {
+    const credential = id ? privateCredentialById(id) : undefined;
+    if (id && !credential) throw new Error("私密凭据已变化，请刷新后重试。");
+    const policy = credential?.accessPolicy || {
+      allowAgentRead: true,
+      allowedAgentIds: [],
+      allowedProjectIds: [],
+      deniedAgentIds: [],
+      deniedProjectIds: [],
+      requireApproval: false,
+    };
+    const secretKeys = Object.keys(credential?.secrets || {});
+    openModal(
+      credential ? "编辑私密凭据" : "添加私密凭据 / 卡密",
+      `<form data-form="private-credential"><input type="hidden" name="id" value="${escapeHtml(credential?.id || "")}"><div class="form-grid">
+        ${field("名称", "label", credential?.label || "", "text", "full", "required maxlength=500")}
+        <div class="field"><label for="kind">类型</label><select id="kind" name="kind">${privateCredentialKinds().map((kind) => `<option value="${kind}" ${kind === (credential?.kind || "ssh") ? "selected" : ""}>${escapeHtml(privateCredentialKindLabel(kind))}</option>`).join("")}</select></div>
+        ${field("到期时间", "expiresAt", credentialDateTimeLocal(credential?.expiresAt), "datetime-local")}
+        ${field("使用场景", "purposes", credential?.purposes?.join(", ") || "", "text", "full", 'required placeholder="deployment.ssh, github.release"')}
+        ${field("标签", "tags", credential?.tags?.join(", ") || "", "text", "full", 'placeholder="production, one-status"')}
+        <div class="field full"><label for="fields">定位字段 JSON</label><textarea class="credential-json" id="fields" name="fields" spellcheck="false" placeholder='{"host":"server.example.com","username":"ubuntu"}'>${escapeHtml(JSON.stringify(credential?.fields || {}, null, 2))}</textarea><small>保存主机、账号、端口、区域、仓库等非 Secret 信息；列表只展示脱敏摘要。</small></div>
+        <div class="field full"><label for="secrets">Secret JSON</label><textarea class="credential-json" id="secrets" name="secrets" spellcheck="false" autocomplete="off" ${credential ? "" : "required"} placeholder='{"password":"...","privateKey":"..."}'></textarea><small>${credential ? `已保存字段：${escapeHtml(secretKeys.join("、") || "无")}。留空会保留当前 Secret；填写后按字段更新，未填写字段继续保留。` : "至少填写一项。密码、Token、私钥、Client Secret、卡密等内容都放在这里。"}</small></div>
+        <label class="check-row full"><input type="checkbox" name="allowAgentRead" ${policy.allowAgentRead ? "checked" : ""}><span><strong>允许 Agent 按需读取</strong><small>Agent 可按使用场景、服务、主机和标签自动匹配；读取会留下脱敏审计记录。</small></span></label>
+        <input type="hidden" name="requireApproval" value="${policy.requireApproval ? "on" : "off"}">
+        ${field("仅允许这些 Agent", "allowedAgentIds", policy.allowedAgentIds?.join(", ") || "", "text", "full", 'placeholder="codex, claude-code；留空允许全部"')}
+        ${field("禁止这些 Agent", "deniedAgentIds", policy.deniedAgentIds?.join(", ") || "", "text", "full", 'placeholder="agent-id"')}
+        ${field("仅允许这些项目", "allowedProjectIds", policy.allowedProjectIds?.join(", ") || "", "text", "full", 'placeholder="one-status；留空允许全部"')}
+        ${field("禁止这些项目", "deniedProjectIds", policy.deniedProjectIds?.join(", ") || "", "text", "full", 'placeholder="project-id"')}
+      </div>${modalActions(credential ? "保存修改" : "加密保存")}</form>`,
+      true,
+    );
+  }
+
+  function openPrivateCredentialPasswordModal(
+    credentialId: string,
+    mode: "view" | "copy",
+  ): void {
+    const credential = privateCredentialById(credentialId);
+    if (!credential) throw new Error("私密凭据已变化，请刷新后重试。");
+    openModal(
+      mode === "copy" ? "验证并复制凭据" : "验证并查看凭据",
+      `<form data-form="private-credential-reveal"><input type="hidden" name="credentialId" value="${escapeHtml(credentialId)}"><input type="hidden" name="mode" value="${mode}"><div class="form-grid"><div class="field full"><label for="privateCredentialWalletPassword">钱包密码</label><input id="privateCredentialWalletPassword" name="password" type="password" required autocomplete="current-password"><small>${escapeHtml(credential.label)} · 初始密码为 123456</small></div><p class="oauth-help full">密码仅用于本次明文访问。关闭弹窗后会清除本次展示内容。</p></div>${modalActions(mode === "copy" ? "验证并复制" : "验证并查看")}</form>`,
+    );
+  }
+
   function openWalletPasswordModal(
     sourceId: string,
     mode: "view" | "copy",
@@ -1987,11 +2258,9 @@ function dashboardClient(): void {
   function openModelSourceModal(id?: string): void {
     const source = id ? snapshot.status.deviceControl.sources[id] : undefined;
     if (id && !source) throw new Error("密钥配置已变化，请刷新后重试。");
+    const kind = source?.kind || "official-api";
     const protocol = source?.protocol || "openai";
-    const availableTools = supportedToolsForProtocol(protocol);
-    const selectedTools = new Set<string>(
-      source?.supportedTools || ["codex"],
-    );
+    const availableTools = supportedToolsForSource(kind, protocol);
     const credentialStored = (snapshot.modelCredentialSources || []).some(
       (entry: any) => entry.sourceId === id,
     );
@@ -2002,8 +2271,9 @@ function dashboardClient(): void {
         ${field("显示名称", "label", source?.label || "", "text", "full", "required")}
         <div class="field"><label for="kind">来源类型</label><select id="kind" name="kind">${["official-account", "official-api", "compatible-api", "local-service", "custom-endpoint"].map((kind) => `<option value="${kind}" ${kind === (source?.kind || "official-api") ? "selected" : ""}>${modelSourceKindLabel(kind)}</option>`).join("")}</select></div>
         <div class="field"><label for="protocol">API 协议</label><select id="protocol" name="protocol">${["openai", "anthropic", "ollama", "azure-openai", "custom"].map((protocol) => `<option value="${protocol}" ${protocol === (source?.protocol || "openai") ? "selected" : ""}>${modelProtocolLabel(protocol)}</option>`).join("")}</select></div>
+        <div class="field"><label for="apiFormat">请求格式</label><select id="apiFormat" name="apiFormat"><option value="">自动适配</option>${["openai-responses", "openai-chat-completions", "anthropic-messages"].map((format) => `<option value="${format}" ${format === source?.apiFormat ? "selected" : ""}>${modelApiFormatLabel(format)}</option>`).join("")}</select></div>
         ${field("Endpoint", "endpoint", source?.endpoint || "", "url", "full", 'placeholder="https://api.example.com/v1"')}
-        <div class="field full"><label>支持的 AI 工具</label><div class="capability-targets">${agentToolChoices(selectedTools, "supportedTools", availableTools)}</div></div>
+        <div class="field full"><label>自动适配目标</label><div class="capability-targets" data-source-compatible-tools>${automaticToolChoices(availableTools, "supportedTools")}</div><small>保存后由 One Status Gateway 自动转换为各工具要求的请求格式。</small></div>
         <div class="field full"><label for="apiKey">API Key</label><input id="apiKey" name="apiKey" type="password" autocomplete="new-password" placeholder="${credentialStored ? "已加密保存；留空继续使用" : "按来源类型填写"}"><small>API Key 进入端到端加密的账号钱包，不进入普通状态和 Agent 上下文。</small></div>
         ${credentialStored ? '<label class="check-row full"><input type="checkbox" name="clearCredential"><span><strong>清除钱包中的 API Key</strong></span></label>' : ""}
       </div>${modalActions()}</form>`,
@@ -2016,9 +2286,6 @@ function dashboardClient(): void {
     const sources = Object.values(snapshot.status.deviceControl.sources) as any[];
     if (sources.length === 0) throw new Error("请先添加模型来源。");
     const source = snapshot.status.deviceControl.sources[model?.sourceId] || sources[0];
-    const selectedTools = new Set<string>(
-      model?.supportedTools || source.supportedTools,
-    );
     openModal(
       model ? "编辑模型" : "添加模型",
       `<form data-form="model"><div class="form-grid">
@@ -2026,7 +2293,7 @@ function dashboardClient(): void {
         <div class="field full"><label for="sourceId">模型来源</label><select id="sourceId" name="sourceId">${sources.map((entry: any) => `<option value="${escapeHtml(entry.id)}" ${entry.id === source.id ? "selected" : ""}>${escapeHtml(entry.label)} · ${escapeHtml(modelProtocolLabel(entry.protocol))}</option>`).join("")}</select></div>
         ${field("模型名称", "name", model?.name || "", "text", "full", "required")}
         ${field("模型 ID", "modelId", model?.modelId || "", "text", "full", "required")}
-        <div class="field full"><label>支持的 AI 工具</label><div class="capability-targets">${agentToolChoices(selectedTools, "supportedTools", new Set(source.supportedTools))}</div></div>
+        <div class="field full"><label>自动适配目标</label><div class="capability-targets" data-model-compatible-tools>${automaticToolChoices(new Set(source.supportedTools), "supportedTools")}</div><small>模型继承密钥来源的兼容目标，无需逐项设置。</small></div>
       </div>${modalActions()}</form>`,
     );
   }
@@ -2035,22 +2302,35 @@ function dashboardClient(): void {
     requestedModelId?: string,
     initialTarget: { deviceId?: string; toolId?: string } = {},
   ): void {
+    if (initialTarget.toolId && !canConfigureModelForTool(initialTarget.toolId)) {
+      throw new Error(cursorConfigurationNotice);
+    }
     const control = snapshot.status.deviceControl;
     const allModels = Object.values(control.models) as any[];
     const compatibleModels = initialTarget.toolId
       ? allModels.filter((model: any) => model.supportedTools.includes(initialTarget.toolId))
-      : allModels;
-    if (compatibleModels.length === 0) throw new Error("没有可用于该 AI 工具的模型。");
+      : allModels.filter((model: any) =>
+          model.supportedTools.some((tool: string) => canConfigureModelForTool(tool)),
+        );
+    if (compatibleModels.length === 0) {
+      if (allModels.some((model: any) => model.supportedTools.includes("cursor"))) {
+        throw new Error(cursorConfigurationNotice);
+      }
+      throw new Error("没有可用于该 AI 工具的模型。");
+    }
     const selectedModel = compatibleModels.find((model: any) => model.id === requestedModelId) || compatibleModels[0];
     const targetGroups = snapshot.account.devices.map((device: any) => {
       const report = control.reports[device.id];
       const tools = report?.tools.filter((tool: any) => tool.installed) || [];
       const rows = tools.map((tool: any) => {
+        if (!canConfigureModelForTool(tool.toolId)) {
+          return `<label class="configuration-target disabled" data-model-target data-tool="${escapeHtml(tool.toolId)}" data-models=""><input type="checkbox" name="targets" value="${escapeHtml(device.id)}|${escapeHtml(tool.toolId)}" disabled><span><strong>${escapeHtml(agentLabel(tool.toolId))}</strong><small>${escapeHtml(cursorConfigurationNotice)}</small></span></label>`;
+        }
         const supportedModels = compatibleModels.filter((model: any) => model.supportedTools.includes(tool.toolId));
         if (supportedModels.length === 0) return "";
         const checked = device.id === initialTarget.deviceId && tool.toolId === initialTarget.toolId;
         const available = supportedModels.some((model: any) => model.id === selectedModel.id);
-        return `<label class="configuration-target" data-model-target data-models="${escapeHtml(supportedModels.map((model: any) => model.id).join(","))}"><input type="checkbox" name="targets" value="${escapeHtml(device.id)}|${escapeHtml(tool.toolId)}" ${checked && available ? "checked" : ""} ${available ? "" : "disabled"}><span><strong>${escapeHtml(agentLabel(tool.toolId))}</strong><small>${escapeHtml(tool.currentModelId || "未配置")} · ${escapeHtml(toolHealthLabel(tool.health))}</small></span></label>`;
+        return `<label class="configuration-target" data-model-target data-tool="${escapeHtml(tool.toolId)}" data-models="${escapeHtml(supportedModels.map((model: any) => model.id).join(","))}"><input type="checkbox" name="targets" value="${escapeHtml(device.id)}|${escapeHtml(tool.toolId)}" ${checked && available ? "checked" : ""} ${available ? "" : "disabled"}><span><strong>${escapeHtml(agentLabel(tool.toolId))}</strong><small>${escapeHtml(tool.currentModelId || "未配置")} · ${escapeHtml(toolHealthLabel(tool.health))}</small></span></label>`;
       }).join("");
       return rows ? `<fieldset class="configuration-device"><legend>${escapeHtml(device.name)} <span class="presence ${device.online || device.id === snapshot.profile.deviceId ? "online" : "offline"}"><i></i>${device.online || device.id === snapshot.profile.deviceId ? "在线" : "离线"}</span></legend>${rows}</fieldset>` : "";
     }).join("");
@@ -2219,6 +2499,7 @@ function dashboardClient(): void {
     modalBackdrop.hidden = true;
     modalBackdrop.querySelector(".modal")?.classList.remove("wide");
     modalContent.innerHTML = "";
+    transientRevealedSecrets = undefined;
   }
 
   async function api(path: string, options: { body?: unknown; method?: string } = {}): Promise<any> {
@@ -2268,7 +2549,7 @@ function dashboardClient(): void {
   }
 
   async function copyToClipboard(value: string): Promise<void> {
-    if (!value) throw new Error("没有可复制的 Callback URL");
+    if (!value) throw new Error("没有可复制的内容");
     if (navigator.clipboard && window.isSecureContext) {
       await navigator.clipboard.writeText(value);
       return;
@@ -2282,7 +2563,7 @@ function dashboardClient(): void {
     textarea.select();
     const copied = document.execCommand("copy");
     textarea.remove();
-    if (!copied) throw new Error("复制失败，请手动选择 Callback URL");
+    if (!copied) throw new Error("复制失败，请重试");
   }
 
   function updateGrantSummary(form: HTMLFormElement): void {
@@ -2290,6 +2571,210 @@ function dashboardClient(): void {
     const total = form.querySelectorAll<HTMLInputElement>('input[name="actions"]:not(:disabled)').length;
     const summary = form.querySelector<HTMLElement>("[data-grant-summary]");
     if (summary) summary.textContent = `已允许 ${selected}/${total} 项可用操作`;
+  }
+
+  function privateCredentialKinds(): string[] {
+    return [
+      "account",
+      "ssh",
+      "cloud_console",
+      "github",
+      "database",
+      "api",
+      "oauth",
+      "license",
+      "card_key",
+      "model",
+      "email",
+      "vpn",
+      "certificate",
+      "signing",
+      "container_registry",
+      "package_registry",
+      "domain",
+      "remote_desktop",
+      "webhook",
+      "generic",
+    ];
+  }
+
+  function privateCredentialById(id?: string): any {
+    return (snapshot.privateCredentials || []).find(
+      (entry: any) => entry.id === id,
+    );
+  }
+
+  function privateCredentialKindLabel(kind: string): string {
+    const labels: Record<string, string> = {
+      account: "账号与密码",
+      api: "API 凭据",
+      card_key: "卡密 / 兑换码",
+      certificate: "证书",
+      cloud_console: "云控制台",
+      container_registry: "容器 Registry",
+      database: "数据库",
+      domain: "域名与 DNS",
+      email: "邮箱账号",
+      generic: "自定义",
+      github: "GitHub",
+      license: "License / 卡密",
+      model: "模型凭据",
+      oauth: "OAuth Client",
+      package_registry: "包 Registry",
+      remote_desktop: "远程桌面",
+      signing: "签名凭据",
+      ssh: "SSH",
+      vpn: "VPN",
+      webhook: "Webhook",
+    };
+    return labels[kind] || kind;
+  }
+
+  function renderMaskedCredentialFields(fields: Record<string, string> = {}): string {
+    const entries = Object.entries(fields);
+    if (entries.length === 0) return '<span class="tag">无定位字段</span>';
+    const visible = entries.slice(0, 4).map(
+      ([key, value]) =>
+        `<span class="credential-field"><strong>${escapeHtml(key)}</strong>${escapeHtml(maskCredentialFieldValue(key, String(value)))}</span>`,
+    );
+    if (entries.length > visible.length) {
+      visible.push(`<span class="credential-field">+${entries.length - visible.length}</span>`);
+    }
+    return `<div class="credential-field-list">${visible.join("")}</div>`;
+  }
+
+  function maskCredentialFieldValue(key: string, value: string): string {
+    if (!value) return "••••";
+    const normalizedKey = key.toLowerCase();
+    if (normalizedKey === "port" || normalizedKey.endsWith("port")) return value;
+    if (normalizedKey.includes("email") || value.includes("@")) {
+      const separator = value.indexOf("@");
+      if (separator > 0) {
+        return `${value.slice(0, 1)}•••${value.slice(separator)}`;
+      }
+    }
+    if (
+      normalizedKey.includes("url") ||
+      normalizedKey.includes("endpoint") ||
+      /^https?:\/\//i.test(value)
+    ) {
+      try {
+        const parsed = new URL(value);
+        return `${parsed.protocol}//${maskCredentialHost(parsed.hostname)}`;
+      } catch {}
+    }
+    if (
+      normalizedKey.includes("host") ||
+      normalizedKey.includes("domain") ||
+      /^(?:\d{1,3}\.){3}\d{1,3}$/.test(value)
+    ) {
+      return maskCredentialHost(value);
+    }
+    if (normalizedKey.includes("path") || value.startsWith("/")) {
+      const parts = value.split("/").filter(Boolean);
+      return parts.length ? `/•••/${parts.at(-1)}` : "/•••";
+    }
+    if (value.length <= 3) return "•".repeat(value.length);
+    return `${value.slice(0, 2)}•••${value.slice(-2)}`;
+  }
+
+  function maskCredentialHost(value: string): string {
+    if (/^(?:\d{1,3}\.){3}\d{1,3}$/.test(value)) {
+      return value.replace(/\.\d{1,3}$/, ".•••");
+    }
+    const parts = value.split(".");
+    if (parts.length >= 2) return `•••.${parts.slice(-2).join(".")}`;
+    return value.length <= 3 ? "•••" : `${value.slice(0, 2)}•••`;
+  }
+
+  function renderCredentialPurposeTags(credential: any): string {
+    const purposes = (credential.purposes || []).map(
+      (value: string) => `<span class="scope">${escapeHtml(value)}</span>`,
+    );
+    const tags = (credential.tags || []).map(
+      (value: string) => `<span class="tag">#${escapeHtml(value)}</span>`,
+    );
+    return `<div class="tag-list">${[...purposes, ...tags].join("") || '<span class="tag">未标记</span>'}</div>`;
+  }
+
+  function renderMaskedCredentialSecrets(secrets: Record<string, string> = {}): string {
+    const keys = Object.keys(secrets);
+    if (keys.length === 0) return '<span class="tag">无 Secret</span>';
+    return `<div class="credential-secret-list">${keys.map((key) => `<span class="credential-secret-key">${escapeHtml(key)} · ••••••••</span>`).join("")}</div>`;
+  }
+
+  function renderCredentialAccess(credential: any): string {
+    const policy = credential.accessPolicy || {};
+    const scopedAgents = policy.allowedAgentIds?.length
+      ? `限 ${policy.allowedAgentIds.length} 个 Agent`
+      : "全部 Agent";
+    const source = credential.source?.agentId
+      ? `由 ${agentLabel(credential.source.agentId)} 登记`
+      : credential.source?.type === "scan"
+        ? "本机扫描登记"
+        : credential.source?.type === "import"
+          ? "导入登记"
+          : "用户登记";
+    return `<div class="credential-access"><span class="health-state ${policy.allowAgentRead ? "health-available" : "health-unverified"}">${policy.allowAgentRead ? policy.requireApproval ? "读取前批准" : "可自动读取" : "禁止读取"}</span><small>${escapeHtml(scopedAgents)} · ${escapeHtml(source)}</small></div>`;
+  }
+
+  function credentialExpired(value: string): boolean {
+    return Number.isFinite(Date.parse(value)) && Date.parse(value) <= Date.now();
+  }
+
+  function credentialDateTimeLocal(value?: string | null): string {
+    if (!value) return "";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "";
+    const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
+    return local.toISOString().slice(0, 16);
+  }
+
+  function credentialExpiration(value: string): string | null {
+    if (!value) return null;
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) throw new Error("到期时间格式无效。");
+    return date.toISOString();
+  }
+
+  function parseCredentialMap(value: string, label: string): Record<string, string> {
+    if (!value) return {};
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(value);
+    } catch {
+      throw new Error(`${label} 必须是有效的 JSON 对象。`);
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error(`${label} 必须是键值 JSON 对象。`);
+    }
+    const result: Record<string, string> = {};
+    for (const [key, item] of Object.entries(parsed)) {
+      if (!/^[A-Za-z][A-Za-z0-9_.-]*$/.test(key)) {
+        throw new Error(`${label} 字段名“${key}”格式无效。`);
+      }
+      if (!["string", "number", "boolean"].includes(typeof item)) {
+        throw new Error(`${label}.${key} 只能使用字符串、数字或布尔值。`);
+      }
+      const textValue = String(item);
+      if (!textValue.trim()) throw new Error(`${label}.${key} 不能为空。`);
+      result[key] = textValue;
+    }
+    return result;
+  }
+
+  function revealedPrivateCredential(result: any): any {
+    const credential = result?.credential ?? result;
+    if (!credential || typeof credential !== "object") {
+      throw new Error("凭据响应格式无效。");
+    }
+    return credential;
+  }
+
+  function renderRevealedCredentialSecrets(
+    entries: Array<[string, string]>,
+  ): string {
+    return `<div class="revealed-credential-list">${entries.map(([key, value]) => `<div class="revealed-credential-row"><div><strong>${escapeHtml(key)}</strong><code class="recovery-key wallet-revealed">${escapeHtml(value)}</code></div><button class="icon-button" data-action="copy-revealed-secret" data-key="${escapeHtml(key)}" type="button" title="复制 ${escapeHtml(key)}" aria-label="复制 ${escapeHtml(key)}">${icon("copy")}</button></div>`).join("")}</div>`;
   }
 
   function metric(iconName: string, label: string, value: unknown, detail: string): string {
@@ -2327,19 +2812,29 @@ function dashboardClient(): void {
     return "填入该 Provider Developer Console 的 OAuth redirect URL。";
   }
   function agentLabel(agentId: string): string {
-    return agentId === "claude-code" ? "Claude Code" : agentId === "codex" ? "Codex" : agentId;
+    return agentId === "claude-code" ? "Claude Code" : agentId === "codex" ? "Codex" : agentId === "cursor" ? "Cursor" : agentId;
   }
-  function agentToolChoices(
-    selected: Set<string>,
+  function canConfigureModelForTool(toolId: string): boolean {
+    return toolId !== "cursor";
+  }
+  function automaticToolChoices(
+    available: Set<string>,
     name: string,
-    available = new Set(["codex", "claude-code", "cursor"]),
   ): string {
-    return ["codex", "claude-code", "cursor"].map((tool) =>
-      `<label class="capability-target"><input type="checkbox" name="${name}" value="${tool}" ${selected.has(tool) ? "checked" : ""} ${available.has(tool) ? "" : "disabled"}><span><strong>${agentLabel(tool)}</strong></span></label>`,
-    ).join("");
+    return ["codex", "claude-code", "cursor"].map((tool) => {
+      const enabled = available.has(tool) && canConfigureModelForTool(tool);
+      const detail = tool === "cursor"
+        ? `<small>${escapeHtml(cursorConfigurationNotice)}</small>`
+        : enabled
+          ? "<small>自动适配</small>"
+          : "<small>官方账号会话不可跨工具迁移</small>";
+      return `<span class="capability-target ${enabled ? "" : "disabled"}">${enabled ? `<input type="hidden" name="${name}" value="${tool}">` : ""}<span><strong>${agentLabel(tool)}</strong>${detail}</span></span>`;
+    }).join("");
   }
   function renderToolTags(tools: string[]): string {
-    return `<div class="tag-list">${tools.map((tool) => `<span class="tag">${escapeHtml(agentLabel(tool))}</span>`).join("")}</div>`;
+    return `<div class="tag-list">${tools.map((tool) => tool === "cursor"
+      ? `<span class="tag unavailable" title="${escapeHtml(cursorConfigurationNotice)}">Cursor · 暂不可配置</span>`
+      : `<span class="tag">${escapeHtml(agentLabel(tool))}</span>`).join("")}</div>`;
   }
   function latestConfigurationIntent(deviceId: string, toolId: string): any {
     return (Object.values(snapshot.status.deviceControl.intents) as any[])
@@ -2348,7 +2843,9 @@ function dashboardClient(): void {
   }
   function updateModelTargetAvailability(form: HTMLFormElement, modelId: string): void {
     form.querySelectorAll<HTMLElement>("[data-model-target]").forEach((row) => {
-      const supported = (row.dataset.models || "").split(",").includes(modelId);
+      const supported =
+        canConfigureModelForTool(row.dataset.tool || "") &&
+        (row.dataset.models || "").split(",").includes(modelId);
       const checkbox = row.querySelector<HTMLInputElement>('input[name="targets"]');
       row.classList.toggle("disabled", !supported);
       if (!checkbox) return;
@@ -2356,24 +2853,31 @@ function dashboardClient(): void {
       if (!supported) checkbox.checked = false;
     });
   }
-  function supportedToolsForProtocol(protocol: string): Set<string> {
-    if (protocol === "anthropic") return new Set(["claude-code", "cursor"]);
-    if (protocol === "custom") {
-      return new Set(["codex", "claude-code", "cursor"]);
+  function supportedToolsForSource(kind: string, protocol: string): Set<string> {
+    if (kind === "official-account") {
+      if (protocol === "openai") return new Set(["codex"]);
+      if (protocol === "anthropic") return new Set(["claude-code"]);
+      return new Set();
     }
-    return new Set(["codex", "cursor"]);
+    return new Set(["codex", "claude-code"]);
   }
   function updateSourceToolAvailability(
     form: HTMLFormElement,
+    kind: string,
     protocol: string,
   ): void {
-    const available = supportedToolsForProtocol(protocol);
-    form
-      .querySelectorAll<HTMLInputElement>('input[name="supportedTools"]')
-      .forEach((checkbox) => {
-        checkbox.disabled = !available.has(checkbox.value);
-        if (checkbox.disabled) checkbox.checked = false;
-      });
+    const available = supportedToolsForSource(kind, protocol);
+    const target = form.querySelector<HTMLElement>("[data-source-compatible-tools]");
+    if (target) target.innerHTML = automaticToolChoices(available, "supportedTools");
+  }
+  function updateModelToolAvailability(
+    form: HTMLFormElement,
+    sourceId: string,
+  ): void {
+    const source = snapshot.status.deviceControl.sources[sourceId];
+    const available = new Set<string>(source?.supportedTools || []);
+    const target = form.querySelector<HTMLElement>("[data-model-compatible-tools]");
+    if (target) target.innerHTML = automaticToolChoices(available, "supportedTools");
   }
   function endpointHost(value?: string): string {
     if (!value) return "";
@@ -2509,6 +3013,12 @@ function dashboardClient(): void {
     if (value === "ollama") return "Ollama";
     if (value === "azure-openai") return "Azure OpenAI";
     return value === "custom" ? "Custom" : value;
+  }
+  function modelApiFormatLabel(value: string): string {
+    if (value === "openai-responses") return "Responses API";
+    if (value === "openai-chat-completions") return "Chat Completions";
+    if (value === "anthropic-messages") return "Messages API";
+    return value;
   }
   function fileModeLabel(value?: number): string {
     return value === undefined ? "—" : `0${value.toString(8).padStart(3, "0")}`;

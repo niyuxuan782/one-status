@@ -17,6 +17,8 @@ flowchart TD
     Local --> Wallet["E2EE Key Wallet"]
     Local --> Usage["Bounded Model Usage Scanner"]
     Local --> Adapters["Codex / Claude Code Adapters"]
+    Local --> ModelGateway["Local Model Gateway"]
+    ModelGateway --> Providers["OpenAI / Anthropic / Azure / Ollama"]
     Local --> Packs["Capability Pack Compiler"]
     Local <--> Cloud["Encrypted One Status Cloud"]
     Local <--> GitHub["GitHub Repositories"]
@@ -38,7 +40,36 @@ Local config / CC Switch profile
   -> source ID + model metadata in encrypted Status
 ```
 
-查看或复制密钥需要钱包密码。初始密码为 `123456`，用户可以在安全页修改。钱包只同步随机 salt 和 scrypt verifier，不保存密码明文。模型切换传递 source ID，由目标设备本地解密密钥并原子写入 Agent 配置。
+查看或复制密钥需要钱包密码。初始密码为 `123456`，用户可以在密钥钱包页修改。钱包只同步随机 salt 和 scrypt verifier，不保存密码明文。模型切换传递 source ID，由目标设备本地解密密钥并原子写入 Agent 配置。
+
+同一 Permission Vault 也提供通用钥匙串。账号密码、SSH、云控制台、GitHub、数据库、API、OAuth Client、License、卡密、模型、邮箱、VPN、证书、签名、Registry、域名、远程桌面、Webhook 和自定义凭据采用统一结构：
+
+```text
+kind + label + purposes + tags
+  + searchable fields (host / URL / username / account / region)
+  + encrypted secrets (password / token / private key / card key)
+  + source Agent / device / project
+  + Agent and project access policy
+  + created / updated / expiration timestamps
+```
+
+SQLite 中每个条目的完整 payload 使用 AES-256-GCM 加密。列表、搜索与 Dashboard snapshot 只返回遮罩后的 Secret 字段名；用户查看或复制时验证钱包密码。Agent 通过绑定 user、device、agent 的短期凭据调用 `credentials_resolve` 与 `credentials_get`，无需钱包密码。每次 Agent 明文读取、登记、更新和删除都写入不含 Secret 的本机审计记录。
+
+模型钱包记录动态映射为稳定 UUID 的 `kind=model` 凭据，沿用原模型表和删除墓碑，不复制第二份 API Key。Agent 可以按 `model.api` 或 `model.configure` 读取；轮换后回写原模型凭据。
+
+## Model Gateway
+
+每个非官方账号来源都记录独立的 API 请求格式。当前支持 OpenAI Responses、OpenAI Chat Completions、Anthropic Messages、Azure OpenAI 和 Ollama。目标工具使用固定、可验证的本机协议：Codex 使用 Responses，Claude Code 使用 Anthropic Messages。本机 Model Gateway 负责请求、流式事件、工具调用、用量和错误结构转换。
+
+```text
+Permission Vault source + upstream API format
+  -> source-bound local Gateway token
+  -> Codex Responses / Claude Code Anthropic endpoint
+  -> protocol conversion on 127.0.0.1
+  -> provider API
+```
+
+上游 API Key 不进入 Agent 配置。Adapter 只写入回环 Gateway 地址和按来源绑定的 Token，并保留 MCP、Rules、Skills 与其他 Provider 配置。官方账号会话继续留在对应原生工具中。Cursor 需要 One Status 扩展后才能接管模型调用，当前 Adapter 会阻止无效写入。
 
 模型用量由 Device Sidecar 有界读取 Codex `token_count` 与 Claude assistant `message.usage`，按消息或事件去重后聚合到模型。设备报告每 5 分钟最多同步一次脱敏汇总，原始会话和文件路径继续留在本机。
 
@@ -77,6 +108,23 @@ Agent request
 
 固定 action registry 禁止 Agent 自定义 URL、HTTP method 或 Authorization header。写操作带 `requiresConfirmation`，读取 action 带 `readOnly`，这些元数据同时进入 MCP 返回和 Dashboard 权限界面。
 
+通用钥匙串使用独立的 MCP 工具链：
+
+```text
+user supplies reusable secret
+  -> credentials_register (masked response)
+
+task needs an existing credential
+  -> credentials_resolve (metadata only)
+  -> credentials_get (plaintext for immediate execution)
+
+user rotates a credential
+  -> credentials_resolve
+  -> credentials_update (masked response)
+```
+
+MCP instructions 要求 Agent 在用户提供可复用 Secret 的同一轮完成登记，识别到更新或轮换时更新原 ID。所有凭据 API 错误在 MCP 客户端统一转换为不含上游内容的固定错误，避免 Secret 经 stderr 或模型错误上下文泄漏。
+
 ## 数据边界
 
 | 数据 | 位置 | 云端可读 |
@@ -86,7 +134,7 @@ Agent request
 | 设备在线时间 | One Status Cloud | 是 |
 | Capability Pack manifest、版本、摘要和安装意图 | One Status E2EE；实际输出留在设备 | 否 |
 | Skills、Rules、MCP Manifest | 本机；确认后由 Adapter 生成 | 默认否 |
-| OAuth Token、模型 API Key、钱包 verifier | 本机 Permission Vault；二次加密 bundle 随 Status 同步 | 否 |
+| OAuth Token、模型 API Key、账号密码、SSH、云凭据、卡密、钱包 verifier | 本机 Permission Vault；二次加密 bundle 随 Status 同步 | 否 |
 | 模型 Token 汇总、请求数、数据来源和统计时间 | Device Sidecar 聚合；随加密设备报告同步 | 否 |
 | 项目代码、大文件、`HANDOFF.md` | GitHub | 受 GitHub 仓库权限控制 |
 | 本机绝对路径 | 每台设备本地映射 | 否 |
@@ -170,7 +218,7 @@ Git、测试和 Secret 结果由程序采集。Agent 只负责生成目标、决
 | 页面 | 当前状态 |
 | --- | --- |
 | 概览 | 设备在线状态、已安装 AI 工具、当前模型、可配模型与跨设备模型用量 |
-| 密钥钱包 | 自动发现的 API Key、Endpoint、协议、模型、查看/复制验证与免密码模型切换 |
+| 密钥钱包 | 自动发现的模型 API Key、通用账号与凭据、卡密、查看/复制验证、Agent 按需读取与免密码模型切换 |
 | 项目 | 便携项目、本机映射、Secret 预览、Publish Handoff 与 Open and Continue |
 | 记忆 | Memory、用户细节、观察记录、候选确认、编辑、删除和记录策略 |
 | 连接 | 14 个 Provider、固定 actions、OAuth、Agent 权限与对应能力的安装目标 |

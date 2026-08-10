@@ -6,9 +6,13 @@ import { promisify } from "node:util";
 import type { DatabaseSync as DatabaseSyncType } from "node:sqlite";
 import {
   encryptedEnvelopeSchema,
+  wrappedStatusKeySchema,
+  type AccountResponse,
   type AuthResponse,
   type EncryptedEnvelope,
+  type StatusKeyMigrationResponse,
   type StatusSnapshot,
+  type WrappedStatusKey,
 } from "@one-status/protocol";
 
 const scryptAsync = promisify(scrypt);
@@ -27,10 +31,13 @@ interface UserRow {
   email: string;
   password_salt: string;
   password_hash: string;
+  wrapped_status_key: string | null;
+  deny_new_device_logins: number;
   created_at: string;
 }
 
 interface SessionRow {
+  status_key_migration_eligible: number;
   user_id: string;
   device_id: string;
   expires_at: string;
@@ -61,10 +68,14 @@ interface DeviceRow {
   name: string;
   created_at: string;
   last_seen_at: string;
+  blocked: number;
 }
 
 export class EmailAlreadyRegisteredError extends Error {}
 export class InvalidCredentialsError extends Error {}
+export class DeviceLoginBlockedError extends Error {}
+export class NewDeviceLoginDeniedError extends Error {}
+export class StatusKeyMigrationNotAllowedError extends Error {}
 export class MutationIdConflictError extends Error {}
 
 export class VersionConflictError extends Error {
@@ -77,6 +88,7 @@ export interface AuthenticatedSession {
   userId: string;
   deviceId: string;
   expiresAt?: string;
+  statusKeyMigrationEligible?: boolean;
 }
 
 export interface AuthenticatedAgentSession extends AuthenticatedSession {
@@ -115,6 +127,8 @@ export class OneStatusDatabase {
         email TEXT NOT NULL UNIQUE,
         password_salt TEXT NOT NULL,
         password_hash TEXT NOT NULL,
+        wrapped_status_key TEXT,
+        deny_new_device_logins INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL
       );
 
@@ -123,7 +137,8 @@ export class OneStatusDatabase {
         user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
         name TEXT NOT NULL,
         created_at TEXT NOT NULL,
-        last_seen_at TEXT NOT NULL
+        last_seen_at TEXT NOT NULL,
+        blocked INTEGER NOT NULL DEFAULT 0
       );
 
       CREATE TABLE IF NOT EXISTS sessions (
@@ -131,6 +146,7 @@ export class OneStatusDatabase {
         user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
         device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
         expires_at TEXT NOT NULL,
+        status_key_migration_eligible INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL
       );
 
@@ -173,6 +189,25 @@ export class OneStatusDatabase {
 
       DROP TABLE IF EXISTS status_mutations;
     `);
+    ensureColumn(this.#database, "users", "wrapped_status_key", "TEXT");
+    ensureColumn(
+      this.#database,
+      "users",
+      "deny_new_device_logins",
+      "INTEGER NOT NULL DEFAULT 0",
+    );
+    ensureColumn(
+      this.#database,
+      "sessions",
+      "status_key_migration_eligible",
+      "INTEGER NOT NULL DEFAULT 0",
+    );
+    ensureColumn(
+      this.#database,
+      "devices",
+      "blocked",
+      "INTEGER NOT NULL DEFAULT 0",
+    );
   }
 
   close(): void {
@@ -184,6 +219,7 @@ export class OneStatusDatabase {
     password: string,
     deviceName: string,
     initialEnvelope: EncryptedEnvelope,
+    wrappedStatusKey: WrappedStatusKey | undefined,
     installationId?: string,
   ): Promise<AuthResponse> {
     const existing = this.#database
@@ -203,20 +239,24 @@ export class OneStatusDatabase {
       this.#database
         .prepare(
           `INSERT INTO users
-             (id, email, password_salt, password_hash, created_at)
-           VALUES (?, ?, ?, ?, ?)`,
+             (id, email, password_salt, password_hash, wrapped_status_key,
+              created_at)
+           VALUES (?, ?, ?, ?, ?, ?)`,
         )
         .run(
           userId,
           email,
           salt.toString("base64url"),
           passwordHash.toString("base64url"),
+          wrappedStatusKey ? JSON.stringify(wrappedStatusKey) : null,
           now,
         );
       const response = this.#createDeviceSession(
         userId,
         deviceName,
         now,
+        wrappedStatusKey ?? null,
+        wrappedStatusKey === undefined,
         installationId,
       );
       this.#database
@@ -260,13 +300,30 @@ export class OneStatusDatabase {
       throw new InvalidCredentialsError("Invalid email or password.");
     }
 
+    const deviceId = installationId ?? randomUUID();
+    const existingDevice = this.#database
+      .prepare("SELECT user_id, blocked FROM devices WHERE id = ?")
+      .get(deviceId) as { user_id: string; blocked: number } | undefined;
+    if (existingDevice?.user_id === user.id && existingDevice.blocked === 1) {
+      throw new DeviceLoginBlockedError("This device has been blocked.");
+    }
+    if (!existingDevice && user.deny_new_device_logins === 1) {
+      throw new NewDeviceLoginDeniedError(
+        "New device logins are disabled for this account.",
+      );
+    }
+
     this.#database.exec("BEGIN IMMEDIATE");
     try {
       const response = this.#createDeviceSession(
         user.id,
         deviceName,
         new Date().toISOString(),
-        installationId,
+        user.wrapped_status_key
+          ? wrappedStatusKeySchema.parse(JSON.parse(user.wrapped_status_key))
+          : null,
+        existingDevice?.user_id === user.id,
+        deviceId,
       );
       this.#database.exec("COMMIT");
       return response;
@@ -280,7 +337,8 @@ export class OneStatusDatabase {
     const now = new Date().toISOString();
     const session = this.#database
       .prepare(
-        `SELECT user_id, device_id, expires_at
+        `SELECT user_id, device_id, expires_at,
+                status_key_migration_eligible
            FROM sessions
           WHERE token_hash = ? AND expires_at > ?`,
       )
@@ -296,6 +354,9 @@ export class OneStatusDatabase {
       userId: session.user_id,
       deviceId: session.device_id,
       expiresAt: session.expires_at,
+      statusKeyMigrationEligible: Boolean(
+        session.status_key_migration_eligible,
+      ),
     };
   }
 
@@ -474,6 +535,137 @@ export class OneStatusDatabase {
     }
   }
 
+  revokeDeviceSessions(userId: string, deviceId: string): number | undefined {
+    const existing = this.#database
+      .prepare("SELECT 1 FROM devices WHERE user_id = ? AND id = ?")
+      .get(userId, deviceId);
+    if (!existing) return undefined;
+    const now = new Date().toISOString();
+    this.#database.exec("BEGIN IMMEDIATE");
+    try {
+      const result = this.#database
+        .prepare("DELETE FROM sessions WHERE user_id = ? AND device_id = ?")
+        .run(userId, deviceId);
+      this.#database
+        .prepare(
+          `UPDATE agent_credentials
+              SET revoked_at = ?
+            WHERE user_id = ? AND device_id = ? AND revoked_at IS NULL`,
+        )
+        .run(now, userId, deviceId);
+      this.#database.exec("COMMIT");
+      return Number(result.changes);
+    } catch (error) {
+      this.#database.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  blockDevice(userId: string, deviceId: string): boolean {
+    const now = new Date().toISOString();
+    this.#database.exec("BEGIN IMMEDIATE");
+    try {
+      const result = this.#database
+        .prepare(
+          "UPDATE devices SET blocked = 1 WHERE user_id = ? AND id = ?",
+        )
+        .run(userId, deviceId);
+      if (Number(result.changes) === 0) {
+        this.#database.exec("ROLLBACK");
+        return false;
+      }
+      this.#database
+        .prepare("DELETE FROM sessions WHERE user_id = ? AND device_id = ?")
+        .run(userId, deviceId);
+      this.#database
+        .prepare(
+          `UPDATE agent_credentials
+              SET revoked_at = ?
+            WHERE user_id = ? AND device_id = ? AND revoked_at IS NULL`,
+        )
+        .run(now, userId, deviceId);
+      this.#database.exec("COMMIT");
+      return true;
+    } catch (error) {
+      this.#database.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  unblockDevice(userId: string, deviceId: string): boolean {
+    const result = this.#database
+      .prepare(
+        "UPDATE devices SET blocked = 0 WHERE user_id = ? AND id = ? AND blocked = 1",
+      )
+      .run(userId, deviceId);
+    return Number(result.changes) > 0;
+  }
+
+  setDeviceLoginPolicy(
+    userId: string,
+    denyNewDeviceLogins: boolean,
+  ): { denyNewDeviceLogins: boolean } {
+    this.#database
+      .prepare(
+        "UPDATE users SET deny_new_device_logins = ? WHERE id = ?",
+      )
+      .run(denyNewDeviceLogins ? 1 : 0, userId);
+    return { denyNewDeviceLogins };
+  }
+
+  async migrateWrappedStatusKey(
+    session: AuthenticatedSession,
+    password: string,
+    wrappedStatusKey: WrappedStatusKey,
+  ): Promise<StatusKeyMigrationResponse> {
+    const user = this.#database
+      .prepare("SELECT * FROM users WHERE id = ?")
+      .get(session.userId) as unknown as UserRow | undefined;
+    if (!user) throw new InvalidCredentialsError("Invalid email or password.");
+    const actualHash = await derivePasswordHash(
+      password,
+      Buffer.from(user.password_salt, "base64url"),
+    );
+    const expectedHash = Buffer.from(user.password_hash, "base64url");
+    if (!timingSafeEqual(actualHash, expectedHash)) {
+      throw new InvalidCredentialsError("Invalid email or password.");
+    }
+
+    if (user.wrapped_status_key) {
+      return {
+        migrated: false,
+        wrappedStatusKey: wrappedStatusKeySchema.parse(
+          JSON.parse(user.wrapped_status_key),
+        ),
+      };
+    }
+    if (session.statusKeyMigrationEligible !== true) {
+      throw new StatusKeyMigrationNotAllowedError(
+        "Status Key migration must be completed from a previously connected device.",
+      );
+    }
+
+    const serialized = JSON.stringify(wrappedStatusKey);
+    this.#database
+      .prepare(
+        `UPDATE users SET wrapped_status_key = ?
+          WHERE id = ? AND wrapped_status_key IS NULL`,
+      )
+      .run(serialized, session.userId);
+    const stored = this.#database
+      .prepare("SELECT wrapped_status_key FROM users WHERE id = ?")
+      .get(session.userId) as { wrapped_status_key: string | null };
+    if (!stored.wrapped_status_key) {
+      throw new Error("Status Key migration did not persist.");
+    }
+    return {
+      migrated: stored.wrapped_status_key === serialized,
+      wrappedStatusKey: wrappedStatusKeySchema.parse(
+        JSON.parse(stored.wrapped_status_key),
+      ),
+    };
+  }
+
   getStatus(userId: string): StatusSnapshot {
     const row = this.#database
       .prepare(
@@ -554,22 +746,22 @@ export class OneStatusDatabase {
     }
   }
 
-  getAccount(userId: string): {
-    user: { id: string; email: string; createdAt: string };
-    devices: Array<{
-      id: string;
-      name: string;
-      createdAt: string;
-      lastSeenAt: string;
-      online: boolean;
-    }>;
-  } {
+  getAccount(userId: string): AccountResponse {
     const user = this.#database
-      .prepare("SELECT id, email, created_at FROM users WHERE id = ?")
-      .get(userId) as { id: string; email: string; created_at: string };
+      .prepare(
+        `SELECT id, email, created_at, deny_new_device_logins
+           FROM users
+          WHERE id = ?`,
+      )
+      .get(userId) as {
+        id: string;
+        email: string;
+        created_at: string;
+        deny_new_device_logins: number;
+      };
     const devices = this.#database
       .prepare(
-        `SELECT id, name, created_at, last_seen_at
+        `SELECT id, name, created_at, last_seen_at, blocked
            FROM devices
           WHERE user_id = ?
           ORDER BY created_at ASC`,
@@ -585,7 +777,11 @@ export class OneStatusDatabase {
         createdAt: device.created_at,
         lastSeenAt: device.last_seen_at,
         online: Date.parse(device.last_seen_at) >= onlineCutoff,
+        blocked: Boolean(device.blocked),
       })),
+      deviceLoginPolicy: {
+        denyNewDeviceLogins: Boolean(user.deny_new_device_logins),
+      },
     };
   }
 
@@ -593,6 +789,8 @@ export class OneStatusDatabase {
     userId: string,
     deviceName: string,
     now: string,
+    wrappedStatusKey: WrappedStatusKey | null,
+    statusKeyMigrationEligible: boolean,
     installationId?: string,
   ): AuthResponse {
     const deviceId = installationId ?? randomUUID();
@@ -623,12 +821,20 @@ export class OneStatusDatabase {
     this.#database
       .prepare(
         `INSERT INTO sessions
-           (token_hash, user_id, device_id, expires_at, created_at)
-         VALUES (?, ?, ?, ?, ?)`,
+           (token_hash, user_id, device_id, expires_at,
+            status_key_migration_eligible, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
       )
-      .run(hashToken(token), userId, deviceId, expiresAt, now);
+      .run(
+        hashToken(token),
+        userId,
+        deviceId,
+        expiresAt,
+        statusKeyMigrationEligible ? 1 : 0,
+        now,
+      );
 
-    return { userId, deviceId, token, expiresAt };
+    return { userId, deviceId, token, expiresAt, wrappedStatusKey };
   }
 
   #touchDevice(
@@ -673,6 +879,19 @@ export class OneStatusDatabase {
       )
       .run(userId, MAX_MUTATION_RECEIPTS_PER_USER);
   }
+}
+
+function ensureColumn(
+  database: DatabaseSyncType,
+  table: "devices" | "sessions" | "users",
+  column: string,
+  definition: string,
+): void {
+  const columns = database.prepare(`PRAGMA table_info(${table})`).all() as Array<{
+    name: string;
+  }>;
+  if (columns.some((entry) => entry.name === column)) return;
+  database.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
 }
 
 async function derivePasswordHash(

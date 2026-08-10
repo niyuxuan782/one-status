@@ -131,9 +131,15 @@ pub(crate) fn plan(
             .credential_env_var
             .as_ref()
             .map(|variable| {
-                vec![format!(
-                    "One Status projected {variable} from Permission Vault into Claude Code's local native credential field; it is excluded from every sidecar response and synchronized state."
-                )]
+                vec![if profile.upstream.is_some() {
+                    format!(
+                        "One Status wrote an agent-scoped local Gateway token to {variable}; the upstream API key remains in Permission Vault."
+                    )
+                } else {
+                    format!(
+                        "One Status projected {variable} from Permission Vault into Claude Code's local native credential field; it is excluded from every sidecar response and synchronized state."
+                    )
+                }]
             })
             .unwrap_or_default(),
     })

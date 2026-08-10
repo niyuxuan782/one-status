@@ -16,6 +16,10 @@ import { LocalInventoryService } from "./local-inventory.js";
 import { LocalCapabilityManager } from "./local-capability-manager.js";
 import { LocalWorkspaceStore } from "./local-workspace.js";
 import { LocalOnboardingService } from "./onboarding.js";
+import {
+  ModelGateway,
+  ModelGatewayTokenAuthority,
+} from "./model-gateway.js";
 import { PermissionVault } from "./permission-vault.js";
 import { PermissionSyncService } from "./permission-sync.js";
 import { ToolGateway } from "./tool-gateway.js";
@@ -26,6 +30,7 @@ export interface ApiServerOptions {
   defaultSyncUrl?: string;
   host?: string;
   logger?: boolean;
+  modelGatewayKeyPath?: string;
   permissionDbPath?: string;
   permissionKeyPath?: string;
   port?: number;
@@ -70,6 +75,28 @@ export async function startApiServer(
           },
         )
       : undefined;
+  const port = options.port ?? 8787;
+  const modelGateway =
+    permissionVault && backend
+      ? new ModelGateway({
+          baseUrl: loopbackBaseUrl(host, port),
+          tokenAuthority: new ModelGatewayTokenAuthority({
+            keyPath: resolve(
+              options.modelGatewayKeyPath ?? `${dbPath}.model-gateway-key`,
+            ),
+          }),
+          resolveSource: async ({ sourceId, userId }) => {
+            const snapshot = await backend.getSnapshot();
+            if (snapshot.profile.userId !== userId) return undefined;
+            const source = snapshot.status.deviceControl.sources[sourceId];
+            if (!source) return undefined;
+            return {
+              source,
+              apiKey: permissionVault.getModelCredential(userId, sourceId),
+            };
+          },
+        })
+      : undefined;
   const deviceControl =
     backend && inventory && permissionVault
       ? new DeviceControlService(
@@ -82,6 +109,7 @@ export async function startApiServer(
             const profile = await loadLocalProfile();
             return importStatusKey(profile.statusKey);
           },
+          modelGateway,
         )
       : undefined;
   let stopDeviceControl: (() => void) | undefined;
@@ -104,6 +132,7 @@ export async function startApiServer(
                 ),
             }),
             inventory,
+            modelGateway: modelGateway!,
             deviceControl: deviceControl!,
             modelUsage: modelUsage!,
             onboarding: new LocalOnboardingService(
@@ -124,7 +153,7 @@ export async function startApiServer(
   });
   await app.listen({
     host,
-    port: options.port ?? 8787,
+    port,
   });
   if (deviceControl && permissionSync) {
     stopDeviceControl = startDeviceControlLoop(
@@ -162,6 +191,11 @@ function startDeviceControlLoop(
 
 function isLoopbackHost(host: string): boolean {
   return host === "127.0.0.1" || host === "localhost" || host === "::1";
+}
+
+function loopbackBaseUrl(host: string, port: number): string {
+  const hostname = host === "::1" ? "[::1]" : host;
+  return `http://${hostname}:${port}`;
 }
 
 function normalizePublicBaseUrl(value?: string): string | undefined {

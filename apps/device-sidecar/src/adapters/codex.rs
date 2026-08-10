@@ -117,8 +117,9 @@ pub(crate) fn plan(
         );
         let wire_api = match profile.api_protocol {
             ApiProtocol::OpenaiResponses => "responses",
-            ApiProtocol::OpenaiChatCompletions => "chat",
-            ApiProtocol::Anthropic => unreachable!("validated by adapter dispatch"),
+            ApiProtocol::OpenaiChatCompletions | ApiProtocol::Anthropic => {
+                unreachable!("validated by adapter dispatch")
+            }
         };
         replace_table_string(
             provider,
@@ -128,14 +129,26 @@ pub(crate) fn plan(
             &mut changes,
         );
         if let Some(variable) = profile.credential_env_var.as_deref() {
-            replace_table_string(
-                provider,
-                "env_key",
-                variable,
-                format!("model_providers.{provider_id}.env_key"),
-                &mut changes,
-            );
             let credential = credential_from_environment(variable)?;
+            if profile.upstream.is_some() {
+                if provider.remove("env_key").is_some() {
+                    changes.push(ConfigChange {
+                        path: format!("model_providers.{provider_id}.env_key"),
+                        operation: ChangeOperation::Remove,
+                        before: Some(Value::String("<environment-variable-name>".to_string())),
+                        after: None,
+                        sensitive: false,
+                    });
+                }
+            } else {
+                replace_table_string(
+                    provider,
+                    "env_key",
+                    variable,
+                    format!("model_providers.{provider_id}.env_key"),
+                    &mut changes,
+                );
+            }
             replace_table_sensitive(
                 provider,
                 "experimental_bearer_token",
@@ -179,7 +192,16 @@ pub(crate) fn plan(
             private: profile.credential_env_var.is_some(),
         },
         changes,
-        warnings: Vec::new(),
+        warnings: profile
+            .upstream
+            .as_ref()
+            .map(|_| {
+                vec![
+                    "One Status wrote an agent-scoped local Gateway token to Codex; the upstream API key remains in Permission Vault."
+                        .to_string(),
+                ]
+            })
+            .unwrap_or_default(),
     })
 }
 

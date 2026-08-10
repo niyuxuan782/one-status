@@ -72,19 +72,25 @@ describe("dashboard device control routes", () => {
 
   it("stores a model credential in Vault and applies a confirmed preview", async () => {
     const headers = await dashboardHeaders(app);
-    const incompatibleSource = await app.inject({
+    const gatewayCompatibleSource = await app.inject({
       method: "PUT",
       url: "/v1/dashboard/model-sources/incompatible-source",
       headers,
       payload: {
-        label: "Incompatible source",
+        label: "Gateway-compatible source",
         kind: "compatible-api",
         protocol: "openai",
         endpoint: "https://api.example.test/v1",
         supportedTools: ["claude-code"],
       },
     });
-    expect(incompatibleSource.statusCode).toBe(400);
+    expect(gatewayCompatibleSource.statusCode).toBe(200);
+    expect(
+      backend.status.deviceControl.sources["incompatible-source"]?.supportedTools,
+    ).toEqual(["codex", "claude-code"]);
+    expect(
+      backend.status.deviceControl.sources["incompatible-source"]?.apiFormat,
+    ).toBe("openai-chat-completions");
 
     const source = await app.inject({
       method: "PUT",
@@ -102,6 +108,12 @@ describe("dashboard device control routes", () => {
     expect(source.statusCode).toBe(200);
     expect(source.body).not.toContain(API_KEY);
     expect(permissionVault.getModelCredential("user-1", SOURCE_ID)).toBe(API_KEY);
+    expect(
+      backend.status.deviceControl.sources[SOURCE_ID]?.supportedTools,
+    ).toEqual(["codex", "claude-code"]);
+    expect(backend.status.deviceControl.sources[SOURCE_ID]?.apiFormat).toBe(
+      "openai-chat-completions",
+    );
 
     const deniedReveal = await app.inject({
       method: "POST",
@@ -164,6 +176,9 @@ describe("dashboard device control routes", () => {
       },
     });
     expect(model.statusCode).toBe(200);
+    expect(
+      backend.status.deviceControl.models[MODEL_ID]?.supportedTools,
+    ).toEqual(["codex", "claude-code"]);
 
     const synchronized = await app.inject({
       method: "POST",
@@ -194,6 +209,20 @@ describe("dashboard device control routes", () => {
           execution: "immediate",
         },
       ],
+    });
+
+    const claudePreviewResponse = await app.inject({
+      method: "POST",
+      url: "/v1/dashboard/model-configurations/preview",
+      headers,
+      payload: {
+        modelId: MODEL_ID,
+        targets: [{ deviceId: DEVICE_ID, toolId: "claude-code" }],
+      },
+    });
+    expect(claudePreviewResponse.statusCode).toBe(200);
+    expect(claudePreviewResponse.json()).toMatchObject({
+      changes: [{ deviceId: DEVICE_ID, toolId: "claude-code" }],
     });
 
     const applied = await app.inject({
@@ -242,6 +271,112 @@ describe("dashboard device control routes", () => {
         },
       },
     });
+  });
+
+  it("validates portable endpoints and keeps account sessions native", async () => {
+    const headers = await dashboardHeaders(app);
+    const officialOpenAi = await app.inject({
+      method: "PUT",
+      url: "/v1/dashboard/model-sources/openai-official",
+      headers,
+      payload: {
+        label: "OpenAI official API",
+        kind: "official-api",
+        protocol: "openai",
+        supportedTools: ["codex"],
+        apiKey: "official-openai-key",
+      },
+    });
+    expect(officialOpenAi.statusCode).toBe(200);
+    expect(
+      backend.status.deviceControl.sources["openai-official"]?.apiFormat,
+    ).toBe("openai-responses");
+
+    const missingEndpoint = await app.inject({
+      method: "PUT",
+      url: "/v1/dashboard/model-sources/missing-endpoint",
+      headers,
+      payload: {
+        label: "Missing endpoint",
+        kind: "compatible-api",
+        protocol: "openai",
+        supportedTools: ["codex"],
+      },
+    });
+    expect(missingEndpoint.statusCode).toBe(400);
+
+    const azure = await app.inject({
+      method: "PUT",
+      url: "/v1/dashboard/model-sources/azure-a",
+      headers,
+      payload: {
+        label: "Azure A",
+        kind: "compatible-api",
+        protocol: "azure-openai",
+        apiFormat: "openai-chat-completions",
+        endpoint:
+          "https://resource.openai.azure.com/openai/deployments/main?api-version=2025-04-01-preview",
+        supportedTools: ["codex", "claude-code"],
+        apiKey: "azure-private-key",
+      },
+    });
+    expect(azure.statusCode).toBe(200);
+
+    const inferredMessages = await app.inject({
+      method: "PUT",
+      url: "/v1/dashboard/model-sources/custom-messages",
+      headers,
+      payload: {
+        label: "Custom Messages",
+        kind: "custom-endpoint",
+        protocol: "custom",
+        endpoint: "https://models.example.test/v1/messages",
+        supportedTools: ["codex"],
+      },
+    });
+    expect(inferredMessages.statusCode).toBe(200);
+    expect(
+      backend.status.deviceControl.sources["custom-messages"]?.apiFormat,
+    ).toBe("anthropic-messages");
+
+    const secretQuery = await app.inject({
+      method: "PUT",
+      url: "/v1/dashboard/model-sources/query-secret",
+      headers,
+      payload: {
+        label: "Query secret",
+        kind: "compatible-api",
+        protocol: "azure-openai",
+        endpoint: "https://resource.openai.azure.com/openai/v1?api_key=private",
+        supportedTools: ["codex"],
+      },
+    });
+    expect(secretQuery.statusCode).toBe(400);
+
+    const crossAgentAccount = await app.inject({
+      method: "PUT",
+      url: "/v1/dashboard/model-sources/openai-account",
+      headers,
+      payload: {
+        label: "OpenAI account",
+        kind: "official-account",
+        protocol: "openai",
+        supportedTools: ["codex", "claude-code"],
+      },
+    });
+    expect(crossAgentAccount.statusCode).toBe(400);
+    const nativeAccount = await app.inject({
+      method: "PUT",
+      url: "/v1/dashboard/model-sources/openai-account",
+      headers,
+      payload: {
+        label: "OpenAI account",
+        kind: "official-account",
+        protocol: "openai",
+        supportedTools: ["codex"],
+      },
+    });
+    expect(nativeAccount.statusCode).toBe(200);
   });
 });
 
@@ -321,8 +456,10 @@ class MemoryBackend implements DashboardBackend {
             createdAt: "2026-08-09T14:00:00.000Z",
             lastSeenAt: "2026-08-09T16:00:00.000Z",
             online: true,
+            blocked: false,
           },
         ],
+        deviceLoginPolicy: { denyNewDeviceLogins: false },
       },
       profile: {
         baseUrl: "https://os.example.test",

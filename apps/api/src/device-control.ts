@@ -29,6 +29,10 @@ import {
 } from "./model-usage.js";
 import type { PermissionVault } from "./permission-vault.js";
 import type { LocalModelUsageSnapshot } from "./device-sidecar.js";
+import type {
+  ModelGateway,
+  ModelGatewayConfiguration,
+} from "./model-gateway.js";
 
 const APPROVAL_TTL_MS = 10 * 60 * 1_000;
 const CLAIM_LEASE_MS = 2 * 60 * 1_000;
@@ -37,6 +41,7 @@ const REPORT_REFRESH_MS = 5 * 60 * 1_000;
 export interface ModelConfigurationInput {
   apiKey?: string;
   expectedPlanId?: string;
+  gateway?: ModelGatewayConfiguration;
   model: ModelDefinition;
   source: ModelSource;
   toolId: AgentToolId;
@@ -124,6 +129,7 @@ export class DeviceControlService {
     private readonly configurator: ModelConfigurationAdapter,
     private readonly modelUsage?: { scan(): Promise<LocalModelUsageSnapshot> },
     private readonly modelSourceIdentityKey?: () => Promise<Uint8Array>,
+    private readonly modelGateway?: Pick<ModelGateway, "configuration">,
   ) {}
 
   synchronizeCurrentDevice(): Promise<DashboardStatusSnapshot> {
@@ -177,6 +183,14 @@ export class DeviceControlService {
     const changes = await Promise.all(targets.map(async (target) => {
       const device = devices.get(target.deviceId);
       if (!device) throw new Error("Target device was not found.");
+      if (
+        source.kind === "official-account" &&
+        !officialAccountSupportsTool(source.protocol, target.toolId)
+      ) {
+        throw new Error(
+          "Official account sessions cannot be transferred to another AI tool.",
+        );
+      }
       if (!model.supportedTools.includes(target.toolId)) {
         throw new Error("The model does not support the selected AI tool.");
       }
@@ -193,6 +207,11 @@ export class DeviceControlService {
         device.id === snapshot.profile.deviceId && this.configurator.preview
           ? await this.configurator.preview({
               ...(credential ? { apiKey: credential } : {}),
+              ...this.#gatewayConfiguration(
+                snapshot.profile.userId,
+                source,
+                target.toolId,
+              ),
               model,
               source,
               toolId: target.toolId,
@@ -535,6 +554,11 @@ export class DeviceControlService {
     try {
       const result = await this.configurator.apply({
         ...(credential ? { apiKey: credential } : {}),
+        ...this.#gatewayConfiguration(
+          snapshot.profile.userId,
+          source,
+          current.toolId,
+        ),
         model,
         source,
         toolId: current.toolId,
@@ -610,6 +634,22 @@ export class DeviceControlService {
       const tool = report?.tools.find((entry) => entry.toolId === current.toolId);
       if (tool) tool.health = "error";
     });
+  }
+
+  #gatewayConfiguration(
+    userId: string,
+    source: ModelSource,
+    toolId: AgentToolId,
+  ): { gateway?: ModelGatewayConfiguration } {
+    if (!this.modelGateway || source.kind === "official-account") return {};
+    return {
+      gateway: this.modelGateway.configuration({
+        sourceId: source.id,
+        targetProtocol:
+          toolId === "claude-code" ? "anthropic" : "openai-responses",
+        userId,
+      }),
+    };
   }
 
   #pruneApprovals(): void {
@@ -826,15 +866,19 @@ function mergeDiscoveredCatalog(
         ? reportedTool.sourceId
         : resolveModelSourceId(agent.model);
     const existingSource = state.sources[sourceId];
-    const supportedTools = uniqueTools([
-      ...(existingSource?.supportedTools ?? []),
-      ...compatibleAgentTools(agent.model, agent.id),
-    ]);
+    const discoveredTools = compatibleAgentTools(agent.model, agent.id);
+    const supportedTools = agent.model.sourceKind === "official-account"
+      ? discoveredTools
+      : uniqueTools([
+          ...(existingSource?.supportedTools ?? []),
+          ...discoveredTools,
+        ]);
     state.sources[sourceId] = {
       id: sourceId,
       label: agent.model.providerLabel,
       kind: agent.model.sourceKind,
       protocol: agent.model.protocol,
+      ...(agent.model.apiFormat ? { apiFormat: agent.model.apiFormat } : {}),
       ...(agent.model.endpoint ? { endpoint: agent.model.endpoint } : {}),
       supportedTools,
       ...(agent.model.sourceKind === "official-account" ||
@@ -873,10 +917,12 @@ function mergeDiscoveredCatalog(
       sourceId,
       name: displayModelName(agent.model.modelId),
       modelId: agent.model.modelId,
-      supportedTools: uniqueTools([
-        ...(existingModel?.supportedTools ?? []),
-        ...compatibleAgentTools(agent.model, agent.id),
-      ]),
+      supportedTools: agent.model.sourceKind === "official-account"
+        ? discoveredTools
+        : uniqueTools([
+            ...(existingModel?.supportedTools ?? []),
+            ...discoveredTools,
+          ]),
       createdAt: existingModel?.createdAt ?? now,
       updatedAt: now,
     };
@@ -900,6 +946,7 @@ function credentialDiscoveryCatalogChanged(
       source.label !== model.providerLabel ||
       source.kind !== model.sourceKind ||
       source.protocol !== model.protocol ||
+      source.apiFormat !== model.apiFormat ||
       source.endpoint !== model.endpoint ||
       source.credentialStatus !== "available" ||
       !source.supportedTools.includes(discovery.toolId)
@@ -934,6 +981,7 @@ function mergeCredentialDiscoveries(
       label: model.providerLabel,
       kind: model.sourceKind,
       protocol: model.protocol,
+      ...(model.apiFormat ? { apiFormat: model.apiFormat } : {}),
       ...(model.endpoint ? { endpoint: model.endpoint } : {}),
       supportedTools: uniqueTools([
         ...(existingSource?.supportedTools ?? []),
@@ -945,6 +993,7 @@ function mergeCredentialDiscoveries(
       updatedAt: now,
     };
     if (!model.endpoint) delete nextSource.endpoint;
+    if (!model.apiFormat) delete nextSource.apiFormat;
     state.sources[discovery.sourceId] = nextSource;
     migrateLegacyDiscoveredSource(state, discovery, now);
     if (!model.modelId) continue;
@@ -1171,20 +1220,21 @@ function uniqueTools(tools: AgentToolId[]): AgentToolId[] {
 }
 
 function compatibleAgentTools(
-  model: Pick<LocalAgentModelConfiguration, "protocol">,
+  model: Pick<LocalAgentModelConfiguration, "protocol" | "sourceKind">,
   origin: AgentToolId,
 ): AgentToolId[] {
-  if (model.protocol === "anthropic") {
-    return uniqueTools([origin, "claude-code", "cursor"]);
-  }
-  if (
-    model.protocol === "openai" ||
-    model.protocol === "ollama" ||
-    model.protocol === "azure-openai"
-  ) {
-    return uniqueTools([origin, "codex", "cursor"]);
-  }
-  return [origin];
+  if (model.sourceKind === "official-account") return [origin];
+  return uniqueTools([origin, "codex", "claude-code", "cursor"]);
+}
+
+function officialAccountSupportsTool(
+  protocol: ModelSource["protocol"],
+  toolId: AgentToolId,
+): boolean {
+  return (
+    (protocol === "openai" && toolId === "codex") ||
+    (protocol === "anthropic" && toolId === "claude-code")
+  );
 }
 
 function sameReport(left: DeviceReport, right: DeviceReport): boolean {
@@ -1219,6 +1269,7 @@ function configurationApprovalState(
       label: source.label,
       kind: source.kind,
       protocol: source.protocol,
+      apiFormat: source.apiFormat ?? null,
       endpoint: source.endpoint ?? null,
       supportedTools: source.supportedTools,
       credentialRef: source.credentialRef ?? null,

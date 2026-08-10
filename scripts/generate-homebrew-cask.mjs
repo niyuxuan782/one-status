@@ -42,18 +42,6 @@ const cask = `cask "one-status" do
   depends_on :macos
 
   app "one-status.app", target: "One Status.app"
-
-  postflight do
-    system_command "/usr/bin/xattr",
-                   args: ["-cr", "#{appdir}/One Status.app"]
-    system_command "/usr/bin/codesign",
-                   args: ["--verify", "--deep", "--strict", "#{appdir}/One Status.app"]
-  end
-
-  caveats <<~EOS
-    This preview build has not completed Apple Developer ID notarization.
-    Homebrew verifies the checksum, clears quarantine, and verifies the ad-hoc signature.
-  EOS
 end
 `;
 

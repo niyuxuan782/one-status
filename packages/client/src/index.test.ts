@@ -2,9 +2,15 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AddressInfo } from "node:net";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { DatabaseSync } from "node:sqlite";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "@one-status/api";
-import { generateStatusKey, StatusDecryptionError } from "@one-status/crypto";
+import {
+  encryptStatus,
+  generateStatusKey,
+  StatusDecryptionError,
+} from "@one-status/crypto";
+import { createEmptyStatus } from "@one-status/protocol";
 import {
   OneStatusClient,
   StatusNotInitializedError,
@@ -28,6 +34,154 @@ describe("synced status client", () => {
     await rm(directory, { recursive: true, force: true });
   });
 
+  it("refuses registration when an older cloud cannot store the wrapped key", async () => {
+    const fetch_ = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(new Response(JSON.stringify({
+        error: {
+          code: "invalid_request",
+          message: "Request validation failed.",
+          details: [{
+            code: "unrecognized_keys",
+            keys: ["wrappedStatusKey"],
+            path: [],
+            message: 'Unrecognized key: "wrappedStatusKey"',
+          }],
+        },
+      }), { status: 400, headers: { "content-type": "application/json" } }));
+    const client = new OneStatusClient({
+      baseUrl: "https://legacy.example.test",
+      fetch: fetch_,
+    });
+
+    await expect(
+      client.register(
+        {
+          email: "legacy@example.test",
+          password: "legacy account password",
+          deviceName: "Legacy Mac",
+        },
+        generateStatusKey(),
+      ),
+    ).rejects.toMatchObject({ code: "invalid_request", status: 400 });
+    expect(fetch_).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(String(fetch_.mock.calls[0]?.[1]?.body)))
+      .toHaveProperty("wrappedStatusKey");
+  });
+
+  it("migrates a legacy account from its previously connected device", async () => {
+    const key = generateStatusKey();
+    const installationId = "4a1ae744-7102-46fe-a10f-3330f6dbe902";
+    const registration = await app.inject({
+      method: "POST",
+      url: "/v1/auth/register",
+      payload: {
+        deviceName: "Legacy Mac",
+        email: "legacy-migration@example.test",
+        initialEnvelope: encryptStatus(createEmptyStatus(), key, 1),
+        installationId,
+        password: "legacy migration password",
+      },
+    });
+    const legacy = registration.json();
+    const client = new OneStatusClient({ baseUrl });
+    const migrated = await client.login(
+      {
+        deviceName: "Legacy Mac",
+        email: "legacy-migration@example.test",
+        installationId,
+        password: "legacy migration password",
+      },
+      { statusKey: key, userId: legacy.userId },
+    );
+    expect(migrated.wrappedStatusKey).not.toBeNull();
+    expect(Buffer.from(migrated.statusKey)).toEqual(Buffer.from(key));
+
+    const nextDevice = await client.login({
+      deviceName: "New Mac",
+      email: "legacy-migration@example.test",
+      password: "legacy migration password",
+    });
+    expect(Buffer.from(nextDevice.statusKey)).toEqual(Buffer.from(key));
+  });
+
+  it("revokes the new session when legacy migration requires an old device", async () => {
+    const key = generateStatusKey();
+    await app.inject({
+      method: "POST",
+      url: "/v1/auth/register",
+      payload: {
+        deviceName: "Legacy Mac",
+        email: "legacy-required@example.test",
+        initialEnvelope: encryptStatus(createEmptyStatus(), key, 1),
+        password: "legacy required password",
+      },
+    });
+    let issuedToken = "";
+    const trackingFetch: typeof fetch = async (input, init) => {
+      const response = await fetch(input, init);
+      if (String(input).endsWith("/v1/auth/login")) {
+        issuedToken = String((await response.clone().json()).token ?? "");
+      }
+      return response;
+    };
+    const client = new OneStatusClient({ baseUrl, fetch: trackingFetch });
+    await expect(
+      client.login({
+        deviceName: "New Mac",
+        email: "legacy-required@example.test",
+        password: "legacy required password",
+      }),
+    ).rejects.toMatchObject({
+      code: "status_key_migration_required",
+      message: expect.stringContaining("previously connected device"),
+    });
+    expect(issuedToken).not.toBe("");
+    const revoked = await fetch(`${baseUrl}/v1/status`, {
+      headers: { authorization: `Bearer ${issuedToken}` },
+    });
+    expect(revoked.status).toBe(401);
+  });
+
+  it("revokes the new session when the wrapped key cannot be decrypted", async () => {
+    const client = new OneStatusClient({ baseUrl });
+    const account = await client.register(
+      {
+        deviceName: "Mac A",
+        email: "corrupt-wrapper@example.test",
+        password: "corrupt wrapper password",
+      },
+      generateStatusKey(),
+    );
+    const inspection = new DatabaseSync(join(directory, "test.sqlite"));
+    const wrapper = structuredClone(account.wrappedStatusKey!);
+    wrapper.authTag = "A".repeat(22);
+    inspection
+      .prepare("UPDATE users SET wrapped_status_key = ? WHERE id = ?")
+      .run(JSON.stringify(wrapper), account.userId);
+    inspection.close();
+
+    let issuedToken = "";
+    const trackingFetch: typeof fetch = async (input, init) => {
+      const response = await fetch(input, init);
+      if (String(input).endsWith("/v1/auth/login")) {
+        issuedToken = String((await response.clone().json()).token ?? "");
+      }
+      return response;
+    };
+    await expect(
+      new OneStatusClient({ baseUrl, fetch: trackingFetch }).login({
+        deviceName: "Mac B",
+        email: "corrupt-wrapper@example.test",
+        password: "corrupt wrapper password",
+      }),
+    ).rejects.toThrow("Unable to unlock the encrypted Status Key");
+    const revoked = await fetch(`${baseUrl}/v1/status`, {
+      headers: { authorization: `Bearer ${issuedToken}` },
+    });
+    expect(revoked.status).toBe(401);
+  });
+
   it("shares an encrypted status between two device sessions", async () => {
     const anonymous = new OneStatusClient({ baseUrl });
     const account = {
@@ -40,9 +194,14 @@ describe("synced status client", () => {
       key,
     );
     const deviceB = await anonymous.login({ ...account, deviceName: "Mac B" });
+    expect(deviceB.wrappedStatusKey).not.toBeNull();
+    expect(Buffer.from(deviceB.statusKey)).toEqual(Buffer.from(key));
     const clientA = new OneStatusClient({ baseUrl, token: deviceA.token });
     const vaultA = clientA.createVault(key);
-    const vaultB = new OneStatusClient({ baseUrl, token: deviceB.token }).createVault(key);
+    const vaultB = new OneStatusClient({
+      baseUrl,
+      token: deviceB.token,
+    }).createVault(deviceB.statusKey);
 
     await vaultA.mutate((status) => {
       status.preferences.packageManager = "pnpm";
@@ -274,7 +433,7 @@ describe("synced status client", () => {
       baseUrl,
       token: session.token,
     })
-      .createVault(key)
+      .createVault(session.statusKey)
       .read();
     expect(recovered.version).toBe(1);
     expect(recovered.status).toMatchObject({ schemaVersion: 4 });

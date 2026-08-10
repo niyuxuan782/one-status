@@ -1,5 +1,5 @@
 import type { ModelDefinition, ModelSource } from "@one-status/protocol";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -65,6 +65,27 @@ describe("SidecarModelConfigurationAdapter", () => {
         {},
         resolve(directory, process.platform === "win32" ? "one-status.js" : "one-status"),
       )).toBe(sidecarPath);
+    } finally {
+      await rm(directory, { force: true, recursive: true });
+    }
+  });
+
+  it("discovers the workspace Sidecar from the API source entrypoint", async () => {
+    const directory = await mkdtemp(resolve(tmpdir(), "one-status-workspace-sidecar-"));
+    try {
+      const executable = process.platform === "win32"
+        ? "one-status-device-sidecar.exe"
+        : "one-status-device-sidecar";
+      const apiEntrypoint = resolve(directory, "apps/api/src/server.ts");
+      const sidecarPath = resolve(
+        directory,
+        "apps/device-sidecar/target/debug",
+        executable,
+      );
+      await mkdir(resolve(sidecarPath, ".."), { recursive: true });
+      await writeFile(sidecarPath, "fixture");
+
+      expect(resolveDeviceSidecarExecutable({}, apiEntrypoint)).toBe(sidecarPath);
     } finally {
       await rm(directory, { force: true, recursive: true });
     }
@@ -165,11 +186,17 @@ describe("SidecarModelConfigurationAdapter", () => {
     });
   });
 
-  it("does not relabel an OpenAI-compatible endpoint as Anthropic", async () => {
+  it("projects an OpenAI source as Anthropic through the local Gateway", async () => {
     let request: unknown;
+    let environment: NodeJS.ProcessEnv | undefined;
     const runner: DeviceSidecarRunner = {
-      async run<T>(_command: SidecarCommand, input: unknown): Promise<T> {
+      async run<T>(
+        _command: SidecarCommand,
+        input: unknown,
+        variables?: NodeJS.ProcessEnv,
+      ): Promise<T> {
         request = input;
+        environment = variables;
         return { ...previewResult, tool: "claude-code" } as T;
       },
     };
@@ -180,11 +207,79 @@ describe("SidecarModelConfigurationAdapter", () => {
       model,
       source,
       toolId: "claude-code",
+      gateway: {
+        endpoint: "http://127.0.0.1:8787/v1/model-gateway/third-party%3Aa",
+        protocol: "anthropic",
+        token: "gateway-token",
+      },
     });
 
     expect(request).toMatchObject({
-      profile: { apiProtocol: "openai-responses" },
+      profile: {
+        apiProtocol: "anthropic",
+        source: "custom-endpoint",
+        endpoint:
+          "http://127.0.0.1:8787/v1/model-gateway/third-party%3Aa",
+        upstream: {
+          sourceId: source.id,
+          source: "third-party-compatible-api",
+          protocol: "openai",
+          endpoint: source.endpoint,
+        },
+      },
     });
+    expect(environment).toMatchObject({
+      ANTHROPIC_AUTH_TOKEN: "gateway-token",
+    });
+    expect(Object.values(environment ?? {})).not.toContain("secret");
+  });
+
+  it("projects an Anthropic source as Responses for current Codex", async () => {
+    let request: unknown;
+    let environment: NodeJS.ProcessEnv | undefined;
+    const runner: DeviceSidecarRunner = {
+      async run<T>(
+        _command: SidecarCommand,
+        input: unknown,
+        variables?: NodeJS.ProcessEnv,
+      ): Promise<T> {
+        request = input;
+        environment = variables;
+        return previewResult as T;
+      },
+    };
+    const anthropicSource: ModelSource = {
+      ...source,
+      id: "anthropic:a",
+      protocol: "anthropic",
+      endpoint: "https://api.anthropic.test",
+    };
+    const adapter = new SidecarModelConfigurationAdapter({ runner });
+
+    await adapter.preview({
+      apiKey: "provider-secret",
+      gateway: {
+        endpoint: "http://127.0.0.1:8787/v1/model-gateway/anthropic%3Aa",
+        protocol: "openai-responses",
+        token: "gateway-token",
+      },
+      model: { ...model, sourceId: anthropicSource.id },
+      source: anthropicSource,
+      toolId: "codex",
+    });
+
+    expect(request).toMatchObject({
+      profile: {
+        apiProtocol: "openai-responses",
+        source: "custom-endpoint",
+        upstream: {
+          sourceId: anthropicSource.id,
+          protocol: "anthropic",
+        },
+      },
+    });
+    expect(Object.values(environment ?? {})).toContain("gateway-token");
+    expect(Object.values(environment ?? {})).not.toContain("provider-secret");
   });
 });
 

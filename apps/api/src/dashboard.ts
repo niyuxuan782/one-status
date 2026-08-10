@@ -11,6 +11,7 @@ import type {
 import {
   agentToolIdSchema,
   capabilityTargetSchema,
+  modelApiFormatSchema,
   modelApiProtocolSchema,
   modelSourceKindSchema,
   ONE_STATUS_VERSION,
@@ -44,7 +45,13 @@ import {
   providerCatalog,
   revokeOAuthCredential,
 } from "./oauth-providers.js";
-import type { OAuthProvider, PermissionVault } from "./permission-vault.js";
+import {
+  privateCredentialKinds,
+  type MaskedPrivateCredential,
+  type OAuthProvider,
+  type PermissionVault,
+  type PrivateCredentialAccessPolicy,
+} from "./permission-vault.js";
 import { providerExtensionById } from "./provider-extensions/index.js";
 import type { PermissionSyncService } from "./permission-sync.js";
 import {
@@ -60,6 +67,10 @@ import type { LocalOnboardingService } from "./onboarding.js";
 import type { DeviceControlService } from "./device-control.js";
 import type { LocalModelUsageSnapshot } from "./device-sidecar.js";
 import { readStoredModelUsage } from "./model-usage.js";
+import {
+  registerModelGatewayRoutes,
+  type ModelGateway,
+} from "./model-gateway.js";
 
 const dashboardPaths = new Set([
   "/",
@@ -99,6 +110,7 @@ export interface DashboardRuntime {
     "previewConfiguration" | "queueConfiguration" | "synchronizeCurrentDevice"
   >;
   modelUsage?: { scan(): Promise<LocalModelUsageSnapshot> };
+  modelGateway?: ModelGateway;
   onboarding?: Pick<LocalOnboardingService, "login" | "register" | "status">;
   permissionVault: PermissionVault;
   permissionSync?: Pick<PermissionSyncService, "run">;
@@ -124,6 +136,10 @@ export function registerDashboardRoutes(
   const githubCliImporter =
     runtime.githubCliImporter ??
     new GitHubCliCredentialImporter(runtime.permissionVault);
+
+  if (runtime.modelGateway) {
+    registerModelGatewayRoutes(app, runtime.modelGateway);
+  }
 
   app.get("/assets/dashboard.css", async (_request, reply) => {
     return reply
@@ -212,6 +228,10 @@ export function registerDashboardRoutes(
           ),
           modelCredentialSources:
             runtime.permissionVault.listModelCredentialStatus(userId),
+          privateCredentials:
+            runtime.permissionVault.listPrivateCredentials(userId),
+          credentialAccessAuditEvents:
+            runtime.permissionVault.listCredentialAccessAuditEvents(userId),
           integrations: {
             auditEvents: runtime.permissionVault.listAuditEvents(userId),
             approvals: runtime.toolGateway.listApprovals(userId),
@@ -382,6 +402,18 @@ export function registerDashboardRoutes(
                 id,
               )
             : false;
+          const supportedTools = modelSourceSupportedTools(
+            input.kind,
+            input.protocol,
+          );
+          const apiFormat = input.kind === "official-account"
+            ? undefined
+            : resolvedModelApiFormat(
+                input.kind,
+                input.protocol,
+                input.endpoint,
+                input.apiFormat,
+              );
           return runtime.backend.mutateStatus((status) => {
             const now = new Date().toISOString();
             const previous = status.deviceControl.sources[id];
@@ -390,8 +422,9 @@ export function registerDashboardRoutes(
               label: input.label,
               kind: input.kind,
               protocol: input.protocol,
+              ...(apiFormat ? { apiFormat } : {}),
               ...(input.endpoint ? { endpoint: input.endpoint } : {}),
-              supportedTools: [...new Set(input.supportedTools)],
+              supportedTools,
               ...(credentialRequired
                 ? { credentialRef: `model-source:${id}` }
                 : {}),
@@ -490,6 +523,164 @@ export function registerDashboardRoutes(
     },
   );
 
+  app.post("/v1/dashboard/private-credentials", async (request, reply) => {
+    if (!authorizeDashboardWrite(request, reply, dashboardSession, csrfToken)) {
+      return;
+    }
+    const input = privateCredentialCreateInputSchema.parse(request.body);
+    return dashboardCall(reply, () =>
+      withPermissionVault(runtime, async () => {
+        const snapshot = await runtime.backend.getSnapshot();
+        const credential = runtime.permissionVault.upsertPrivateCredential({
+          ...input,
+          source: {
+            deviceId: snapshot.profile.deviceId,
+            type: "user",
+          },
+          userId: snapshot.profile.userId,
+        });
+        runtime.permissionVault.recordCredentialAuditEvent({
+          agentId: "user",
+          credentialId: credential.id,
+          purpose: "credential.register",
+          userId: snapshot.profile.userId,
+        });
+        return {
+          credential,
+        };
+      }),
+    );
+  });
+
+  app.put(
+    "/v1/dashboard/private-credentials/:credentialId",
+    async (request, reply) => {
+      if (!authorizeDashboardWrite(request, reply, dashboardSession, csrfToken)) {
+        return;
+      }
+      const { credentialId } = privateCredentialParameterSchema.parse(
+        request.params,
+      );
+      const input = privateCredentialUpdateInputSchema.parse(request.body);
+      return dashboardCall(reply, () =>
+        withPermissionVault(runtime, async () => {
+          const snapshot = await runtime.backend.getSnapshot();
+          const current = privateCredentialById(
+            runtime.permissionVault,
+            snapshot.profile.userId,
+            credentialId,
+          );
+          if (!current) {
+            return reply.code(404).send({
+              error: {
+                code: "private_credential_not_found",
+                message: "Private credential was not found.",
+              },
+            });
+          }
+          const credential = runtime.permissionVault.upsertPrivateCredential({
+              accessPolicy: input.accessPolicy ?? current.accessPolicy,
+              expiresAt:
+                input.expiresAt === undefined
+                  ? current.expiresAt
+                  : input.expiresAt,
+              fields: input.fields ?? current.fields,
+              id: credentialId,
+              kind: input.kind ?? current.kind,
+              label: input.label ?? current.label,
+              purposes: input.purposes ?? current.purposes,
+              ...(input.secrets ? { secrets: input.secrets } : {}),
+              source: current.source,
+              tags: input.tags ?? current.tags,
+              userId: snapshot.profile.userId,
+            });
+          runtime.permissionVault.recordCredentialAuditEvent({
+            agentId: "user",
+            credentialId,
+            purpose: "credential.update",
+            userId: snapshot.profile.userId,
+          });
+          return { credential };
+        }),
+      );
+    },
+  );
+
+  app.post(
+    "/v1/dashboard/private-credentials/:credentialId/reveal",
+    async (request, reply) => {
+      reply.headers({
+        "cache-control": "no-store, max-age=0",
+        pragma: "no-cache",
+      });
+      if (!authorizeDashboardWrite(request, reply, dashboardSession, csrfToken)) {
+        return;
+      }
+      const { credentialId } = privateCredentialParameterSchema.parse(
+        request.params,
+      );
+      const { password } = privateCredentialRevealInputSchema.parse(
+        request.body,
+      );
+      return dashboardCall(reply, () =>
+        withPermissionVault(runtime, async () => {
+          const snapshot = await runtime.backend.getSnapshot();
+          const credential = runtime.permissionVault.revealPrivateCredential(
+            snapshot.profile.userId,
+            credentialId,
+            password,
+          );
+          if (!credential) {
+            return reply.code(403).send({
+              error: {
+                code: "private_credential_reveal_denied",
+                message: "Wallet password is invalid or the credential is unavailable.",
+              },
+            });
+          }
+          return { credential };
+        }),
+      );
+    },
+  );
+
+  app.delete(
+    "/v1/dashboard/private-credentials/:credentialId",
+    async (request, reply) => {
+      if (!authorizeDashboardWrite(request, reply, dashboardSession, csrfToken)) {
+        return;
+      }
+      const { credentialId } = privateCredentialParameterSchema.parse(
+        request.params,
+      );
+      return dashboardCall(reply, () =>
+        withPermissionVault(runtime, async () => {
+          const snapshot = await runtime.backend.getSnapshot();
+          if (
+            !runtime.permissionVault.deletePrivateCredential(
+              snapshot.profile.userId,
+              credentialId,
+            )
+          ) {
+            return reply.code(404).send({
+              error: {
+                code: "private_credential_not_found",
+                message: "Private credential was not found.",
+              },
+            });
+          }
+          runtime.permissionVault.recordCredentialAuditEvent({
+            agentId: "user",
+            credentialId,
+            purpose: "credential.delete",
+            userId: snapshot.profile.userId,
+          });
+          return { credentialId, deleted: true };
+        }),
+      );
+    },
+  );
+
   app.delete(
     "/v1/dashboard/model-sources/:id",
     async (request, reply) => {
@@ -536,12 +727,11 @@ export function registerDashboardRoutes(
       const snapshot = await runtime.backend.getSnapshot();
       const source = snapshot.status.deviceControl.sources[input.sourceId];
       if (!source) throw new Error("Model source was not found.");
-      if (
-        input.supportedTools.some(
-          (tool) => !source.supportedTools.includes(tool),
-        )
-      ) {
-        throw new Error("Model tools must be supported by its source.");
+      const supportedTools = source.supportedTools.filter(
+        (tool) => tool !== "cursor",
+      );
+      if (supportedTools.length === 0) {
+        throw new Error("Model source has no configurable AI tools.");
       }
       return runtime.backend.mutateStatus((status) => {
         const now = new Date().toISOString();
@@ -551,7 +741,7 @@ export function registerDashboardRoutes(
           sourceId: input.sourceId,
           name: input.name,
           modelId: input.modelId,
-          supportedTools: [...new Set(input.supportedTools)],
+          supportedTools,
           createdAt: previous?.createdAt ?? now,
           updatedAt: now,
         };
@@ -989,6 +1179,68 @@ export function registerDashboardRoutes(
     });
   });
 
+  app.post(
+    "/v1/dashboard/devices/:id/revoke-sessions",
+    async (request, reply) => {
+      if (!authorizeDashboardWrite(request, reply, dashboardSession, csrfToken)) {
+        return;
+      }
+      return dashboardCall(reply, async () => {
+        const { id } = deviceParameterSchema.parse(request.params);
+        if (!runtime.backend.revokeDeviceSessions) {
+          throw new Error("Device session revocation is unavailable.");
+        }
+        await runtime.backend.revokeDeviceSessions(id);
+        return { revoked: true };
+      });
+    },
+  );
+
+  app.put("/v1/dashboard/devices/:id/block", async (request, reply) => {
+    if (!authorizeDashboardWrite(request, reply, dashboardSession, csrfToken)) {
+      return;
+    }
+    return dashboardCall(reply, async () => {
+      const { id } = deviceParameterSchema.parse(request.params);
+      if (!runtime.backend.blockDevice) {
+        throw new Error("Device blocking is unavailable.");
+      }
+      await runtime.backend.blockDevice(id);
+      return { blocked: true };
+    });
+  });
+
+  app.delete("/v1/dashboard/devices/:id/block", async (request, reply) => {
+    if (!authorizeDashboardWrite(request, reply, dashboardSession, csrfToken)) {
+      return;
+    }
+    return dashboardCall(reply, async () => {
+      const { id } = deviceParameterSchema.parse(request.params);
+      if (!runtime.backend.unblockDevice) {
+        throw new Error("Device unblocking is unavailable.");
+      }
+      await runtime.backend.unblockDevice(id);
+      return { blocked: false };
+    });
+  });
+
+  app.put("/v1/dashboard/device-login-policy", async (request, reply) => {
+    if (!authorizeDashboardWrite(request, reply, dashboardSession, csrfToken)) {
+      return;
+    }
+    const { denyNewDeviceLogins } = z
+      .object({ denyNewDeviceLogins: z.boolean() })
+      .strict()
+      .parse(request.body);
+    return dashboardCall(reply, async () => {
+      if (!runtime.backend.setDeviceLoginPolicy) {
+        throw new Error("Device login policy is unavailable.");
+      }
+      await runtime.backend.setDeviceLoginPolicy(denyNewDeviceLogins);
+      return { denyNewDeviceLogins };
+    });
+  });
+
   app.put(
     "/v1/dashboard/oauth/providers/:provider/config",
     async (request, reply) => {
@@ -1354,6 +1606,217 @@ export function registerDashboardRoutes(
     },
   );
 
+  app.post("/v1/tools/private-credentials", async (request, reply) => {
+    if (!isTrustedDashboardHost(request)) return forbidden(reply);
+    const session = await authenticateAgentToolRequest(
+      runtime,
+      request.headers.authorization,
+      reply,
+    );
+    if (!session) return;
+    const input = agentPrivateCredentialCreateInputSchema.parse(request.body);
+    const { projectId, ...credentialInput } = input;
+    return withPermissionVault(runtime, () => {
+      const credential = runtime.permissionVault.upsertPrivateCredential({
+        ...credentialInput,
+        source: {
+          agentId: session.agentId,
+          deviceId: session.deviceId,
+          ...(projectId ? { projectId } : {}),
+          type: "agent",
+        },
+        userId: session.userId,
+      });
+      runtime.permissionVault.recordCredentialAuditEvent({
+        agentId: session.agentId,
+        credentialId: credential.id,
+        ...(projectId ? { projectId } : {}),
+        purpose: "credential.register",
+        userId: session.userId,
+      });
+      return { credential };
+    });
+  });
+
+  app.post("/v1/tools/private-credentials/list", async (request, reply) => {
+    if (!isTrustedDashboardHost(request)) return forbidden(reply);
+    const session = await authenticateAgentToolRequest(
+      runtime,
+      request.headers.authorization,
+      reply,
+    );
+    if (!session) return;
+    const input = privateCredentialListInputSchema.parse(request.body);
+    return withPermissionVault(runtime, () => ({
+      credentials: runtime.permissionVault
+        .listPrivateCredentials(session.userId, input)
+        .filter((credential) =>
+          agentCanAccessPrivateCredential(credential, session.agentId),
+        )
+        .slice(0, input.limit),
+    }));
+  });
+
+  app.post("/v1/tools/private-credentials/resolve", async (request, reply) => {
+    if (!isTrustedDashboardHost(request)) return forbidden(reply);
+    const session = await authenticateAgentToolRequest(
+      runtime,
+      request.headers.authorization,
+      reply,
+    );
+    if (!session) return;
+    const input = privateCredentialResolveInputSchema.parse(request.body);
+    return withPermissionVault(runtime, () => ({
+      credentials: runtime.permissionVault
+        .findPrivateCredentialsForAgent({
+          agentId: session.agentId,
+          kinds: input.kinds,
+          projectId: input.projectId,
+          purpose: input.purpose,
+          tags: input.tags,
+          userId: session.userId,
+        })
+        .slice(0, input.limit),
+    }));
+  });
+
+  app.post(
+    "/v1/tools/private-credentials/:credentialId/read",
+    async (request, reply) => {
+      reply.headers({
+        "cache-control": "no-store, max-age=0",
+        pragma: "no-cache",
+      });
+      if (!isTrustedDashboardHost(request)) return forbidden(reply);
+      const session = await authenticateAgentToolRequest(
+        runtime,
+        request.headers.authorization,
+        reply,
+      );
+      if (!session) return;
+      const { credentialId } = privateCredentialParameterSchema.parse(
+        request.params,
+      );
+      const input = privateCredentialReadInputSchema.parse(request.body);
+      return withPermissionVault(runtime, () => {
+        const credential = runtime.permissionVault.readPrivateCredentialForAgent({
+          agentId: session.agentId,
+          credentialId,
+          projectId: input.projectId,
+          purpose: input.purpose,
+          userId: session.userId,
+        });
+        if (!credential) {
+          return reply.code(404).send({
+            error: {
+              code: "private_credential_unavailable",
+              message: "Private credential is unavailable for this request.",
+            },
+          });
+        }
+        return { credential };
+      });
+    },
+  );
+
+  app.patch(
+    "/v1/tools/private-credentials/:credentialId",
+    async (request, reply) => {
+      if (!isTrustedDashboardHost(request)) return forbidden(reply);
+      const session = await authenticateAgentToolRequest(
+        runtime,
+        request.headers.authorization,
+        reply,
+      );
+      if (!session) return;
+      const { credentialId } = privateCredentialParameterSchema.parse(
+        request.params,
+      );
+      const input = agentPrivateCredentialUpdateInputSchema.parse(request.body);
+      return withPermissionVault(runtime, () => {
+        const current = privateCredentialById(
+          runtime.permissionVault,
+          session.userId,
+          credentialId,
+        );
+        if (
+          !current ||
+          !agentCanAccessPrivateCredential(
+            current,
+            session.agentId,
+            input.projectId,
+          )
+        ) {
+          return reply.code(404).send({
+            error: {
+              code: "private_credential_unavailable",
+              message: "Private credential is unavailable for this request.",
+            },
+          });
+        }
+        const { projectId: _projectId, ...credentialUpdate } = input;
+        const credential = runtime.permissionVault.patchPrivateCredential({
+          ...credentialUpdate,
+          credentialId,
+          userId: session.userId,
+        });
+        runtime.permissionVault.recordCredentialAuditEvent({
+          agentId: session.agentId,
+          credentialId,
+          ...(input.projectId ? { projectId: input.projectId } : {}),
+          purpose: "credential.update",
+          userId: session.userId,
+        });
+        return { credential };
+      });
+    },
+  );
+
+  app.delete(
+    "/v1/tools/private-credentials/:credentialId",
+    async (request, reply) => {
+      if (!isTrustedDashboardHost(request)) return forbidden(reply);
+      const session = await authenticateAgentToolRequest(
+        runtime,
+        request.headers.authorization,
+        reply,
+      );
+      if (!session) return;
+      const { credentialId } = privateCredentialParameterSchema.parse(
+        request.params,
+      );
+      return withPermissionVault(runtime, () => {
+        const current = privateCredentialById(
+          runtime.permissionVault,
+          session.userId,
+          credentialId,
+        );
+        if (
+          !current ||
+          !agentCanAccessPrivateCredential(current, session.agentId)
+        ) {
+          return reply.code(404).send({
+            error: {
+              code: "private_credential_unavailable",
+              message: "Private credential is unavailable for this request.",
+            },
+          });
+        }
+        runtime.permissionVault.deletePrivateCredential(
+          session.userId,
+          credentialId,
+        );
+        runtime.permissionVault.recordCredentialAuditEvent({
+          agentId: session.agentId,
+          credentialId,
+          purpose: "credential.delete",
+          userId: session.userId,
+        });
+        return { credentialId, deleted: true };
+      });
+    },
+  );
+
   app.get("/v1/tools", async (request, reply) => {
     if (!isTrustedDashboardHost(request)) return forbidden(reply);
     const session = await authenticateAgentToolRequest(
@@ -1448,6 +1911,38 @@ function matchesAgentIdentity(
   authenticatedAgentId: string,
 ): boolean {
   return claimedAgentId === undefined || claimedAgentId === authenticatedAgentId;
+}
+
+function privateCredentialById(
+  vault: PermissionVault,
+  userId: string,
+  credentialId: string,
+): MaskedPrivateCredential | undefined {
+  return vault
+    .listPrivateCredentials(userId)
+    .find((credential) => credential.id === credentialId);
+}
+
+function agentCanAccessPrivateCredential(
+  credential: MaskedPrivateCredential,
+  agentId: string,
+  projectId?: string,
+): boolean {
+  const policy: PrivateCredentialAccessPolicy = credential.accessPolicy;
+  if (!policy.allowAgentRead || policy.deniedAgentIds.includes(agentId)) {
+    return false;
+  }
+  if (
+    policy.allowedAgentIds.length > 0 &&
+    !policy.allowedAgentIds.includes(agentId)
+  ) {
+    return false;
+  }
+  if (projectId && policy.deniedProjectIds.includes(projectId)) return false;
+  return (
+    policy.allowedProjectIds.length === 0 ||
+    Boolean(projectId && policy.allowedProjectIds.includes(projectId))
+  );
 }
 
 function withPermissionVault<T>(
@@ -1669,9 +2164,7 @@ const onboardingAccountSchema = z
   })
   .strict();
 
-const onboardingLoginSchema = onboardingAccountSchema
-  .extend({ statusKey: z.string().startsWith("os1_").max(200) })
-  .strict();
+const onboardingLoginSchema = onboardingAccountSchema;
 
 const identityInputSchema = z
   .object({
@@ -1815,6 +2308,106 @@ const modelWalletPasswordInputSchema = z
     newPassword: z.string().min(6).max(256),
   })
   .strict();
+const privateCredentialParameterSchema = z
+  .object({ credentialId: z.uuid() })
+  .strict();
+const privateCredentialMapKeySchema = z
+  .string()
+  .min(1)
+  .max(64)
+  .regex(/^[A-Za-z][A-Za-z0-9_.-]*$/);
+const privateCredentialFieldsInputSchema = z
+  .record(
+    privateCredentialMapKeySchema,
+    z.string().min(1).max(8_000),
+  )
+  .refine((value) => Object.keys(value).length <= 64, {
+    message: "Credential fields cannot contain more than 64 entries.",
+  });
+const privateCredentialSecretsInputSchema = z
+  .record(
+    privateCredentialMapKeySchema,
+    z.string().min(1).max(128_000),
+  )
+  .refine(
+    (value) =>
+      Object.keys(value).length >= 1 && Object.keys(value).length <= 64,
+    { message: "Credential secrets must contain between 1 and 64 entries." },
+  );
+const privateCredentialMetadataListSchema = z
+  .array(z.string().trim().min(1).max(500))
+  .max(64)
+  .refine((values) => new Set(values).size === values.length, {
+    message: "Credential metadata values must be unique.",
+  });
+const privateCredentialAccessPolicyInputSchema = z
+  .object({
+    allowAgentRead: z.boolean().optional(),
+    allowedAgentIds: privateCredentialMetadataListSchema.optional(),
+    allowedProjectIds: privateCredentialMetadataListSchema.optional(),
+    deniedAgentIds: privateCredentialMetadataListSchema.optional(),
+    deniedProjectIds: privateCredentialMetadataListSchema.optional(),
+    requireApproval: z.boolean().optional(),
+  })
+  .strict();
+const privateCredentialCreateInputSchema = z
+  .object({
+    accessPolicy: privateCredentialAccessPolicyInputSchema.optional(),
+    expiresAt: z.iso.datetime({ offset: true }).nullable().optional(),
+    fields: privateCredentialFieldsInputSchema.default({}),
+    kind: z.enum(privateCredentialKinds),
+    label: z.string().trim().min(1).max(500),
+    purposes: privateCredentialMetadataListSchema.min(1).max(32),
+    secrets: privateCredentialSecretsInputSchema,
+    tags: privateCredentialMetadataListSchema.max(50).default([]),
+  })
+  .strict();
+const privateCredentialUpdateInputSchema = z
+  .object({
+    accessPolicy: privateCredentialAccessPolicyInputSchema.optional(),
+    expiresAt: z.iso.datetime({ offset: true }).nullable().optional(),
+    fields: privateCredentialFieldsInputSchema.optional(),
+    kind: z.enum(privateCredentialKinds).optional(),
+    label: z.string().trim().min(1).max(500).optional(),
+    purposes: privateCredentialMetadataListSchema.min(1).max(32).optional(),
+    secrets: privateCredentialSecretsInputSchema.optional(),
+    tags: privateCredentialMetadataListSchema.max(50).optional(),
+  })
+  .strict();
+const privateCredentialRevealInputSchema = z
+  .object({ password: z.string().min(1).max(256) })
+  .strict();
+const agentPrivateCredentialCreateInputSchema =
+  privateCredentialCreateInputSchema.extend({
+    projectId: z.string().trim().min(1).max(500).optional(),
+  });
+const agentPrivateCredentialUpdateInputSchema =
+  privateCredentialUpdateInputSchema.extend({
+    projectId: z.string().trim().min(1).max(500).optional(),
+  });
+const privateCredentialListInputSchema = z
+  .object({
+    kinds: z.array(z.enum(privateCredentialKinds)).max(20).default([]),
+    limit: z.number().int().min(1).max(200).default(100),
+    purposes: privateCredentialMetadataListSchema.max(32).default([]),
+    tags: privateCredentialMetadataListSchema.max(50).default([]),
+  })
+  .strict();
+const privateCredentialResolveInputSchema = z
+  .object({
+    kinds: z.array(z.enum(privateCredentialKinds)).max(20).default([]),
+    limit: z.number().int().min(1).max(50).default(20),
+    projectId: z.string().trim().min(1).max(500).optional(),
+    purpose: z.string().trim().min(1).max(500),
+    tags: privateCredentialMetadataListSchema.max(50).default([]),
+  })
+  .strict();
+const privateCredentialReadInputSchema = z
+  .object({
+    projectId: z.string().trim().min(1).max(500).optional(),
+    purpose: z.string().trim().min(1).max(500),
+  })
+  .strict();
 const personaEventParameterSchema = z.object({
   id: z.string().min(1).max(200),
 });
@@ -1826,7 +2419,6 @@ const modelEndpointInputSchema = z
     if (
       endpoint.username ||
       endpoint.password ||
-      endpoint.search ||
       endpoint.hash
     ) {
       context.addIssue({
@@ -1840,6 +2432,7 @@ const modelSourceInputSchema = z
     label: z.string().trim().min(1).max(200),
     kind: modelSourceKindSchema,
     protocol: modelApiProtocolSchema,
+    apiFormat: modelApiFormatSchema.optional(),
     endpoint: modelEndpointInputSchema.optional(),
     supportedTools: z
       .array(agentToolIdSchema)
@@ -1856,6 +2449,32 @@ const modelSourceInputSchema = z
     message: "apiKey and clearCredential cannot be used together",
   })
   .superRefine((input, context) => {
+    const requiresEndpoint =
+      input.kind === "compatible-api" ||
+      input.kind === "local-service" ||
+      input.kind === "custom-endpoint";
+    if (requiresEndpoint && !input.endpoint) {
+      context.addIssue({
+        code: "custom",
+        message: "Endpoint is required for this model source type.",
+        path: ["endpoint"],
+      });
+    }
+    if (input.endpoint) {
+      const endpoint = new URL(input.endpoint);
+      const azureApiVersionQuery =
+        input.protocol === "azure-openai" &&
+        endpoint.searchParams.size === 1 &&
+        endpoint.searchParams.has("api-version") &&
+        Boolean(endpoint.searchParams.get("api-version"));
+      if (endpoint.search && !azureApiVersionQuery) {
+        context.addIssue({
+          code: "custom",
+          message: "Only Azure OpenAI api-version is allowed in Endpoint query parameters.",
+          path: ["endpoint"],
+        });
+      }
+    }
     if (
       input.apiKey &&
       (input.kind === "official-account" || input.kind === "local-service")
@@ -1866,28 +2485,67 @@ const modelSourceInputSchema = z
         path: ["apiKey"],
       });
     }
-    if (
-      input.supportedTools.includes("claude-code") &&
-      input.protocol !== "anthropic" &&
-      input.protocol !== "custom"
-    ) {
-      context.addIssue({
-        code: "custom",
-        message: "Claude Code requires an Anthropic or custom protocol source.",
-        path: ["supportedTools"],
-      });
-    }
-    if (
-      input.supportedTools.includes("codex") &&
-      input.protocol === "anthropic"
-    ) {
-      context.addIssue({
-        code: "custom",
-        message: "Codex cannot use an Anthropic protocol source directly.",
-        path: ["supportedTools"],
-      });
+    if (input.kind === "official-account") {
+      const nativeTool =
+        input.protocol === "openai"
+          ? "codex"
+          : input.protocol === "anthropic"
+            ? "claude-code"
+            : undefined;
+      if (
+        !nativeTool ||
+        input.supportedTools.length !== 1 ||
+        input.supportedTools[0] !== nativeTool
+      ) {
+        context.addIssue({
+          code: "custom",
+          message: "Official account sessions can only stay with their native AI tool.",
+          path: ["supportedTools"],
+        });
+      }
     }
   });
+
+function modelSourceSupportedTools(
+  kind: z.infer<typeof modelSourceKindSchema>,
+  protocol: z.infer<typeof modelApiProtocolSchema>,
+): Array<z.infer<typeof agentToolIdSchema>> {
+  if (kind !== "official-account") return ["codex", "claude-code"];
+  if (protocol === "openai") return ["codex"];
+  if (protocol === "anthropic") return ["claude-code"];
+  return [];
+}
+
+function resolvedModelApiFormat(
+  kind: z.infer<typeof modelSourceKindSchema>,
+  protocol: z.infer<typeof modelApiProtocolSchema>,
+  endpoint?: string,
+  explicit?: z.infer<typeof modelApiFormatSchema>,
+): z.infer<typeof modelApiFormatSchema> | undefined {
+  if (explicit) return explicit;
+  if (endpoint) {
+    const path = new URL(endpoint).pathname.replace(/\/+$/, "");
+    if (path.endsWith("/responses")) return "openai-responses";
+    if (path.endsWith("/chat/completions")) {
+      return "openai-chat-completions";
+    }
+    if (path.endsWith("/messages")) return "anthropic-messages";
+  }
+  if (protocol === "anthropic") return "anthropic-messages";
+  if (kind === "official-api" && protocol === "openai") {
+    return "openai-responses";
+  }
+  if (
+    protocol === "openai" ||
+    protocol === "ollama" ||
+    protocol === "azure-openai" ||
+    protocol === "custom"
+  ) {
+    return "openai-chat-completions";
+  }
+  return undefined;
+}
+
 const modelInputSchema = z
   .object({
     sourceId: modelControlParameterSchema.shape.id,

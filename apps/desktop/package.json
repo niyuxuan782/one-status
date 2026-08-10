@@ -60,9 +60,13 @@
     ],
     "npmRebuild": false,
     "mac": {
+      "binaries": [
+        "Contents/Resources/bin/one-status-device-sidecar"
+      ],
       "category": "public.app-category.developer-tools",
       "icon": "build/icon.png",
       "hardenedRuntime": true,
+      "notarize": true,
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.plist",
       "signIgnore": [

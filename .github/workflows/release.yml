@@ -3,6 +3,7 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -23,6 +24,7 @@ jobs:
           registry-url: https://registry.npmjs.org
       - uses: dtolnay/rust-toolchain@stable
       - name: Verify tag matches package version
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
         run: |
           expected="v$(node -p 'require("./package.json").version')"
           if [[ "$GITHUB_REF_NAME" != "$expected" ]]; then
@@ -39,6 +41,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: one-status-cli
+          if-no-files-found: error
           path: dist/one-status-*.tgz
 
   desktop:
@@ -106,32 +109,113 @@ jobs:
           CSC_LINK: ${{ secrets.MACOS_CSC_LINK }}
           CSC_NAME: ${{ secrets.MACOS_CSC_NAME }}
         run: |
-          signing_args=()
-          if [[ -z "${CSC_LINK:-}" ]]; then
-            unset CSC_LINK CSC_KEY_PASSWORD
-            export CSC_NAME="-"
-            signing_args=(--config.mac.identity=-)
-            echo "Developer ID secrets are unavailable; building a structurally signed preview."
-          elif [[ -z "${CSC_NAME:-}" ]]; then
-            echo "MACOS_CSC_NAME is required when MACOS_CSC_LINK is configured." >&2
-            exit 1
+          for variable in CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_TEAM_ID APPLE_APP_SPECIFIC_PASSWORD; do
+            if [[ -z "${!variable:-}" ]]; then
+              echo "$variable is required for a public macOS release." >&2
+              exit 1
+            fi
+          done
+          if [[ -n "${CSC_NAME:-}" ]]; then
+            case "$CSC_NAME" in
+              Developer\ ID\ Application:*|Developer\ ID\ Installer:*|3rd\ Party\ Mac\ Developer\ Application:*|3rd\ Party\ Mac\ Developer\ Installer:*)
+                echo "MACOS_CSC_NAME must omit the certificate type prefix." >&2
+                exit 1
+                ;;
+            esac
+          else
+            export CSC_NAME="$APPLE_TEAM_ID"
           fi
           pnpm --dir apps/desktop build
+          # mac.notarize=true makes electron-builder submit and staple the signed
+          # app before it creates the DMG and ZIP targets.
           pnpm --dir apps/desktop exec electron-builder \
             --mac --${{ matrix.arch }} --publish never \
-            --config.artifactName='One-Status-${version}-mac-${arch}.${ext}' \
-            "${signing_args[@]}"
+            --config.artifactName='One-Status-${version}-mac-${arch}.${ext}'
           app_path="$(find apps/desktop/release -maxdepth 2 -type d -name '*.app' -print -quit)"
           test -n "$app_path"
+          sidecar_path="$app_path/Contents/Resources/bin/one-status-device-sidecar"
+          test -x "$sidecar_path"
           codesign --verify --deep --strict --verbose=2 "$app_path"
-          codesign -dvvv "$app_path" 2>&1
+          codesign --verify --strict --verbose=2 "$sidecar_path"
+          codesign -dvvv "$app_path" 2>&1 | tee /tmp/one-status-app-signature.txt
+          codesign -dvvv "$sidecar_path" 2>&1 | tee /tmp/one-status-sidecar-signature.txt
+          grep -q '^Authority=Developer ID Application:' /tmp/one-status-app-signature.txt
+          grep -q '^Authority=Developer ID Application:' /tmp/one-status-sidecar-signature.txt
+          grep -Eq '^CodeDirectory .*flags=.*\(runtime\)' /tmp/one-status-app-signature.txt
+          grep -Eq '^CodeDirectory .*flags=.*\(runtime\)' /tmp/one-status-sidecar-signature.txt
+          grep -qx "TeamIdentifier=$APPLE_TEAM_ID" /tmp/one-status-app-signature.txt
+          grep -qx "TeamIdentifier=$APPLE_TEAM_ID" /tmp/one-status-sidecar-signature.txt
+          # These checks validate electron-builder's completed app notarization.
+          spctl --assess --type execute --verbose=4 "$app_path"
+          xcrun stapler validate "$app_path"
+
           for image in apps/desktop/release/One-Status-*.dmg; do
+            codesign --verify --strict --verbose=2 "$image"
+            codesign -dvvv "$image" 2>&1 | tee /tmp/one-status-dmg-signature.txt
+            grep -q '^Authority=Developer ID Application:' /tmp/one-status-dmg-signature.txt
+            grep -qx "TeamIdentifier=$APPLE_TEAM_ID" /tmp/one-status-dmg-signature.txt
             hdiutil verify "$image"
+
+            # Apple treats the outer DMG as a separate artifact. The app was
+            # already notarized above, so only the DMG is submitted here.
+            xcrun notarytool submit "$image" \
+              --apple-id "$APPLE_ID" \
+              --team-id "$APPLE_TEAM_ID" \
+              --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+              --wait
+            xcrun stapler staple "$image"
+            xcrun stapler validate "$image"
+            codesign --verify --strict --verbose=2 "$image"
+            spctl --assess --type open \
+              --context context:primary-signature \
+              --verbose=4 "$image"
+
+            mount_path="$RUNNER_TEMP/one-status-dmg-${{ matrix.arch }}"
+            rm -rf "$mount_path"
+            mkdir -p "$mount_path"
+            hdiutil attach "$image" -nobrowse -readonly -mountpoint "$mount_path"
+            cleanup_mount() {
+              hdiutil detach "$mount_path" >/dev/null 2>&1 || true
+            }
+            trap cleanup_mount EXIT
+
+            mounted_app="$(find "$mount_path" -maxdepth 1 -type d -name '*.app' -print -quit)"
+            test -n "$mounted_app"
+            mounted_sidecar="$mounted_app/Contents/Resources/bin/one-status-device-sidecar"
+            test -x "$mounted_sidecar"
+            codesign --verify --deep --strict --verbose=2 "$mounted_app"
+            codesign --verify --strict --verbose=2 "$mounted_sidecar"
+            codesign -dvvv "$mounted_app" 2>&1 | grep -q '^Authority=Developer ID Application:'
+            codesign -dvvv "$mounted_sidecar" 2>&1 | grep -q '^Authority=Developer ID Application:'
+            codesign -dvvv "$mounted_app" 2>&1 | grep -Eq '^CodeDirectory .*flags=.*\(runtime\)'
+            codesign -dvvv "$mounted_sidecar" 2>&1 | grep -Eq '^CodeDirectory .*flags=.*\(runtime\)'
+            codesign -dvvv "$mounted_app" 2>&1 | grep -qx "TeamIdentifier=$APPLE_TEAM_ID"
+            codesign -dvvv "$mounted_sidecar" 2>&1 | grep -qx "TeamIdentifier=$APPLE_TEAM_ID"
+            xcrun stapler validate "$mounted_app"
+
+            cleanup_mount
+            trap - EXIT
+            rmdir "$mount_path"
           done
-          if [[ "${CSC_NAME}" != "-" ]]; then
-            spctl --assess --type execute --verbose=4 "$app_path"
-            xcrun stapler validate "$app_path"
-          fi
+
+          for archive in apps/desktop/release/One-Status-*.zip; do
+            extract_path="$(mktemp -d "$RUNNER_TEMP/one-status-zip-${{ matrix.arch }}.XXXXXX")"
+            ditto -x -k "$archive" "$extract_path"
+            archived_app="$(find "$extract_path" -maxdepth 1 -type d -name '*.app' -print -quit)"
+            test -n "$archived_app"
+            archived_sidecar="$archived_app/Contents/Resources/bin/one-status-device-sidecar"
+            test -x "$archived_sidecar"
+            codesign --verify --deep --strict --verbose=2 "$archived_app"
+            codesign --verify --strict --verbose=2 "$archived_sidecar"
+            codesign -dvvv "$archived_app" 2>&1 | grep -q '^Authority=Developer ID Application:'
+            codesign -dvvv "$archived_sidecar" 2>&1 | grep -q '^Authority=Developer ID Application:'
+            codesign -dvvv "$archived_app" 2>&1 | grep -Eq '^CodeDirectory .*flags=.*\(runtime\)'
+            codesign -dvvv "$archived_sidecar" 2>&1 | grep -Eq '^CodeDirectory .*flags=.*\(runtime\)'
+            codesign -dvvv "$archived_app" 2>&1 | grep -qx "TeamIdentifier=$APPLE_TEAM_ID"
+            codesign -dvvv "$archived_sidecar" 2>&1 | grep -qx "TeamIdentifier=$APPLE_TEAM_ID"
+            xcrun stapler validate "$archived_app"
+            rm -rf "$extract_path"
+          done
       - name: Build Windows desktop
         if: matrix.platform == 'windows'
         shell: bash
@@ -153,16 +237,42 @@ jobs:
             --config.artifactName='One-Status-${version}-linux-x64.${ext}'
       - name: Package standalone Device Sidecar
         shell: bash
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           executable='one-status-device-sidecar'
           if [[ '${{ matrix.platform }}' == 'windows' ]]; then
             executable='one-status-device-sidecar.exe'
           fi
+          sidecar_binary="apps/desktop/dist/resources/bin/$executable"
+          if [[ '${{ matrix.platform }}' == 'mac' ]]; then
+            app_path="$(find apps/desktop/release -maxdepth 2 -type d -name '*.app' -print -quit)"
+            test -n "$app_path"
+            sidecar_binary="$app_path/Contents/Resources/bin/$executable"
+            codesign --verify --strict --verbose=2 "$sidecar_binary"
+            codesign -dvvv "$sidecar_binary" 2>&1 | tee /tmp/one-status-standalone-source-signature.txt
+            grep -q '^Authority=Developer ID Application:' /tmp/one-status-standalone-source-signature.txt
+            grep -Eq '^CodeDirectory .*flags=.*\(runtime\)' /tmp/one-status-standalone-source-signature.txt
+            grep -qx "TeamIdentifier=${APPLE_TEAM_ID}" /tmp/one-status-standalone-source-signature.txt
+          fi
           node scripts/package-device-sidecar.mjs \
             --platform '${{ matrix.platform }}' \
             --arch '${{ matrix.arch }}' \
-            --binary "apps/desktop/dist/resources/bin/$executable" \
+            --binary "$sidecar_binary" \
             --output apps/desktop/release
+          if [[ '${{ matrix.platform }}' == 'mac' ]]; then
+            sidecar_archive="$(find apps/desktop/release -maxdepth 1 -type f -name 'one-status-device-sidecar-*-mac-${{ matrix.arch }}.tar.gz' -print -quit)"
+            test -n "$sidecar_archive"
+            extract_path="$(mktemp -d "$RUNNER_TEMP/one-status-sidecar-${{ matrix.arch }}.XXXXXX")"
+            tar -xzf "$sidecar_archive" -C "$extract_path" "$executable"
+            extracted_sidecar="$extract_path/$executable"
+            codesign --verify --strict --verbose=2 "$extracted_sidecar"
+            codesign -dvvv "$extracted_sidecar" 2>&1 | tee /tmp/one-status-standalone-archive-signature.txt
+            grep -q '^Authority=Developer ID Application:' /tmp/one-status-standalone-archive-signature.txt
+            grep -Eq '^CodeDirectory .*flags=.*\(runtime\)' /tmp/one-status-standalone-archive-signature.txt
+            grep -qx "TeamIdentifier=${APPLE_TEAM_ID}" /tmp/one-status-standalone-archive-signature.txt
+            rm -rf "$extract_path"
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: one-status-desktop-${{ matrix.platform }}-${{ matrix.arch }}
@@ -176,6 +286,7 @@ jobs:
             apps/desktop/release/one-status-device-sidecar-*.tar.gz
 
   release:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     needs: [verify, desktop]
     runs-on: ubuntu-latest
     env:
@@ -240,19 +351,19 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           body: |
-            One Status v0.8.0 introduces the encrypted Key Wallet, the device and
-            AI tool overview, background-generated memory, unified Connections
-            and Capability Packs, and updated Codex and Claude Code adapters.
+            One Status ${{ github.ref_name }} includes the encrypted model and
+            credential Key Wallet, device and AI tool overview, Agent-managed
+            account, SSH, cloud and card-key credentials, background-generated
+            memory, unified Connections and Capability Packs, and updated Codex
+            and Claude Code adapters.
 
             Every Desktop package embeds the native Device Sidecar. Separate
             Sidecar archives for macOS arm64/x64, Windows x64 and Linux x64
             support the CLI installer and Homebrew Formula. Release assets and
             the generated Formula are bound to SHA-256 checksums.
 
-            macOS preview builds use ad-hoc code signing because Developer ID
-            and notarization credentials are not configured yet. The one-line
-            installer verifies `SHA256SUMS.txt` and the Bundle ID before it
-            clears quarantine and verifies the bundled signature.
+            macOS packages are signed with Developer ID, notarized by Apple,
+            stapled, and verified with Gatekeeper before publication.
           files: release-assets/*
       - name: Update Homebrew tap when configured
         if: ${{ env.HOMEBREW_TAP_TOKEN != '' }}
@@ -271,6 +382,7 @@ jobs:
           git -C tap push origin main
 
   container:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     needs: release
     runs-on: ubuntu-latest
     steps:

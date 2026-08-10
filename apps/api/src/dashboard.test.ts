@@ -3,7 +3,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { FastifyInstance } from "fastify";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createEmptyStatus, type StatusDocument } from "@one-status/protocol";
+import {
+  createEmptyStatus,
+  type StatusDocument,
+  type WrappedStatusKey,
+} from "@one-status/protocol";
 import { recordPersonaEvent } from "@one-status/protocol/persona-operations";
 import type { LocalProfile } from "@one-status/local-config";
 import { encryptStatus, generateStatusKey } from "@one-status/crypto";
@@ -25,6 +29,23 @@ import {
 } from "./tool-gateway.js";
 import type { HandoffPreview, HandoffService } from "./handoff.js";
 import { LocalCapabilityManager } from "./local-capability-manager.js";
+
+const wrappedStatusKey: WrappedStatusKey = {
+  format: "one-status.wrapped-status-key",
+  version: 1,
+  algorithm: "AES-256-GCM",
+  kdf: {
+    algorithm: "scrypt",
+    salt: "s".repeat(22),
+    cost: 16_384,
+    blockSize: 8,
+    parallelization: 1,
+    keyLength: 32,
+  },
+  iv: "i".repeat(16),
+  ciphertext: "c".repeat(43),
+  authTag: "a".repeat(22),
+};
 
 describe("local dashboard", () => {
   let app: FastifyInstance;
@@ -334,6 +355,28 @@ describe("local dashboard", () => {
     expect(script.body).toContain("观察记录");
     expect(script.body).toContain("记录策略");
     expect(script.body).toContain("/v1/dashboard/model-wallet/");
+    expect(script.body).toContain(
+      '${icon("key")}修改密码</button><button class="button secondary" data-action="add-model-source"',
+    );
+    expect(
+      script.body.match(/data-action="change-wallet-password"/g),
+    ).toHaveLength(2);
+    expect(script.body).toContain(
+      "需要 One Status Cursor 扩展，当前版本暂不可配置",
+    );
+    expect(script.body).toContain(
+      "function canConfigureModelForTool(toolId)",
+    );
+    expect(script.body).toContain('return toolId !== "cursor"');
+    expect(script.body).toContain("自动适配目标");
+    expect(script.body).toContain(
+      "保存后由 One Status Gateway 自动转换为各工具要求的请求格式。",
+    );
+    expect(script.body).toContain("function automaticToolChoices");
+    expect(script.body).toContain(
+      'data-tool="${escapeHtml(tool.toolId)}" data-models=""',
+    );
+    expect(script.body).toContain("Cursor · 暂不可配置");
     for (const label of ["密钥钱包", "项目", "记忆", "连接", "安全"]) {
       expect(script.body).not.toContain(`sectionHeader("${label}"`);
     }
@@ -357,6 +400,151 @@ describe("local dashboard", () => {
       });
       expect(response.statusCode, path).toBe(404);
     }
+  });
+
+  it("keeps Dashboard credential metadata masked and requires the wallet password for plaintext", async () => {
+    const page = await app.inject({
+      method: "GET",
+      url: "/models",
+      headers: { accept: "text/html", host: "127.0.0.1:8787" },
+    });
+    const setCookie = page.headers["set-cookie"]!;
+    const cookie = (Array.isArray(setCookie) ? setCookie[0]! : setCookie).split(
+      ";",
+    )[0]!;
+    const csrf = page.body.match(
+      /name="one-status-csrf" content="([^"]+)"/,
+    )?.[1];
+    const headers = {
+      cookie,
+      host: "127.0.0.1:8787",
+      origin: "http://127.0.0.1:8787",
+      "x-one-status-csrf": csrf!,
+    };
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/v1/dashboard/private-credentials",
+      headers,
+      payload: {
+        fields: {
+          host: "server.example.test",
+          username: "ubuntu",
+        },
+        kind: "ssh",
+        label: "Example SSH",
+        purposes: ["deployment.ssh"],
+        secrets: { password: "dashboard-private-password" },
+        tags: ["example", "production"],
+      },
+    });
+    expect(created.statusCode).toBe(200);
+    expect(created.body).not.toContain("dashboard-private-password");
+    const credentialId = created.json().credential.id as string;
+    expect(created.json()).toMatchObject({
+      credential: {
+        id: credentialId,
+        secrets: { password: "********" },
+        source: { type: "user" },
+      },
+    });
+
+    const snapshot = await app.inject({
+      method: "GET",
+      url: "/v1/dashboard/snapshot",
+      headers: { cookie, host: "127.0.0.1:8787" },
+    });
+    expect(snapshot.statusCode).toBe(200);
+    expect(snapshot.body).not.toContain("dashboard-private-password");
+    expect(snapshot.json().privateCredentials).toEqual([
+      expect.objectContaining({
+        id: credentialId,
+        secrets: { password: "********" },
+      }),
+    ]);
+
+    const wrongPassword = await app.inject({
+      method: "POST",
+      url: `/v1/dashboard/private-credentials/${credentialId}/reveal`,
+      headers,
+      payload: { password: "wrong" },
+    });
+    expect(wrongPassword.statusCode).toBe(403);
+    expect(wrongPassword.body).not.toContain("dashboard-private-password");
+
+    const revealed = await app.inject({
+      method: "POST",
+      url: `/v1/dashboard/private-credentials/${credentialId}/reveal`,
+      headers,
+      payload: { password: "123456" },
+    });
+    expect(revealed.statusCode).toBe(200);
+    expect(revealed.headers["cache-control"]).toContain("no-store");
+    expect(revealed.json()).toMatchObject({
+      credential: { secrets: { password: "dashboard-private-password" } },
+    });
+
+    const updated = await app.inject({
+      method: "PUT",
+      url: `/v1/dashboard/private-credentials/${credentialId}`,
+      headers,
+      payload: {
+        fields: { host: "new-server.example.test", username: "ubuntu" },
+        kind: "ssh",
+        label: "Updated SSH",
+        purposes: ["deployment.ssh"],
+        tags: ["example", "production"],
+      },
+    });
+    expect(updated.statusCode).toBe(200);
+    expect(updated.body).not.toContain("dashboard-private-password");
+    expect(updated.json()).toMatchObject({
+      credential: {
+        fields: { host: "new-server.example.test" },
+        label: "Updated SSH",
+        secrets: { password: "********" },
+      },
+    });
+    expect(
+      permissionVault.revealPrivateCredential(
+        "user-1",
+        credentialId,
+        "123456",
+      )?.secrets,
+    ).toEqual({ password: "dashboard-private-password" });
+
+    const changedPassword = await app.inject({
+      method: "POST",
+      url: "/v1/dashboard/model-wallet/password",
+      headers,
+      payload: {
+        currentPassword: "123456",
+        newPassword: "new-wallet-password",
+      },
+    });
+    expect(changedPassword.statusCode).toBe(200);
+    expect(
+      permissionVault.revealPrivateCredential(
+        "user-1",
+        credentialId,
+        "123456",
+      ),
+    ).toBeNull();
+    expect(
+      permissionVault.revealPrivateCredential(
+        "user-1",
+        credentialId,
+        "new-wallet-password",
+      )?.secrets,
+    ).toEqual({ password: "dashboard-private-password" });
+
+    const deleted = await app.inject({
+      method: "DELETE",
+      url: `/v1/dashboard/private-credentials/${credentialId}`,
+      headers,
+    });
+    expect(deleted.statusCode).toBe(200);
+    expect(permissionVault.listPrivateCredentials("user-1")).toEqual([]);
   });
 
   it("rejects DNS rebinding hosts", async () => {
@@ -1188,6 +1376,7 @@ describe("local dashboard", () => {
         password: "local tools password",
         deviceName: "Local Mac",
         initialEnvelope: encryptStatus(createEmptyStatus(), generateStatusKey(), 1),
+        wrappedStatusKey,
       },
     });
     expect(registration.statusCode).toBe(201);
@@ -1232,6 +1421,227 @@ describe("local dashboard", () => {
     expect(response.body).not.toContain("github.repositories.list");
   });
 
+  it("lets authenticated Agents register, resolve, read, rotate, and delete private credentials", async () => {
+    const registration = await app.inject({
+      method: "POST",
+      url: "/v1/auth/register",
+      payload: {
+        email: "agent-keychain@example.test",
+        password: "agent keychain password",
+        deviceName: "Agent Keychain Mac",
+        initialEnvelope: encryptStatus(
+          createEmptyStatus(),
+          generateStatusKey(),
+          1,
+        ),
+        wrappedStatusKey,
+      },
+    });
+    expect(registration.statusCode).toBe(201);
+    const session = registration.json<{ token: string; userId: string }>();
+    const codex = await issueAgentCredential(app, session.token, "codex");
+    const claude = await issueAgentCredential(
+      app,
+      session.token,
+      "claude-code",
+    );
+    const headers = {
+      authorization: `Bearer ${codex.token}`,
+      host: "127.0.0.1:8787",
+    };
+
+    const registered = await app.inject({
+      method: "POST",
+      url: "/v1/tools/private-credentials",
+      headers,
+      payload: {
+        accessPolicy: { allowedAgentIds: ["codex"] },
+        fields: {
+          service: "example-console",
+          url: "https://console.example.test",
+          username: "ryan@example.test",
+        },
+        kind: "account",
+        label: "Example console account",
+        projectId: "one-status",
+        purposes: ["service.login"],
+        secrets: { password: "vault-agent-password" },
+        tags: ["example-console", "production"],
+      },
+    });
+    expect(registered.statusCode).toBe(200);
+    expect(registered.body).not.toContain("vault-agent-password");
+    const credentialId = registered.json().credential.id as string;
+    expect(registered.json()).toMatchObject({
+      credential: {
+        id: credentialId,
+        kind: "account",
+        secrets: { password: "********" },
+        source: {
+          agentId: "codex",
+          deviceId: expect.any(String),
+          projectId: "one-status",
+          type: "agent",
+        },
+      },
+    });
+
+    const listed = await app.inject({
+      method: "POST",
+      url: "/v1/tools/private-credentials/list",
+      headers,
+      payload: { kinds: ["account"], limit: 10 },
+    });
+    expect(listed.statusCode).toBe(200);
+    expect(listed.body).not.toContain("vault-agent-password");
+    expect(listed.json().credentials).toEqual([
+      expect.objectContaining({ id: credentialId }),
+    ]);
+
+    const resolved = await app.inject({
+      method: "POST",
+      url: "/v1/tools/private-credentials/resolve",
+      headers,
+      payload: {
+        kinds: ["account"],
+        projectId: "one-status",
+        purpose: "service.login",
+        tags: ["example-console"],
+      },
+    });
+    expect(resolved.statusCode).toBe(200);
+    expect(resolved.body).not.toContain("vault-agent-password");
+    expect(resolved.json().credentials).toEqual([
+      expect.objectContaining({ id: credentialId }),
+    ]);
+
+    const read = await app.inject({
+      method: "POST",
+      url: `/v1/tools/private-credentials/${credentialId}/read`,
+      headers,
+      payload: { projectId: "one-status", purpose: "service.login" },
+    });
+    expect(read.statusCode).toBe(200);
+    expect(read.json()).toMatchObject({
+      credential: { secrets: { password: "vault-agent-password" } },
+    });
+    expect(read.headers["cache-control"]).toContain("no-store");
+
+    const rotated = await app.inject({
+      method: "PATCH",
+      url: `/v1/tools/private-credentials/${credentialId}`,
+      headers,
+      payload: {
+        fields: { username: "updated@example.test" },
+        projectId: "one-status",
+        secrets: { password: "rotated-agent-password" },
+      },
+    });
+    expect(rotated.statusCode).toBe(200);
+    expect(rotated.body).not.toContain("rotated-agent-password");
+    expect(rotated.json()).toMatchObject({
+      credential: {
+        fields: {
+          service: "example-console",
+          username: "updated@example.test",
+        },
+        secrets: { password: "********" },
+      },
+    });
+
+    const denied = await app.inject({
+      method: "POST",
+      url: `/v1/tools/private-credentials/${credentialId}/read`,
+      headers: {
+        authorization: `Bearer ${claude.token}`,
+        host: "127.0.0.1:8787",
+      },
+      payload: { projectId: "one-status", purpose: "service.login" },
+    });
+    expect(denied.statusCode).toBe(404);
+    expect(denied.body).not.toContain("rotated-agent-password");
+
+    const rotatedRead = await app.inject({
+      method: "POST",
+      url: `/v1/tools/private-credentials/${credentialId}/read`,
+      headers,
+      payload: { projectId: "one-status", purpose: "service.login" },
+    });
+    expect(rotatedRead.json()).toMatchObject({
+      credential: {
+        fields: { username: "updated@example.test" },
+        secrets: { password: "rotated-agent-password" },
+      },
+    });
+
+    permissionVault.setModelCredential(
+      session.userId,
+      "third-party-model",
+      "model-wallet-api-key",
+    );
+    const modelResolved = await app.inject({
+      method: "POST",
+      url: "/v1/tools/private-credentials/resolve",
+      headers,
+      payload: {
+        kinds: ["model"],
+        purpose: "model.api",
+        tags: ["model-wallet"],
+      },
+    });
+    expect(modelResolved.statusCode).toBe(200);
+    expect(modelResolved.body).not.toContain("model-wallet-api-key");
+    const modelCredentialId = modelResolved.json().credentials[0].id as string;
+    const modelRead = await app.inject({
+      method: "POST",
+      url: `/v1/tools/private-credentials/${modelCredentialId}/read`,
+      headers,
+      payload: { purpose: "model.api" },
+    });
+    expect(modelRead.statusCode).toBe(200);
+    expect(modelRead.json()).toMatchObject({
+      credential: {
+        fields: { sourceId: "third-party-model" },
+        kind: "model",
+        secrets: { apiKey: "model-wallet-api-key" },
+      },
+    });
+
+    const deleted = await app.inject({
+      method: "DELETE",
+      url: `/v1/tools/private-credentials/${credentialId}`,
+      headers,
+    });
+    expect(deleted.statusCode).toBe(200);
+    const deletedModel = await app.inject({
+      method: "DELETE",
+      url: `/v1/tools/private-credentials/${modelCredentialId}`,
+      headers,
+    });
+    expect(deletedModel.statusCode).toBe(200);
+    expect(
+      permissionVault.listPrivateCredentials(session.userId),
+    ).toEqual([]);
+    expect(
+      JSON.stringify(
+        permissionVault.listCredentialAccessAuditEvents(session.userId),
+      ),
+    ).not.toContain("agent-password");
+    expect(
+      permissionVault
+        .listCredentialAccessAuditEvents(session.userId)
+        .map((event) => event.purpose),
+    ).toEqual(
+      expect.arrayContaining([
+        "credential.register",
+        "credential.update",
+        "credential.delete",
+        "service.login",
+        "model.api",
+      ]),
+    );
+  });
+
   it("validates and forwards a one-time Tool Gateway approval ID", async () => {
     const registration = await app.inject({
       method: "POST",
@@ -1245,6 +1655,7 @@ describe("local dashboard", () => {
           generateStatusKey(),
           1,
         ),
+        wrappedStatusKey,
       },
     });
     expect(registration.statusCode).toBe(201);
@@ -2029,8 +2440,10 @@ class MemoryDashboardBackend implements DashboardBackend {
             createdAt: new Date(0).toISOString(),
             lastSeenAt: new Date(0).toISOString(),
             online: false,
+            blocked: false,
           },
         ],
+        deviceLoginPolicy: { denyNewDeviceLogins: false },
       },
       profile: {
         baseUrl: "http://127.0.0.1:8787",

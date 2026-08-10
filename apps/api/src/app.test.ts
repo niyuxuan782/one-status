@@ -4,7 +4,10 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { FastifyInstance } from "fastify";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { EncryptedEnvelope } from "@one-status/protocol";
+import type {
+  EncryptedEnvelope,
+  WrappedStatusKey,
+} from "@one-status/protocol";
 import { createApp } from "./app.js";
 
 const initialEnvelope: EncryptedEnvelope = {
@@ -21,6 +24,23 @@ const envelope: EncryptedEnvelope = {
   ...initialEnvelope,
   revision: 2,
   ciphertext: "next-ciphertext-value",
+};
+
+const wrappedStatusKey: WrappedStatusKey = {
+  format: "one-status.wrapped-status-key",
+  version: 1,
+  algorithm: "AES-256-GCM",
+  kdf: {
+    algorithm: "scrypt",
+    salt: "s".repeat(22),
+    cost: 16_384,
+    blockSize: 8,
+    parallelization: 1,
+    keyLength: 32,
+  },
+  iv: "i".repeat(16),
+  ciphertext: "c".repeat(43),
+  authTag: "a".repeat(22),
 };
 
 describe("sync API", () => {
@@ -100,8 +120,26 @@ describe("sync API", () => {
     expect(account.statusCode).toBe(200);
     expect(account.json()).toMatchObject({
       user: { email: "ryan@example.test" },
-      devices: [{ name: "Mac A", online: true }],
+      devices: [{ name: "Mac A", online: true, blocked: false }],
+      deviceLoginPolicy: { denyNewDeviceLogins: false },
     });
+    expect(registration.wrappedStatusKey).toEqual(wrappedStatusKey);
+  });
+
+  it("accepts an older client registration without a wrapped Status Key", async () => {
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/auth/register",
+      payload: {
+        email: "legacy-client@example.test",
+        password: "legacy client password",
+        deviceName: "Legacy client Mac",
+        initialEnvelope,
+      },
+    });
+
+    expect(response.statusCode).toBe(201);
+    expect(response.json()).toMatchObject({ wrappedStatusKey: null });
   });
 
   it("reuses a stable installation ID when the device logs in again", async () => {
@@ -115,6 +153,7 @@ describe("sync API", () => {
         deviceName: "Ryan Mac",
         installationId,
         initialEnvelope,
+        wrappedStatusKey,
       },
     });
     expect(registration.statusCode).toBe(201);
@@ -132,6 +171,7 @@ describe("sync API", () => {
     });
     expect(login.statusCode).toBe(200);
     expect(login.json().deviceId).toBe(installationId);
+    expect(login.json().wrappedStatusKey).toEqual(wrappedStatusKey);
 
     const account = await app.inject({
       method: "GET",
@@ -355,6 +395,157 @@ describe("sync API", () => {
     expect(revokedDeviceRead.statusCode).toBe(401);
   });
 
+  it("allows new devices by default and can deny only future devices", async () => {
+    const first = await register(app);
+    const policy = await app.inject({
+      method: "PUT",
+      url: "/v1/account/device-login-policy",
+      headers: { authorization: `Bearer ${first.token}` },
+      payload: { denyNewDeviceLogins: true },
+    });
+    expect(policy.statusCode).toBe(200);
+    expect(policy.json()).toEqual({ denyNewDeviceLogins: true });
+
+    const denied = await app.inject({
+      method: "POST",
+      url: "/v1/auth/login",
+      payload: {
+        email: "ryan@example.test",
+        password: "correct horse battery staple",
+        deviceName: "Unknown Mac",
+        installationId: "4f26176c-2c74-479a-8d03-cb2b6509d406",
+      },
+    });
+    expect(denied.statusCode).toBe(403);
+    expect(denied.json()).toMatchObject({
+      error: { code: "new_device_login_denied" },
+    });
+
+    const existing = await app.inject({
+      method: "POST",
+      url: "/v1/auth/login",
+      payload: {
+        email: "ryan@example.test",
+        password: "correct horse battery staple",
+        deviceName: "Mac A",
+        installationId: first.deviceId,
+      },
+    });
+    expect(existing.statusCode).toBe(200);
+  });
+
+  it("blocks a device until another device removes the block", async () => {
+    const first = await register(app);
+    const installationId = "a74c1572-7fb5-4ccf-9ca0-6d08314c0d1a";
+    const second = await app.inject({
+      method: "POST",
+      url: "/v1/auth/login",
+      payload: {
+        email: "ryan@example.test",
+        password: "correct horse battery staple",
+        deviceName: "Mac B",
+        installationId,
+      },
+    });
+    expect(second.statusCode).toBe(200);
+
+    const blocked = await app.inject({
+      method: "PUT",
+      url: `/v1/devices/${installationId}/block`,
+      headers: { authorization: `Bearer ${first.token}` },
+    });
+    expect(blocked.json()).toEqual({ deviceId: installationId, blocked: true });
+
+    const oldSession = await app.inject({
+      method: "GET",
+      url: "/v1/status",
+      headers: { authorization: `Bearer ${second.json().token}` },
+    });
+    expect(oldSession.statusCode).toBe(401);
+
+    const deniedLogin = await app.inject({
+      method: "POST",
+      url: "/v1/auth/login",
+      payload: {
+        email: "ryan@example.test",
+        password: "correct horse battery staple",
+        deviceName: "Mac B",
+        installationId,
+      },
+    });
+    expect(deniedLogin.statusCode).toBe(403);
+    expect(deniedLogin.json()).toMatchObject({
+      error: { code: "device_blocked" },
+    });
+
+    const unblocked = await app.inject({
+      method: "DELETE",
+      url: `/v1/devices/${installationId}/block`,
+      headers: { authorization: `Bearer ${first.token}` },
+    });
+    expect(unblocked.json()).toEqual({
+      deviceId: installationId,
+      blocked: false,
+    });
+
+    const restored = await app.inject({
+      method: "POST",
+      url: "/v1/auth/login",
+      payload: {
+        email: "ryan@example.test",
+        password: "correct horse battery staple",
+        deviceName: "Mac B",
+        installationId,
+      },
+    });
+    expect(restored.statusCode).toBe(200);
+  });
+
+  it("revokes sessions while preserving the known device", async () => {
+    const first = await register(app);
+    const installationId = "e6b262ec-9fda-4fad-8937-22e01405f3d1";
+    const second = await app.inject({
+      method: "POST",
+      url: "/v1/auth/login",
+      payload: {
+        email: "ryan@example.test",
+        password: "correct horse battery staple",
+        deviceName: "Mac B",
+        installationId,
+      },
+    });
+    expect(second.statusCode).toBe(200);
+
+    const revoked = await app.inject({
+      method: "POST",
+      url: `/v1/devices/${installationId}/revoke-sessions`,
+      headers: { authorization: `Bearer ${first.token}` },
+    });
+    expect(revoked.statusCode).toBe(200);
+    expect(revoked.json()).toMatchObject({
+      deviceId: installationId,
+      revokedSessions: 1,
+    });
+
+    await app.inject({
+      method: "PUT",
+      url: "/v1/account/device-login-policy",
+      headers: { authorization: `Bearer ${first.token}` },
+      payload: { denyNewDeviceLogins: true },
+    });
+    const relogin = await app.inject({
+      method: "POST",
+      url: "/v1/auth/login",
+      payload: {
+        email: "ryan@example.test",
+        password: "correct horse battery staple",
+        deviceName: "Mac B",
+        installationId,
+      },
+    });
+    expect(relogin.statusCode).toBe(200);
+  });
+
   it("rejects an incorrect password without creating a device", async () => {
     const registration = await register(app);
     const login = await app.inject({
@@ -374,6 +565,104 @@ describe("sync API", () => {
       headers: { authorization: `Bearer ${registration.token}` },
     });
     expect(account.json().devices).toHaveLength(1);
+  });
+
+  it("migrates a wrapped Status Key from a legacy account device", async () => {
+    const registration = await app.inject({
+      method: "POST",
+      url: "/v1/auth/register",
+      payload: {
+        email: "legacy-migration@example.test",
+        password: "legacy migration password",
+        deviceName: "Legacy Mac",
+        initialEnvelope,
+      },
+    });
+    const rejected = await app.inject({
+      method: "PUT",
+      url: "/v1/account/wrapped-status-key",
+      headers: { authorization: `Bearer ${registration.json().token}` },
+      payload: {
+        password: "incorrect migration password",
+        wrappedStatusKey,
+      },
+    });
+    expect(rejected.statusCode).toBe(401);
+    const migrated = await app.inject({
+      method: "PUT",
+      url: "/v1/account/wrapped-status-key",
+      headers: { authorization: `Bearer ${registration.json().token}` },
+      payload: {
+        password: "legacy migration password",
+        wrappedStatusKey,
+      },
+    });
+    expect(migrated.statusCode).toBe(200);
+    expect(migrated.json()).toEqual({
+      migrated: true,
+      wrappedStatusKey,
+    });
+    const replacement = { ...wrappedStatusKey, authTag: "b".repeat(22) };
+    const repeated = await app.inject({
+      method: "PUT",
+      url: "/v1/account/wrapped-status-key",
+      headers: { authorization: `Bearer ${registration.json().token}` },
+      payload: {
+        password: "legacy migration password",
+        wrappedStatusKey: replacement,
+      },
+    });
+    expect(repeated.json()).toEqual({
+      migrated: false,
+      wrappedStatusKey,
+    });
+
+    const login = await app.inject({
+      method: "POST",
+      url: "/v1/auth/login",
+      payload: {
+        email: "legacy-migration@example.test",
+        password: "legacy migration password",
+        deviceName: "New Mac",
+      },
+    });
+    expect(login.statusCode).toBe(200);
+    expect(login.json()).toMatchObject({ wrappedStatusKey });
+  });
+
+  it("rejects legacy migration from a newly created device session", async () => {
+    await app.inject({
+      method: "POST",
+      url: "/v1/auth/register",
+      payload: {
+        email: "legacy-new-device@example.test",
+        password: "legacy migration password",
+        deviceName: "Legacy Mac",
+        initialEnvelope,
+      },
+    });
+    const login = await app.inject({
+      method: "POST",
+      url: "/v1/auth/login",
+      payload: {
+        email: "legacy-new-device@example.test",
+        password: "legacy migration password",
+        deviceName: "Unknown Mac",
+      },
+    });
+    const migration = await app.inject({
+      method: "PUT",
+      url: "/v1/account/wrapped-status-key",
+      headers: { authorization: `Bearer ${login.json().token}` },
+      payload: {
+        password: "legacy migration password",
+        wrappedStatusKey,
+      },
+    });
+    expect(migration.statusCode).toBe(403);
+    expect(migration.json()).toMatchObject({
+      error: { code: "status_key_migration_forbidden" },
+    });
   });
 
   it("rate limits repeated login attempts by IP and identity", async () => {
@@ -414,7 +703,11 @@ describe("sync API", () => {
 
 async function register(
   app: FastifyInstance,
-): Promise<{ token: string; deviceId: string }> {
+): Promise<{
+  token: string;
+  deviceId: string;
+  wrappedStatusKey: WrappedStatusKey;
+}> {
   const response = await app.inject({
     method: "POST",
     url: "/v1/auth/register",
@@ -423,6 +716,7 @@ async function register(
       password: "correct horse battery staple",
       deviceName: "Mac A",
       initialEnvelope,
+      wrappedStatusKey,
     },
   });
   expect(response.statusCode).toBe(201);

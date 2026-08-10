@@ -375,6 +375,12 @@ export const modelApiProtocolSchema = z.enum([
   "custom",
 ]);
 
+export const modelApiFormatSchema = z.enum([
+  "openai-responses",
+  "openai-chat-completions",
+  "anthropic-messages",
+]);
+
 const controlIdSchema = z
   .string()
   .min(1)
@@ -387,6 +393,7 @@ export const modelSourceSchema = z
     label: z.string().trim().min(1).max(200),
     kind: modelSourceKindSchema,
     protocol: modelApiProtocolSchema,
+    apiFormat: modelApiFormatSchema.optional(),
     endpoint: z.url().optional(),
     supportedTools: z
       .array(agentToolIdSchema)
@@ -429,10 +436,15 @@ export const modelSourceSchema = z
           path: ["endpoint"],
         });
       }
+      const azureApiVersionQuery =
+        source.protocol === "azure-openai" &&
+        endpoint.searchParams.size === 1 &&
+        endpoint.searchParams.has("api-version") &&
+        Boolean(endpoint.searchParams.get("api-version"));
       if (
         endpoint.username ||
         endpoint.password ||
-        endpoint.search ||
+        (endpoint.search && !azureApiVersionQuery) ||
         endpoint.hash
       ) {
         context.addIssue({
@@ -811,6 +823,7 @@ export type ModelApiProtocol = z.infer<typeof modelApiProtocolSchema>;
 export type ModelDefinition = z.infer<typeof modelDefinitionSchema>;
 export type ModelSource = z.infer<typeof modelSourceSchema>;
 export type ModelSourceKind = z.infer<typeof modelSourceKindSchema>;
+export type ModelApiFormat = z.infer<typeof modelApiFormatSchema>;
 export type Project = z.infer<typeof projectSchema>;
 export type ProjectHandoff = z.infer<typeof projectHandoffSchema>;
 export type Task = z.infer<typeof taskSchema>;
@@ -832,6 +845,29 @@ export const encryptedEnvelopeSchema = z
 
 export type EncryptedEnvelope = z.infer<typeof encryptedEnvelopeSchema>;
 
+export const wrappedStatusKeySchema = z
+  .object({
+    format: z.literal("one-status.wrapped-status-key"),
+    version: z.literal(1),
+    algorithm: z.literal("AES-256-GCM"),
+    kdf: z
+      .object({
+        algorithm: z.literal("scrypt"),
+        salt: z.string().regex(/^[A-Za-z0-9_-]{22}$/),
+        cost: z.literal(16_384),
+        blockSize: z.literal(8),
+        parallelization: z.literal(1),
+        keyLength: z.literal(32),
+      })
+      .strict(),
+    iv: z.string().regex(/^[A-Za-z0-9_-]{16}$/),
+    ciphertext: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
+    authTag: z.string().regex(/^[A-Za-z0-9_-]{22}$/),
+  })
+  .strict();
+
+export type WrappedStatusKey = z.infer<typeof wrappedStatusKeySchema>;
+
 export const authRequestSchema = z
   .object({
     email: z.email().transform((value) => value.toLowerCase()),
@@ -843,6 +879,7 @@ export const authRequestSchema = z
 
 export const registerRequestSchema = authRequestSchema.extend({
   initialEnvelope: encryptedEnvelopeSchema,
+  wrappedStatusKey: wrappedStatusKeySchema.optional(),
 }).superRefine((request, context) => {
   if (request.initialEnvelope.revision !== 1) {
     context.addIssue({
@@ -859,6 +896,27 @@ export const authResponseSchema = z
     deviceId: z.string().min(1),
     token: z.string().min(1),
     expiresAt: timestampSchema,
+    wrappedStatusKey: wrappedStatusKeySchema.nullable().default(null),
+  })
+  .strict();
+
+export const statusKeyMigrationRequestSchema = z
+  .object({
+    password: z.string().min(10).max(256),
+    wrappedStatusKey: wrappedStatusKeySchema,
+  })
+  .strict();
+
+export const statusKeyMigrationResponseSchema = z
+  .object({
+    migrated: z.boolean(),
+    wrappedStatusKey: wrappedStatusKeySchema,
+  })
+  .strict();
+
+export const deviceLoginPolicySchema = z
+  .object({
+    denyNewDeviceLogins: z.boolean(),
   })
   .strict();
 
@@ -879,9 +937,13 @@ export const accountResponseSchema = z
           createdAt: timestampSchema,
           lastSeenAt: timestampSchema,
           online: z.boolean(),
+          blocked: z.boolean().default(false),
         })
         .strict(),
     ),
+    deviceLoginPolicy: deviceLoginPolicySchema.default({
+      denyNewDeviceLogins: false,
+    }),
   })
   .strict();
 
@@ -901,6 +963,20 @@ export const deviceRevocationResponseSchema = z
   .object({
     revoked: z.literal(true),
     deviceId: z.string().min(1),
+  })
+  .strict();
+
+export const deviceSessionRevocationResponseSchema = z
+  .object({
+    deviceId: z.string().min(1),
+    revokedSessions: z.number().int().nonnegative(),
+  })
+  .strict();
+
+export const deviceBlockResponseSchema = z
+  .object({
+    deviceId: z.string().min(1),
+    blocked: z.boolean(),
   })
   .strict();
 
@@ -940,6 +1016,14 @@ export type SessionRevocationResponse = z.infer<
 >;
 export type DeviceRevocationResponse = z.infer<
   typeof deviceRevocationResponseSchema
+>;
+export type DeviceSessionRevocationResponse = z.infer<
+  typeof deviceSessionRevocationResponseSchema
+>;
+export type DeviceBlockResponse = z.infer<typeof deviceBlockResponseSchema>;
+export type DeviceLoginPolicy = z.infer<typeof deviceLoginPolicySchema>;
+export type StatusKeyMigrationResponse = z.infer<
+  typeof statusKeyMigrationResponseSchema
 >;
 export type DeviceHeartbeatResponse = z.infer<
   typeof deviceHeartbeatResponseSchema

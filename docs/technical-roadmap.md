@@ -67,15 +67,15 @@ interface StatusDocument {
 
 账号密码经 `scrypt` 加盐后保存。设备登录成功后获得随机会话 Token，服务端只保存 Token 的 SHA-256 摘要。
 
-Status Key 是独立的 256 位随机值：
+Status Key 是独立的 256 位随机值，由客户端自动管理：
 
-1. 首台设备本地生成并显示 Status Key。
-2. 客户端加密空 Status，注册事务原子创建账号、设备会话和 revision 1 vault。
-3. Status 使用 AES-256-GCM 加密，AAD 绑定协议版本和同步 revision。
-4. 新设备通过离线渠道取得 Status Key。
-5. 服务端始终接收密文 envelope。
+1. 首台设备本地生成 Status Key，不向用户展示。
+2. 客户端使用账号密码经 `scrypt` 派生的密钥封装 Status Key。
+3. 注册事务原子保存封装后的 Status Key、设备会话和 revision 1 密文 vault。
+4. 新设备通过账密登录后下载封装密文并在本地自动解封。
+5. Status 使用 AES-256-GCM 加密，AAD 绑定协议版本和同步 revision。
 
-当前新设备凭账号密码可以下载密文，只有持有 Status Key 的设备可以解密。后续将加入已有设备审批、设备公钥和 Root Key 封装，让新设备授权拥有明确的可撤销流程。
+新设备默认可以直接登录。任一已登录设备可以撤销其他设备的 Session、封禁或解除封禁设备，并通过账号策略拒绝后续新设备登录。
 
 ## 同步协议
 
@@ -138,6 +138,10 @@ PUT /v1/status
 
 - [x] 本地加密 Permission Vault 与图形界面
 - [x] Permission Vault 二次加密跨设备同步
+- [x] 通用账号、SSH、云凭据、卡密与证书钥匙串
+- [x] `credentials_register/list/resolve/get/update/delete` Agent 工具链
+- [x] 模型钱包动态映射为 Agent 可读取的统一凭据
+- [x] 钱包密码修改、用户明文查看与脱敏审计
 - [x] OAuth Authorization Code、PKCE、state 防重放和 Token refresh
 - [x] 14 个 Provider adapter 与统一扩展注册表
 - [x] Google Calendar OAuth

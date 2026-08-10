@@ -9,7 +9,7 @@ One Status 采用 Open Core 模式。个人用户能够审计、运行和自托�
 - macOS、Windows、Linux Desktop App 与本机后台服务
 - CLI、MCP Server、SDK 和 Status Schema
 - Capability Pack schema、YAML/JSON parser、内置目录和 Adapter Engine
-- 客户端加密实现与本地 Permission Vault
+- 客户端加密实现、本地 Permission Vault、通用钥匙串与 Agent 凭据工具
 - 本机项目、Skills、MCP、Rules 和 Agent 配置扫描
 - Memory、Preferences、Task State 和 Handoff 工作流
 - Codex 与 Claude Code Adapter
@@ -32,7 +32,7 @@ One Status Cloud 计划提供以下商业能力：
 
 ## 安全边界
 
-Status Key 由设备持有。云服务保存密文 envelope、同步 revision、设备 presence 和账号元数据。OAuth access token 与 refresh token 保存在本机 Permission Vault；Agent 按连接、身份和动作获得授权。
+Status Key 由设备持有。云服务保存密文 envelope、同步 revision、设备 presence 和账号元数据。OAuth Token、模型 API Key、账号密码、SSH、云凭据与卡密保存在本机 Permission Vault；Agent 按连接 action 或钥匙串用途获得授权。
 
 托管 OAuth 会引入额外服务端信任边界。该能力上线前会单独发布威胁模型、Token 存储边界和撤销流程。
 

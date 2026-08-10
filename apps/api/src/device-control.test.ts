@@ -23,6 +23,7 @@ import {
 } from "./local-inventory.js";
 import type { LocalModelUsageSnapshot } from "./device-sidecar.js";
 import { readStoredModelUsage } from "./model-usage.js";
+import type { ModelGateway } from "./model-gateway.js";
 import { PermissionVault } from "./permission-vault.js";
 
 const DEVICE_A = "2e0f24e2-b009-4091-b6d9-5236abe1ff00";
@@ -191,7 +192,7 @@ describe("DeviceControlService", () => {
     expect(snapshot.status.deviceControl.sources[sourceId]).toMatchObject({
       credentialRef: `model-source:${sourceId}`,
       credentialStatus: "available",
-      supportedTools: ["codex", "cursor"],
+      supportedTools: ["codex", "claude-code", "cursor"],
     });
     expect(snapshot.status.deviceControl.sources[SOURCE_ID]).toBeUndefined();
     expect(snapshot.status.deviceControl.models[MODEL_ID]).toBeUndefined();
@@ -205,7 +206,7 @@ describe("DeviceControlService", () => {
       label: "Dormant provider",
       endpoint: "https://dormant.example.test/v1",
       credentialStatus: "available",
-      supportedTools: ["codex", "cursor"],
+      supportedTools: ["codex", "claude-code", "cursor"],
     });
     expect(
       Object.values(snapshot.status.deviceControl.models).find(
@@ -308,6 +309,36 @@ describe("DeviceControlService", () => {
         targets: [{ deviceId: DEVICE_A, toolId: "codex" }],
       }),
     ).rejects.toThrow("Add a model source credential");
+  });
+
+  it("does not transfer an official account session across AI tools", async () => {
+    const now = "2026-08-10T00:00:00.000Z";
+    backend.status.deviceControl.sources["openai-account"] = {
+      id: "openai-account",
+      label: "OpenAI account",
+      kind: "official-account",
+      protocol: "openai",
+      supportedTools: ["codex", "claude-code"],
+      credentialStatus: "not-required",
+      createdAt: now,
+      updatedAt: now,
+    };
+    backend.status.deviceControl.models["openai-account:model:gpt-5-4"] = {
+      id: "openai-account:model:gpt-5-4",
+      sourceId: "openai-account",
+      name: "GPT-5.4",
+      modelId: "gpt-5.4",
+      supportedTools: ["codex", "claude-code"],
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    await expect(
+      service.previewConfiguration({
+        modelId: "openai-account:model:gpt-5-4",
+        targets: [{ deviceId: DEVICE_A, toolId: "claude-code" }],
+      }),
+    ).rejects.toThrow("cannot be transferred");
   });
 
   it("migrates an official API source to its concealed credential identity", async () => {
@@ -439,6 +470,51 @@ describe("DeviceControlService", () => {
       sourceId: SOURCE_ID,
       lastConfiguredAt: "2026-08-09T15:30:00.000Z",
     });
+  });
+
+  it("issues a source-bound local Gateway projection for model switches", async () => {
+    const configuration = vi.fn<
+      Pick<ModelGateway, "configuration">["configuration"]
+    >(() => ({
+      endpoint:
+        "http://127.0.0.1:8787/v1/model-gateway/third-party-a",
+      protocol: "openai-responses",
+      token: "agent-scoped-gateway-token",
+    }));
+    service = createService(
+      backend,
+      () => inventory,
+      configurator,
+      undefined,
+      { configuration },
+    );
+    await service.synchronizeCurrentDevice();
+    const preview = await service.previewConfiguration({
+      modelId: MODEL_ID,
+      targets: [{ deviceId: DEVICE_A, toolId: "codex" }],
+    });
+
+    await service.queueConfiguration({
+      approvalId: preview.approvalId,
+      digest: preview.digest,
+      confirm: true,
+    });
+
+    expect(configuration).toHaveBeenCalledWith({
+      sourceId: SOURCE_ID,
+      targetProtocol: "openai-responses",
+      userId: "user-1",
+    });
+    expect(apply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        gateway: {
+          endpoint:
+            "http://127.0.0.1:8787/v1/model-gateway/third-party-a",
+          protocol: "openai-responses",
+          token: "agent-scoped-gateway-token",
+        },
+      }),
+    );
   });
 
   it("keeps an offline-device intent pending and applies it after that device starts", async () => {
@@ -733,6 +809,7 @@ function createService(
   refresh: () => LocalInventorySnapshot,
   configurator: ModelConfigurationAdapter,
   modelUsage?: { scan(): Promise<LocalModelUsageSnapshot> },
+  modelGateway?: Pick<ModelGateway, "configuration">,
 ): DeviceControlService {
   return new DeviceControlService(
     backend,
@@ -747,6 +824,8 @@ function createService(
     },
     configurator,
     modelUsage,
+    undefined,
+    modelGateway,
   );
 }
 
@@ -817,6 +896,7 @@ class MemoryDeviceBackend implements DashboardBackend {
       createdAt: "2026-08-09T14:00:00.000Z",
       lastSeenAt: "2026-08-09T15:00:00.000Z",
       online: true,
+      blocked: false,
     },
     {
       id: DEVICE_B,
@@ -824,6 +904,7 @@ class MemoryDeviceBackend implements DashboardBackend {
       createdAt: "2026-08-09T14:00:00.000Z",
       lastSeenAt: "2026-08-09T14:30:00.000Z",
       online: false,
+      blocked: false,
     },
   ];
 
@@ -857,6 +938,7 @@ class MemoryDeviceBackend implements DashboardBackend {
           createdAt: "2026-08-09T14:00:00.000Z",
         },
         devices: structuredClone(this.devices),
+        deviceLoginPolicy: { denyNewDeviceLogins: false },
       },
       profile: {
         baseUrl: "https://os.example.test",

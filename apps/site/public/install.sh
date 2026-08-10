@@ -356,44 +356,30 @@ if [ "$PLATFORM" = "mac" ]; then
 
   command -v codesign >/dev/null 2>&1 || fail "codesign is required to verify the macOS application."
   command -v xattr >/dev/null 2>&1 || fail "xattr is required to preserve macOS Gatekeeper enforcement."
-  PRESERVE_QUARANTINE="no"
-  if codesign -dv --verbose=4 "$INSTALL_STAGING" 2>&1 | grep -Eq '^Authority=Developer ID Application:'; then
-    if ! codesign --verify --deep --strict "$INSTALL_STAGING"; then
-      fail "the Apple Developer ID signature is invalid; installation has been stopped."
-    fi
-    SIGNATURE_DESCRIPTION="Apple Developer ID signature verified"
-    if command -v spctl >/dev/null 2>&1 &&
-      command -v xcrun >/dev/null 2>&1 &&
-      spctl --assess --type execute "$INSTALL_STAGING" >/dev/null 2>&1 &&
-      xcrun stapler validate "$INSTALL_STAGING" >/dev/null 2>&1; then
-      PRESERVE_QUARANTINE="yes"
-      LAUNCH_DESCRIPTION="Gatekeeper and notarization checks passed; quarantine preserved"
-    else
-      LAUNCH_DESCRIPTION="notarization checks did not pass; quarantine was not added"
-    fi
-  else
-    if ! xattr -cr "$INSTALL_STAGING"; then
-      fail "could not remove unsupported Finder metadata from the macOS preview build."
-    fi
-    if ! codesign --verify --deep --strict "$INSTALL_STAGING"; then
-      fail "the bundled ad-hoc signature is invalid; installation has been stopped."
-    fi
-    SIGNATURE_DESCRIPTION="bundled ad-hoc signature verified (preview build; not notarized)"
-    LAUNCH_DESCRIPTION="SHA-256 and Bundle ID verified; quarantine was not added to the preview build"
+  command -v spctl >/dev/null 2>&1 || fail "spctl is required to verify the macOS application."
+  command -v xcrun >/dev/null 2>&1 || fail "xcrun is required to verify the Apple notarization ticket."
+  if ! codesign -dv --verbose=4 "$INSTALL_STAGING" 2>&1 | grep -Eq '^Authority=Developer ID Application:'; then
+    fail "the macOS package is not signed with Apple Developer ID; installation has been stopped."
   fi
-
-  if [ "$PRESERVE_QUARANTINE" = "yes" ]; then
-    QUARANTINE_TIMESTAMP="$(printf '%x' "$(date +%s)")"
-    if ! xattr -w com.apple.quarantine "0081;$QUARANTINE_TIMESTAMP;One Status Installer;" "$INSTALL_STAGING"; then
-      fail "could not apply the macOS quarantine attribute; installation has been stopped."
-    fi
+  if ! codesign --verify --deep --strict "$INSTALL_STAGING"; then
+    fail "the Apple Developer ID signature is invalid; installation has been stopped."
+  fi
+  if ! spctl --assess --type execute "$INSTALL_STAGING" >/dev/null 2>&1; then
+    fail "Gatekeeper rejected the macOS package; installation has been stopped."
+  fi
+  if ! xcrun stapler validate "$INSTALL_STAGING" >/dev/null 2>&1; then
+    fail "the Apple notarization ticket is missing or invalid; installation has been stopped."
+  fi
+  QUARANTINE_TIMESTAMP="$(printf '%x' "$(date +%s)")"
+  if ! xattr -w com.apple.quarantine "0081;$QUARANTINE_TIMESTAMP;One Status Installer;" "$INSTALL_STAGING"; then
+    fail "could not apply the macOS quarantine attribute; installation has been stopped."
   fi
   rm -rf -- "$APP_DESTINATION"
   mv "$INSTALL_STAGING" "$APP_DESTINATION"
   INSTALL_STAGING=""
   say "installed desktop $TAG at $APP_DESTINATION"
-  say "signature: $SIGNATURE_DESCRIPTION"
-  say "launch trust: $LAUNCH_DESCRIPTION"
+  say "signature: Apple Developer ID verified"
+  say "launch trust: Gatekeeper and notarization checks passed; quarantine preserved"
 else
   mkdir -p "$INSTALL_DIRECTORY"
   INSTALL_STAGING="$INSTALL_DIRECTORY/.one-status-app.tmp.$$"

@@ -21,9 +21,7 @@ export interface OnboardingAccountInput {
   serverUrl: string;
 }
 
-export interface OnboardingLoginInput extends OnboardingAccountInput {
-  statusKey: string;
-}
+export type OnboardingLoginInput = OnboardingAccountInput;
 
 export class LocalOnboardingService {
   constructor(
@@ -65,7 +63,6 @@ export class LocalOnboardingService {
 
   async register(input: OnboardingAccountInput): Promise<{
     deviceId: string;
-    statusKey: string;
     userId: string;
   }> {
     await prepareLocalProfileStorage(resolveProfilePath(), true);
@@ -85,7 +82,6 @@ export class LocalOnboardingService {
     await saveSession(baseUrl, input.deviceName, exportedKey, session);
     return {
       deviceId: session.deviceId,
-      statusKey: exportedKey,
       userId: session.userId,
     };
   }
@@ -94,29 +90,65 @@ export class LocalOnboardingService {
     deviceId: string;
     userId: string;
   }> {
-    await prepareLocalProfileStorage(resolveProfilePath(), true);
     const baseUrl = normalizeServerUrl(input.serverUrl);
-    const statusKey = importStatusKey(input.statusKey);
+    const migrationCandidate = await loadMigrationCandidate(baseUrl);
+    await prepareLocalProfileStorage(
+      resolveProfilePath(),
+      migrationCandidate === undefined,
+    );
     const anonymous = new OneStatusClient({ baseUrl });
-    const session = await anonymous.login({
-      deviceName: input.deviceName,
-      email: input.email,
-      installationId: await loadOrCreateInstallationId(),
-      password: input.password,
-    });
+    const session = await anonymous.login(
+      {
+        deviceName: input.deviceName,
+        email: input.email,
+        installationId: await loadOrCreateInstallationId(
+          migrationCandidate?.deviceId,
+        ),
+        password: input.password,
+      },
+      migrationCandidate,
+    );
+    if (migrationCandidate && migrationCandidate.userId !== session.userId) {
+      await new OneStatusClient({ baseUrl, token: session.token })
+        .logout()
+        .catch(() => undefined);
+      throw new Error(
+        "The existing local profile belongs to another One Status account.",
+      );
+    }
+    const exportedKey = exportStatusKey(session.statusKey);
     const authenticated = new OneStatusClient({
       baseUrl,
       token: session.token,
     });
     try {
-      await authenticated.createVault(statusKey).read();
+      await authenticated.createVault(session.statusKey).read();
     } catch (error) {
       await authenticated.logout().catch(() => undefined);
       throw error;
     }
-    await saveSession(baseUrl, input.deviceName, input.statusKey, session);
+    await saveSession(baseUrl, input.deviceName, exportedKey, session);
     return { deviceId: session.deviceId, userId: session.userId };
   }
+}
+
+async function loadMigrationCandidate(baseUrl: string): Promise<
+  | { deviceId: string; statusKey: Uint8Array; userId: string }
+  | undefined
+> {
+  try {
+    await stat(resolveProfilePath());
+  } catch (error) {
+    if (isMissingFile(error)) return undefined;
+    throw error;
+  }
+  const profile = await loadLocalProfile();
+  if (normalizeServerUrl(profile.baseUrl) !== baseUrl) return undefined;
+  return {
+    deviceId: profile.deviceId,
+    statusKey: importStatusKey(profile.statusKey),
+    userId: profile.userId,
+  };
 }
 
 async function saveSession(

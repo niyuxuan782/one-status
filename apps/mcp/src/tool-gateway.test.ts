@@ -199,4 +199,135 @@ describe("MCP runtime Tool Gateway", () => {
       "Bearer osa1_renewed-2",
     ]);
   });
+
+  it("routes private credential operations with the bound Agent credential", async () => {
+    const requests: Array<{
+      authorization: string | null;
+      body: unknown;
+      method: string;
+      url: string;
+    }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        const url = String(input);
+        requests.push({
+          authorization: new Headers(init?.headers).get("authorization"),
+          body: init?.body ? JSON.parse(String(init.body)) : undefined,
+          method: init?.method ?? "GET",
+          url,
+        });
+        if (url.endsWith("/read")) {
+          return Response.json({
+            credential: { secrets: { password: "private-value" } },
+          });
+        }
+        return Response.json({
+          credential: { secrets: { password: "********" } },
+        });
+      }),
+    );
+    const gateway = createRuntimeToolGateway({
+      ...config,
+      agentToken: "osa1_preissued-agent-token",
+    });
+    const credentialId = "fca88ca5-f8a1-4fe1-8c35-f89bb5664a2d";
+
+    await gateway.registerCredential({
+      kind: "ssh",
+      label: "Production SSH",
+      purposes: ["ssh.connect"],
+      fields: { host: "124.220.104.225" },
+      secrets: { password: "private-value" },
+      projectId: "one-status",
+    });
+    await gateway.listCredentials({ kinds: ["ssh"], limit: 10 });
+    await gateway.resolveCredential({
+      kinds: ["ssh"],
+      projectId: "one-status",
+      purpose: "ssh.connect",
+      tags: ["production"],
+    });
+    await gateway.getCredential({
+      credentialId,
+      projectId: "one-status",
+      purpose: "ssh.connect",
+    });
+    await gateway.updateCredential({
+      credentialId,
+      fields: { host: "ssh.os.example" },
+      secrets: { password: "rotated-private-value" },
+    });
+    await gateway.deleteCredential(credentialId);
+
+    expect(requests.map(({ method, url }) => ({ method, url }))).toEqual([
+      {
+        method: "POST",
+        url: "http://127.0.0.1:8787/v1/tools/private-credentials",
+      },
+      {
+        method: "POST",
+        url: "http://127.0.0.1:8787/v1/tools/private-credentials/list",
+      },
+      {
+        method: "POST",
+        url: "http://127.0.0.1:8787/v1/tools/private-credentials/resolve",
+      },
+      {
+        method: "POST",
+        url: `http://127.0.0.1:8787/v1/tools/private-credentials/${credentialId}/read`,
+      },
+      {
+        method: "PATCH",
+        url: `http://127.0.0.1:8787/v1/tools/private-credentials/${credentialId}`,
+      },
+      {
+        method: "DELETE",
+        url: `http://127.0.0.1:8787/v1/tools/private-credentials/${credentialId}`,
+      },
+    ]);
+    expect(
+      requests.every(
+        ({ authorization }) =>
+          authorization === "Bearer osa1_preissued-agent-token",
+      ),
+    ).toBe(true);
+    expect(requests[0]?.body).not.toHaveProperty("agentId");
+    expect(requests[0]?.body).not.toHaveProperty("source");
+    expect(requests[3]?.body).toEqual({
+      projectId: "one-status",
+      purpose: "ssh.connect",
+    });
+  });
+
+  it("redacts server details from private credential errors", async () => {
+    const secret = "must-never-appear-in-an-error";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json(
+          { error: { message: `validation failed for ${secret}` } },
+          { status: 400 },
+        ),
+      ),
+    );
+    const gateway = createRuntimeToolGateway({
+      ...config,
+      agentToken: "osa1_preissued-agent-token",
+    });
+
+    let message = "";
+    try {
+      await gateway.registerCredential({
+        kind: "api",
+        label: "Private API",
+        purposes: ["api.call"],
+        secrets: { apiKey: secret },
+      });
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+    expect(message).toBe("One Status credential operation failed.");
+    expect(message).not.toContain(secret);
+  });
 });

@@ -242,6 +242,11 @@ function mergePermissionBundles(
   const ignoredModelSourceIds = new Set(
     modelCredentialIgnores?.map((entry) => entry.sourceId) ?? [],
   );
+  const privateCredentialExtensions = mergePrivateCredentialExtensions(
+    base,
+    local,
+    remote,
+  );
   return {
     connections,
     format: "one-status.permission-vault-bundle",
@@ -260,6 +265,7 @@ function mergePermissionBundles(
     ...(modelCredentialIgnores === undefined
       ? {}
       : { modelCredentialIgnores }),
+    ...privateCredentialExtensions,
     providers: mergeRecords(
       base.providers,
       local.providers,
@@ -297,6 +303,111 @@ function mergeModelCredentialIgnores(
   );
 }
 
+function mergePrivateCredentialExtensions(
+  base: PermissionVaultBundle,
+  local: PermissionVaultBundle,
+  remote: PermissionVaultBundle,
+): Pick<
+  PermissionVaultBundle,
+  "privateCredentials" | "privateCredentialTombstones"
+> | Record<string, never> {
+  const extensionPresent = [base, local, remote].some(
+    (bundle) =>
+      bundle.privateCredentials !== undefined ||
+      bundle.privateCredentialTombstones !== undefined,
+  );
+  if (!extensionPresent) return {};
+
+  const baseCredentials = base.privateCredentials ?? [];
+  const baseTombstones = base.privateCredentialTombstones ?? [];
+  const localCredentials = local.privateCredentials ?? baseCredentials;
+  const remoteCredentials = remote.privateCredentials ?? baseCredentials;
+  const localTombstones =
+    local.privateCredentialTombstones ?? baseTombstones;
+  const remoteTombstones =
+    remote.privateCredentialTombstones ?? baseTombstones;
+  const baseState = privateCredentialStates(baseCredentials, baseTombstones);
+  const localState = privateCredentialStates(
+    localCredentials,
+    localTombstones,
+  );
+  const remoteState = privateCredentialStates(
+    remoteCredentials,
+    remoteTombstones,
+  );
+  const ids = new Set([
+    ...baseState.keys(),
+    ...localState.keys(),
+    ...remoteState.keys(),
+  ]);
+  const privateCredentials: NonNullable<
+    PermissionVaultBundle["privateCredentials"]
+  > = [];
+  const privateCredentialTombstones: NonNullable<
+    PermissionVaultBundle["privateCredentialTombstones"]
+  > = [];
+  for (const id of [...ids].sort()) {
+    const baseline = baseState.get(id);
+    const localValue = localState.get(id);
+    const remoteValue = remoteState.get(id);
+    const localChanged = !sameRecord(localValue, baseline);
+    const remoteChanged = !sameRecord(remoteValue, baseline);
+    const selected = !localChanged
+      ? remoteValue
+      : !remoteChanged || sameRecord(localValue, remoteValue)
+        ? localValue
+        : localValue?.type === "tombstone" ||
+            remoteValue?.type === "tombstone"
+          ? localValue?.type === "tombstone"
+            ? localValue
+            : remoteValue
+          : remoteValue;
+    if (selected?.type === "credential") {
+      privateCredentials.push(selected.value);
+    } else if (selected?.type === "tombstone") {
+      privateCredentialTombstones.push(selected.value);
+    }
+  }
+  return { privateCredentials, privateCredentialTombstones };
+}
+
+type PrivateCredentialState =
+  | {
+      type: "credential";
+      value: NonNullable<PermissionVaultBundle["privateCredentials"]>[number];
+    }
+  | {
+      type: "tombstone";
+      value: NonNullable<
+        PermissionVaultBundle["privateCredentialTombstones"]
+      >[number];
+    };
+
+function privateCredentialStates(
+  credentials: NonNullable<PermissionVaultBundle["privateCredentials"]>,
+  tombstones: NonNullable<
+    PermissionVaultBundle["privateCredentialTombstones"]
+  >,
+): Map<string, PrivateCredentialState> {
+  const states = new Map<string, PrivateCredentialState>();
+  for (const credential of credentials) {
+    states.set(credential.id, { type: "credential", value: credential });
+  }
+  for (const tombstone of tombstones) {
+    const current = states.get(tombstone.credentialId);
+    if (
+      current?.type !== "credential" ||
+      Date.parse(tombstone.deletedAt) >= Date.parse(current.value.updatedAt)
+    ) {
+      states.set(tombstone.credentialId, {
+        type: "tombstone",
+        value: tombstone,
+      });
+    }
+  }
+  return states;
+}
+
 function normalizePermissionBundle(
   value: Partial<PermissionVaultBundle>,
 ): PermissionVaultBundle {
@@ -307,6 +418,14 @@ function normalizePermissionBundle(
     modelCredentials: value.modelCredentials ?? [],
     ...(value.modelCredentialIgnores
       ? { modelCredentialIgnores: value.modelCredentialIgnores }
+      : {}),
+    ...(value.privateCredentialTombstones
+      ? {
+          privateCredentialTombstones: value.privateCredentialTombstones,
+        }
+      : {}),
+    ...(value.privateCredentials
+      ? { privateCredentials: value.privateCredentials }
       : {}),
     providers: value.providers ?? [],
     updatedAt: value.updatedAt ?? EMPTY_UPDATED_AT,
@@ -341,6 +460,16 @@ function restoreLegacyOmittedExtensions(
     ...(remote.modelCredentialIgnores === undefined &&
     local.modelCredentialIgnores !== undefined
       ? { modelCredentialIgnores: local.modelCredentialIgnores }
+      : {}),
+    ...(remote.privateCredentialTombstones === undefined &&
+    local.privateCredentialTombstones !== undefined
+      ? {
+          privateCredentialTombstones: local.privateCredentialTombstones,
+        }
+      : {}),
+    ...(remote.privateCredentials === undefined &&
+    local.privateCredentials !== undefined
+      ? { privateCredentials: local.privateCredentials }
       : {}),
     ...(!remote.walletPassword && local.walletPassword
       ? { walletPassword: local.walletPassword }

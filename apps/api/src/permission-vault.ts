@@ -101,6 +101,121 @@ export interface ToolAuditEvent {
   providerRequestId?: string;
 }
 
+export const privateCredentialKinds = [
+  "account",
+  "ssh",
+  "cloud_console",
+  "github",
+  "database",
+  "api",
+  "license",
+  "card_key",
+  "model",
+  "oauth",
+  "email",
+  "vpn",
+  "certificate",
+  "signing",
+  "container_registry",
+  "package_registry",
+  "domain",
+  "remote_desktop",
+  "webhook",
+  "generic",
+] as const;
+export type PrivateCredentialKind = (typeof privateCredentialKinds)[number];
+
+export interface PrivateCredentialSource {
+  agentId?: string;
+  deviceId?: string;
+  projectId?: string;
+  type: "user" | "agent" | "scan" | "import";
+}
+
+export interface PrivateCredentialAccessPolicy {
+  allowAgentRead: boolean;
+  allowedAgentIds: string[];
+  allowedProjectIds: string[];
+  deniedAgentIds: string[];
+  deniedProjectIds: string[];
+  requireApproval: boolean;
+}
+
+export interface PrivateCredential {
+  accessPolicy: PrivateCredentialAccessPolicy;
+  createdAt: string;
+  expiresAt: string | null;
+  fields: Record<string, string>;
+  id: string;
+  kind: PrivateCredentialKind;
+  label: string;
+  purposes: string[];
+  secrets: Record<string, string>;
+  source: PrivateCredentialSource;
+  tags: string[];
+  updatedAt: string;
+}
+
+export interface MaskedPrivateCredential
+  extends Omit<PrivateCredential, "secrets"> {
+  secrets: Record<string, "********">;
+}
+
+export interface PrivateCredentialTombstone {
+  credentialId: string;
+  deletedAt: string;
+}
+
+export interface CredentialAccessAuditEvent {
+  agentId: string;
+  createdAt: string;
+  credentialId: string;
+  decision: "allow" | "deny";
+  id: string;
+  projectId?: string;
+  purpose: string;
+  reason:
+    | "allowed"
+    | "credential_not_found"
+    | "credential_expired"
+    | "purpose_mismatch"
+    | "agent_denied"
+    | "agent_not_allowed"
+    | "project_denied"
+    | "project_not_allowed"
+    | "approval_required"
+    | "wallet_password_invalid";
+}
+
+export interface UpsertPrivateCredentialInput {
+  accessPolicy?: Partial<PrivateCredentialAccessPolicy>;
+  expiresAt?: string | null;
+  fields?: Record<string, string>;
+  id?: string;
+  kind: PrivateCredentialKind;
+  label: string;
+  purposes: string[];
+  secrets?: Record<string, string>;
+  source?: Partial<PrivateCredentialSource> &
+    Pick<PrivateCredentialSource, "type">;
+  tags?: string[];
+  userId: string;
+}
+
+export interface PatchPrivateCredentialInput {
+  accessPolicy?: Partial<PrivateCredentialAccessPolicy>;
+  credentialId: string;
+  expiresAt?: string | null;
+  fields?: Record<string, string>;
+  kind?: PrivateCredentialKind;
+  label?: string;
+  purposes?: string[];
+  secrets?: Record<string, string>;
+  source?: Partial<PrivateCredentialSource>;
+  tags?: string[];
+  userId: string;
+}
+
 export interface PermissionVaultBundle {
   connections: OAuthConnectionWithCredential[];
   format: "one-status.permission-vault-bundle";
@@ -115,6 +230,8 @@ export interface PermissionVaultBundle {
     sourceId: string;
     updatedAt: string;
   }>;
+  privateCredentialTombstones?: PrivateCredentialTombstone[];
+  privateCredentials?: PrivateCredential[];
   providers: Array<{
     config: OAuthProviderConfig;
     provider: OAuthProvider;
@@ -148,6 +265,22 @@ interface ConnectionRow {
   source: OAuthConnection["source"];
   status: OAuthConnection["status"];
   updated_at: string;
+}
+
+interface PrivateCredentialRow {
+  created_at: string;
+  id: string;
+  payload: string;
+  updated_at: string;
+  user_id: string;
+}
+
+interface ModelCredentialRow {
+  api_key: string;
+  created_at: string;
+  source_id: string;
+  updated_at: string;
+  user_id: string;
 }
 
 export class PermissionVault {
@@ -261,6 +394,39 @@ export class PermissionVault {
         updated_at TEXT NOT NULL,
         PRIMARY KEY (user_id, source_id)
       );
+
+      CREATE TABLE IF NOT EXISTS private_credentials (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        payload TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS private_credentials_user_updated
+        ON private_credentials(user_id, updated_at DESC);
+
+      CREATE TABLE IF NOT EXISTS private_credential_tombstones (
+        user_id TEXT NOT NULL,
+        credential_id TEXT NOT NULL,
+        deleted_at TEXT NOT NULL,
+        PRIMARY KEY (user_id, credential_id)
+      );
+
+      CREATE TABLE IF NOT EXISTS credential_access_audit_events (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        credential_id TEXT NOT NULL,
+        agent_id TEXT NOT NULL,
+        project_id TEXT,
+        purpose TEXT NOT NULL,
+        decision TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS credential_access_audit_user_created
+        ON credential_access_audit_events(user_id, created_at DESC);
     `);
     ensureConnectionMetadataColumns(this.#database);
   }
@@ -542,6 +708,503 @@ export class PermissionVault {
       );
     this.#touch(userId);
     return true;
+  }
+
+  upsertPrivateCredential(
+    inputValue: UpsertPrivateCredentialInput,
+  ): MaskedPrivateCredential {
+    const input = normalizePrivateCredentialInput(inputValue);
+    const id = input.id ?? randomUUID();
+    const existingOwner = this.#database
+      .prepare("SELECT user_id FROM private_credentials WHERE id = ?")
+      .get(id) as { user_id: string } | undefined;
+    if (existingOwner && existingOwner.user_id !== input.userId) {
+      throw new Error("Credential ID belongs to another account.");
+    }
+    const current = this.#getPrivateCredential(input.userId, id);
+    const modelSourceId = this.#modelSourceIdForPrivateCredentialId(
+      input.userId,
+      id,
+    );
+    if (modelSourceId) {
+      if (input.kind !== "model") {
+        throw new Error("Model wallet credentials must retain the model kind.");
+      }
+      const secretKeys = Object.keys(input.secrets);
+      if (secretKeys.some((key) => key !== "apiKey")) {
+        throw new Error("Model wallet credentials only support the apiKey secret.");
+      }
+      if (input.secrets.apiKey) {
+        this.setModelCredential(input.userId, modelSourceId, input.secrets.apiKey);
+      }
+      return maskPrivateCredential(
+        this.#getPrivateCredential(input.userId, id)!,
+      );
+    }
+    const now = nextCredentialTimestamp(current?.updatedAt);
+    const credential = privateCredentialSchema.parse({
+      accessPolicy: input.accessPolicy,
+      createdAt: current?.createdAt ?? now,
+      expiresAt: input.expiresAt,
+      fields: input.fields,
+      id,
+      kind: input.kind,
+      label: input.label,
+      purposes: input.purposes,
+      secrets: normalizeCredentialMap(
+        { ...current?.secrets, ...input.secrets },
+        false,
+      ),
+      source: input.source,
+      tags: input.tags,
+      updatedAt: now,
+    });
+    const tombstone = this.#database
+      .prepare(
+        `SELECT deleted_at FROM private_credential_tombstones
+          WHERE user_id = ? AND credential_id = ?`,
+      )
+      .get(input.userId, id) as { deleted_at: string } | undefined;
+    if (
+      current &&
+      samePrivateCredentialContent(current, credential) &&
+      !tombstone
+    ) {
+      return maskPrivateCredential(current);
+    }
+
+    const updatedAt = nextCredentialTimestamp(
+      current?.updatedAt,
+      tombstone?.deleted_at,
+    );
+    const stored = { ...credential, updatedAt };
+    this.#database.exec("BEGIN IMMEDIATE");
+    try {
+      this.#database
+        .prepare(
+          `INSERT INTO private_credentials
+             (id, user_id, payload, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT(id) DO UPDATE SET
+             payload = excluded.payload,
+             created_at = excluded.created_at,
+             updated_at = excluded.updated_at
+           WHERE private_credentials.user_id = excluded.user_id`,
+        )
+        .run(
+          id,
+          input.userId,
+          this.#encrypt(
+            JSON.stringify(stored),
+            `private-credential:${input.userId}:${id}`,
+          ),
+          stored.createdAt,
+          stored.updatedAt,
+        );
+      this.#database
+        .prepare(
+          `DELETE FROM private_credential_tombstones
+            WHERE user_id = ? AND credential_id = ?`,
+        )
+        .run(input.userId, id);
+      this.#touch(input.userId);
+      this.#database.exec("COMMIT");
+    } catch (error) {
+      this.#database.exec("ROLLBACK");
+      throw error;
+    }
+    return maskPrivateCredential(stored);
+  }
+
+  patchPrivateCredential(
+    inputValue: PatchPrivateCredentialInput,
+  ): MaskedPrivateCredential | null {
+    const input = patchPrivateCredentialInputSchema.parse(inputValue);
+    const credentialId = requiredUuid(input.credentialId, "Credential ID");
+    const current = this.#getPrivateCredential(input.userId, credentialId);
+    if (!current) return null;
+    return this.upsertPrivateCredential({
+      accessPolicy: {
+        ...current.accessPolicy,
+        ...input.accessPolicy,
+      },
+      expiresAt:
+        input.expiresAt === undefined ? current.expiresAt : input.expiresAt,
+      fields: { ...current.fields, ...input.fields },
+      id: credentialId,
+      kind: input.kind ?? current.kind,
+      label: input.label ?? current.label,
+      purposes: input.purposes ?? current.purposes,
+      secrets: input.secrets,
+      source: {
+        ...current.source,
+        ...input.source,
+        type: input.source?.type ?? current.source.type,
+      },
+      tags: input.tags ?? current.tags,
+      userId: input.userId,
+    });
+  }
+
+  listPrivateCredentials(
+    userId: string,
+    filter: {
+      kinds?: PrivateCredentialKind[];
+      purposes?: string[];
+      tags?: string[];
+    } = {},
+  ): MaskedPrivateCredential[] {
+    const normalizedFilter = normalizeCredentialFilter(filter);
+    return this.#listPrivateCredentials(userId)
+      .filter((credential) =>
+        credentialMatchesFilter(credential, normalizedFilter),
+      )
+      .map(maskPrivateCredential);
+  }
+
+  findPrivateCredentialsForAgent(input: {
+    agentId: string;
+    kinds?: PrivateCredentialKind[];
+    projectId?: string;
+    purpose: string;
+    tags?: string[];
+    userId: string;
+  }): MaskedPrivateCredential[] {
+    const agentId = requiredMetadataValue(input.agentId, "Agent ID", 500);
+    const projectId = input.projectId
+      ? requiredMetadataValue(input.projectId, "Project ID", 500)
+      : undefined;
+    const purpose = requiredMetadataValue(
+      input.purpose,
+      "Credential purpose",
+      500,
+    );
+    const filter = normalizeCredentialFilter({
+      kinds: input.kinds,
+      purposes: [purpose],
+      tags: input.tags,
+    });
+    return this.#listPrivateCredentials(input.userId)
+      .filter((credential) => credentialMatchesFilter(credential, filter))
+      .filter(
+        (credential) =>
+          credentialAccessDecision(credential, {
+            agentId,
+            approved: false,
+            projectId,
+            purpose,
+          }) === "allowed",
+      )
+      .map(maskPrivateCredential);
+  }
+
+  readPrivateCredentialForAgent(input: {
+    agentId: string;
+    approved?: boolean;
+    credentialId: string;
+    projectId?: string;
+    purpose: string;
+    userId: string;
+  }): PrivateCredential | null {
+    const credentialId = requiredUuid(input.credentialId, "Credential ID");
+    const agentId = requiredMetadataValue(input.agentId, "Agent ID", 500);
+    const projectId = input.projectId
+      ? requiredMetadataValue(input.projectId, "Project ID", 500)
+      : undefined;
+    const purpose = requiredMetadataValue(
+      input.purpose,
+      "Credential purpose",
+      500,
+    );
+    const credential = this.#getPrivateCredential(input.userId, credentialId);
+    const reason = credential
+      ? credentialAccessDecision(credential, {
+          agentId,
+          approved: input.approved === true,
+          projectId,
+          purpose,
+        })
+      : "credential_not_found";
+    this.#recordCredentialAccessAudit({
+      agentId,
+      credentialId,
+      decision: reason === "allowed" ? "allow" : "deny",
+      projectId,
+      purpose,
+      reason,
+      userId: input.userId,
+    });
+    return reason === "allowed" ? credential : null;
+  }
+
+  revealPrivateCredential(
+    userId: string,
+    credentialIdValue: string,
+    password: string,
+  ): PrivateCredential | null {
+    const credentialId = requiredUuid(credentialIdValue, "Credential ID");
+    const validPassword = this.verifyModelWalletPassword(userId, password);
+    const credential = validPassword
+      ? this.#getPrivateCredential(userId, credentialId)
+      : null;
+    this.#recordCredentialAccessAudit({
+      agentId: "user",
+      credentialId,
+      decision: validPassword && credential ? "allow" : "deny",
+      purpose: "user.reveal",
+      reason: validPassword
+        ? credential
+          ? "allowed"
+          : "credential_not_found"
+        : "wallet_password_invalid",
+      userId,
+    });
+    return credential;
+  }
+
+  deletePrivateCredential(userId: string, credentialIdValue: string): boolean {
+    const credentialId = requiredUuid(credentialIdValue, "Credential ID");
+    const modelSourceId = this.#modelSourceIdForPrivateCredentialId(
+      userId,
+      credentialId,
+    );
+    if (modelSourceId) return this.ignoreModelCredential(userId, modelSourceId);
+    const current = this.#getPrivateCredential(userId, credentialId);
+    if (!current) return false;
+    const deletedAt = nextCredentialTimestamp(current.updatedAt);
+    this.#database.exec("BEGIN IMMEDIATE");
+    try {
+      this.#database
+        .prepare(
+          "DELETE FROM private_credentials WHERE user_id = ? AND id = ?",
+        )
+        .run(userId, credentialId);
+      this.#database
+        .prepare(
+          `INSERT INTO private_credential_tombstones
+             (user_id, credential_id, deleted_at)
+           VALUES (?, ?, ?)
+           ON CONFLICT(user_id, credential_id) DO UPDATE SET
+             deleted_at = excluded.deleted_at`,
+        )
+        .run(userId, credentialId, deletedAt);
+      this.#touch(userId);
+      this.#database.exec("COMMIT");
+    } catch (error) {
+      this.#database.exec("ROLLBACK");
+      throw error;
+    }
+    return true;
+  }
+
+  listCredentialAccessAuditEvents(
+    userId: string,
+    limit = 100,
+  ): CredentialAccessAuditEvent[] {
+    const safeLimit = Number.isSafeInteger(limit)
+      ? Math.min(Math.max(limit, 1), 200)
+      : 100;
+    const rows = this.#database
+      .prepare(
+        `SELECT id, credential_id, agent_id, project_id, purpose, decision,
+                reason, created_at
+           FROM credential_access_audit_events
+          WHERE user_id = ?
+          ORDER BY created_at DESC, id DESC
+          LIMIT ?`,
+      )
+      .all(userId, safeLimit) as Array<{
+      agent_id: string;
+      created_at: string;
+      credential_id: string;
+      decision: CredentialAccessAuditEvent["decision"];
+      id: string;
+      project_id: string | null;
+      purpose: string;
+      reason: CredentialAccessAuditEvent["reason"];
+    }>;
+    return rows.map((row) => ({
+      agentId: row.agent_id,
+      createdAt: row.created_at,
+      credentialId: row.credential_id,
+      decision: row.decision,
+      id: row.id,
+      ...(row.project_id ? { projectId: row.project_id } : {}),
+      purpose: row.purpose,
+      reason: row.reason,
+    }));
+  }
+
+  recordCredentialAuditEvent(input: {
+    agentId: string;
+    credentialId: string;
+    projectId?: string;
+    purpose: string;
+    userId: string;
+  }): void {
+    this.#recordCredentialAccessAudit({
+      agentId: requiredMetadataValue(input.agentId, "Agent ID", 500),
+      credentialId: requiredUuid(input.credentialId, "Credential ID"),
+      decision: "allow",
+      ...(input.projectId
+        ? {
+            projectId: requiredMetadataValue(
+              input.projectId,
+              "Project ID",
+              500,
+            ),
+          }
+        : {}),
+      purpose: requiredMetadataValue(
+        input.purpose,
+        "Credential audit purpose",
+        500,
+      ),
+      reason: "allowed",
+      userId: requiredMetadataValue(input.userId, "User ID", 500),
+    });
+  }
+
+  #listPrivateCredentials(userId: string): PrivateCredential[] {
+    const stored = (
+      this.#database
+        .prepare(
+          `SELECT id, user_id, payload, created_at, updated_at
+             FROM private_credentials
+            WHERE user_id = ?
+            ORDER BY updated_at DESC, id`,
+        )
+        .all(userId) as unknown as PrivateCredentialRow[]
+    ).map((row) => this.#credentialFromRow(row));
+    return [...stored, ...this.#listModelPrivateCredentials(userId)].sort(
+      (left, right) =>
+        Date.parse(right.updatedAt) - Date.parse(left.updatedAt) ||
+        left.id.localeCompare(right.id),
+    );
+  }
+
+  #getPrivateCredential(
+    userId: string,
+    credentialId: string,
+  ): PrivateCredential | null {
+    const row = this.#database
+      .prepare(
+        `SELECT id, user_id, payload, created_at, updated_at
+           FROM private_credentials WHERE user_id = ? AND id = ?`,
+      )
+      .get(userId, credentialId) as unknown as PrivateCredentialRow | undefined;
+    if (row) return this.#credentialFromRow(row);
+    return (
+      this.#listModelPrivateCredentials(userId).find(
+        (credential) => credential.id === credentialId,
+      ) ?? null
+    );
+  }
+
+  #credentialFromRow(row: PrivateCredentialRow): PrivateCredential {
+    const credential = privateCredentialSchema.parse(
+      JSON.parse(
+        this.#decrypt(
+          row.payload,
+          `private-credential:${row.user_id}:${row.id}`,
+        ),
+      ) as unknown,
+    );
+    if (
+      credential.id !== row.id ||
+      credential.createdAt !== row.created_at ||
+      credential.updatedAt !== row.updated_at
+    ) {
+      throw new Error("Stored private credential metadata is invalid.");
+    }
+    return credential;
+  }
+
+  #listModelPrivateCredentials(userId: string): PrivateCredential[] {
+    const rows = this.#database
+      .prepare(
+        `SELECT user_id, source_id, api_key, created_at, updated_at
+           FROM model_credentials WHERE user_id = ? ORDER BY source_id`,
+      )
+      .all(userId) as unknown as ModelCredentialRow[];
+    return rows.map((row) => this.#modelCredentialFromRow(row));
+  }
+
+  #modelCredentialFromRow(row: ModelCredentialRow): PrivateCredential {
+    return privateCredentialSchema.parse({
+      accessPolicy: {
+        ...defaultPrivateCredentialAccessPolicy,
+        allowedAgentIds: [],
+        allowedProjectIds: [],
+        deniedAgentIds: [],
+        deniedProjectIds: [],
+      },
+      createdAt: row.created_at,
+      expiresAt: null,
+      fields: { sourceId: row.source_id },
+      id: modelPrivateCredentialId(row.user_id, row.source_id),
+      kind: "model",
+      label: `Model source: ${row.source_id}`,
+      purposes: ["model.api", "model.configure"],
+      secrets: {
+        apiKey: this.#decrypt(
+          row.api_key,
+          `model-source:${row.user_id}:${row.source_id}`,
+        ),
+      },
+      source: { type: "scan" },
+      tags: ["model-wallet"],
+      updatedAt: row.updated_at,
+    });
+  }
+
+  #modelSourceIdForPrivateCredentialId(
+    userId: string,
+    credentialId: string,
+  ): string | undefined {
+    const rows = this.#database
+      .prepare(
+        "SELECT source_id FROM model_credentials WHERE user_id = ?",
+      )
+      .all(userId) as Array<{ source_id: string }>;
+    return rows.find(
+      (row) => modelPrivateCredentialId(userId, row.source_id) === credentialId,
+    )?.source_id;
+  }
+
+  #recordCredentialAccessAudit(input: {
+    agentId: string;
+    credentialId: string;
+    decision: CredentialAccessAuditEvent["decision"];
+    projectId?: string;
+    purpose: string;
+    reason: CredentialAccessAuditEvent["reason"];
+    userId: string;
+  }): void {
+    const latest = this.#database
+      .prepare(
+        `SELECT MAX(created_at) AS created_at
+           FROM credential_access_audit_events WHERE user_id = ?`,
+      )
+      .get(input.userId) as { created_at: string | null } | undefined;
+    this.#database
+      .prepare(
+        `INSERT INTO credential_access_audit_events
+           (id, user_id, credential_id, agent_id, project_id, purpose,
+            decision, reason, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        randomUUID(),
+        input.userId,
+        input.credentialId,
+        input.agentId,
+        input.projectId ?? null,
+        input.purpose,
+        input.decision,
+        input.reason,
+        nextCredentialTimestamp(latest?.created_at ?? undefined),
+      );
   }
 
   createFlow(input: {
@@ -937,6 +1600,22 @@ export class PermissionVault {
         "SELECT source_id, updated_at FROM model_credential_ignores WHERE user_id = ? ORDER BY source_id",
       )
       .all(userId) as Array<{ source_id: string; updated_at: string }>;
+    const privateCredentialRows = this.#database
+      .prepare(
+        `SELECT id, user_id, payload, created_at, updated_at
+           FROM private_credentials WHERE user_id = ? ORDER BY id`,
+      )
+      .all(userId) as unknown as PrivateCredentialRow[];
+    const privateCredentialTombstones = this.#database
+      .prepare(
+        `SELECT credential_id, deleted_at
+           FROM private_credential_tombstones
+          WHERE user_id = ? ORDER BY credential_id`,
+      )
+      .all(userId) as Array<{
+      credential_id: string;
+      deleted_at: string;
+    }>;
 
     return permissionVaultBundleSchema.parse({
       connections: connectionRows.map((row) => ({
@@ -959,6 +1638,13 @@ export class PermissionVault {
       modelCredentialIgnores: ignoredModelSources.map((row) => ({
         sourceId: row.source_id,
         updatedAt: row.updated_at,
+      })),
+      privateCredentials: privateCredentialRows.map((row) =>
+        this.#credentialFromRow(row),
+      ),
+      privateCredentialTombstones: privateCredentialTombstones.map((row) => ({
+        credentialId: row.credential_id,
+        deletedAt: row.deleted_at,
       })),
       providers: providerRows.map((row) => {
         const clientSecret = this.#decrypt(
@@ -1019,6 +1705,32 @@ export class PermissionVault {
         "Permission Vault bundle cannot store and ignore the same model source.",
       );
     }
+    const privateCredentials = bundle.privateCredentials ?? [];
+    const privateCredentialTombstones =
+      bundle.privateCredentialTombstones ?? [];
+    assertUniqueValues(
+      privateCredentials.map((entry) => entry.id),
+      "Permission Vault bundle contains duplicate private credentials.",
+    );
+    assertUniqueValues(
+      privateCredentialTombstones.map((entry) => entry.credentialId),
+      "Permission Vault bundle contains duplicate private credential tombstones.",
+    );
+    const privateCredentialIds = new Set(
+      privateCredentials.map((entry) => entry.id),
+    );
+    if (
+      privateCredentialTombstones.some((entry) =>
+        privateCredentialIds.has(entry.credentialId),
+      )
+    ) {
+      throw new Error(
+        "Permission Vault bundle cannot store and delete the same private credential.",
+      );
+    }
+    const replacesPrivateCredentials =
+      bundle.privateCredentials !== undefined ||
+      bundle.privateCredentialTombstones !== undefined;
 
     this.#database.exec("BEGIN IMMEDIATE");
     try {
@@ -1037,6 +1749,16 @@ export class PermissionVault {
       if (bundle.modelCredentialIgnores) {
         this.#database
           .prepare("DELETE FROM model_credential_ignores WHERE user_id = ?")
+          .run(userId);
+      }
+      if (replacesPrivateCredentials) {
+        this.#database
+          .prepare("DELETE FROM private_credentials WHERE user_id = ?")
+          .run(userId);
+        this.#database
+          .prepare(
+            "DELETE FROM private_credential_tombstones WHERE user_id = ?",
+          )
           .run(userId);
       }
 
@@ -1146,6 +1868,36 @@ export class PermissionVault {
             requiredControlId(ignored.sourceId, "Model source ID"),
             ignored.updatedAt,
           );
+      }
+
+      if (replacesPrivateCredentials) {
+        for (const credential of privateCredentials) {
+          this.#database
+            .prepare(
+              `INSERT INTO private_credentials
+                 (id, user_id, payload, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?)`,
+            )
+            .run(
+              credential.id,
+              userId,
+              this.#encrypt(
+                JSON.stringify(credential),
+                `private-credential:${userId}:${credential.id}`,
+              ),
+              credential.createdAt,
+              credential.updatedAt,
+            );
+        }
+        for (const tombstone of privateCredentialTombstones) {
+          this.#database
+            .prepare(
+              `INSERT INTO private_credential_tombstones
+                 (user_id, credential_id, deleted_at)
+               VALUES (?, ?, ?)`,
+            )
+            .run(userId, tombstone.credentialId, tombstone.deletedAt);
+        }
       }
 
       if (bundle.walletPassword) {
@@ -1271,9 +2023,24 @@ export class PermissionVault {
              SELECT updated_at FROM model_wallet_passwords WHERE user_id = ?
              UNION ALL
              SELECT updated_at FROM model_credential_ignores WHERE user_id = ?
+             UNION ALL
+             SELECT updated_at FROM private_credentials WHERE user_id = ?
+             UNION ALL
+             SELECT deleted_at AS updated_at
+               FROM private_credential_tombstones WHERE user_id = ?
            )`,
       )
-      .get(userId, userId, userId, userId, userId, userId, userId) as
+      .get(
+        userId,
+        userId,
+        userId,
+        userId,
+        userId,
+        userId,
+        userId,
+        userId,
+        userId,
+      ) as
       | { updated_at: string | null }
       | undefined;
     return row?.updated_at ?? "1970-01-01T00:00:00.000Z";
@@ -1339,6 +2106,182 @@ const oauthCredentialSchema = z
   })
   .strict();
 
+const credentialMetadataSchema = z
+  .string()
+  .min(1)
+  .max(500)
+  .refine((value) => value === value.trim() && !/[\u0000-\u001f\u007f]/.test(value));
+
+const credentialMapKeySchema = z
+  .string()
+  .min(1)
+  .max(64)
+  .regex(/^[A-Za-z][A-Za-z0-9_.-]*$/);
+
+const credentialFieldsSchema = z
+  .record(
+    credentialMapKeySchema,
+    z
+      .string()
+      .min(1)
+      .max(8_000)
+      .refine((value) => !value.includes("\0")),
+  )
+  .refine((value) => Object.keys(value).length <= 64);
+
+const credentialSecretsSchema = z
+  .record(
+    credentialMapKeySchema,
+    z
+      .string()
+      .min(1)
+      .max(128_000)
+      .refine((value) => value.trim().length > 0 && !value.includes("\0")),
+  )
+  .refine(
+    (value) =>
+      Object.keys(value).length >= 1 && Object.keys(value).length <= 64,
+  );
+
+const credentialStringListSchema = z
+  .array(credentialMetadataSchema)
+  .max(64)
+  .refine((values) => new Set(values).size === values.length);
+
+const privateCredentialSourceSchema: z.ZodType<PrivateCredentialSource> = z
+  .object({
+    agentId: credentialMetadataSchema.optional(),
+    deviceId: credentialMetadataSchema.optional(),
+    projectId: credentialMetadataSchema.optional(),
+    type: z.enum(["user", "agent", "scan", "import"]),
+  })
+  .strict()
+  .superRefine((source, context) => {
+    if (source.type === "agent" && !source.agentId) {
+      context.addIssue({
+        code: "custom",
+        message: "Agent-sourced credentials require an Agent ID.",
+        path: ["agentId"],
+      });
+    }
+  });
+
+const privateCredentialAccessPolicySchema = z
+  .object({
+    allowAgentRead: z.boolean(),
+    allowedAgentIds: credentialStringListSchema,
+    allowedProjectIds: credentialStringListSchema,
+    deniedAgentIds: credentialStringListSchema,
+    deniedProjectIds: credentialStringListSchema,
+    requireApproval: z.boolean(),
+  })
+  .strict();
+
+const privateCredentialSchema: z.ZodType<PrivateCredential> = z
+  .object({
+    accessPolicy: privateCredentialAccessPolicySchema,
+    createdAt: z.iso.datetime({ offset: true }),
+    expiresAt: z.iso.datetime({ offset: true }).nullable(),
+    fields: credentialFieldsSchema,
+    id: z.uuid(),
+    kind: z.enum(privateCredentialKinds),
+    label: credentialMetadataSchema,
+    purposes: credentialStringListSchema.min(1).max(32),
+    secrets: credentialSecretsSchema,
+    source: privateCredentialSourceSchema,
+    tags: credentialStringListSchema.max(50),
+    updatedAt: z.iso.datetime({ offset: true }),
+  })
+  .strict()
+  .superRefine((credential, context) => {
+    if (Date.parse(credential.updatedAt) < Date.parse(credential.createdAt)) {
+      context.addIssue({
+        code: "custom",
+        message: "Credential update time precedes its creation time.",
+        path: ["updatedAt"],
+      });
+    }
+    const policy = credential.accessPolicy;
+    if (
+      policy.allowedAgentIds.some((agentId) =>
+        policy.deniedAgentIds.includes(agentId),
+      )
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "Credential Agent allow and deny lists overlap.",
+        path: ["accessPolicy"],
+      });
+    }
+    if (
+      policy.allowedProjectIds.some((projectId) =>
+        policy.deniedProjectIds.includes(projectId),
+      )
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "Credential project allow and deny lists overlap.",
+        path: ["accessPolicy"],
+      });
+    }
+  });
+
+const privateCredentialTombstoneSchema: z.ZodType<PrivateCredentialTombstone> =
+  z
+    .object({
+      credentialId: z.uuid(),
+      deletedAt: z.iso.datetime({ offset: true }),
+    })
+    .strict();
+
+const upsertPrivateCredentialInputSchema = z
+  .object({
+    accessPolicy: privateCredentialAccessPolicySchema.partial().optional(),
+    expiresAt: z.iso.datetime({ offset: true }).nullable().optional(),
+    fields: credentialFieldsSchema.optional(),
+    id: z.uuid().optional(),
+    kind: z.enum(privateCredentialKinds),
+    label: z.string().min(1).max(500),
+    purposes: z.array(z.string().min(1).max(500)).min(1).max(32),
+    secrets: credentialSecretsSchema.optional(),
+    source: z
+      .object({
+        agentId: z.string().min(1).max(500).optional(),
+        deviceId: z.string().min(1).max(500).optional(),
+        projectId: z.string().min(1).max(500).optional(),
+        type: z.enum(["user", "agent", "scan", "import"]),
+      })
+      .strict()
+      .optional(),
+    tags: z.array(z.string().min(1).max(500)).max(50).optional(),
+    userId: z.string().min(1).max(500),
+  })
+  .strict();
+
+const patchPrivateCredentialInputSchema = z
+  .object({
+    accessPolicy: privateCredentialAccessPolicySchema.partial().optional(),
+    credentialId: z.uuid(),
+    expiresAt: z.iso.datetime({ offset: true }).nullable().optional(),
+    fields: credentialFieldsSchema.optional(),
+    kind: z.enum(privateCredentialKinds).optional(),
+    label: z.string().min(1).max(500).optional(),
+    purposes: z.array(z.string().min(1).max(500)).min(1).max(32).optional(),
+    secrets: credentialSecretsSchema.optional(),
+    source: z
+      .object({
+        agentId: z.string().min(1).max(500).optional(),
+        deviceId: z.string().min(1).max(500).optional(),
+        projectId: z.string().min(1).max(500).optional(),
+        type: z.enum(["user", "agent", "scan", "import"]).optional(),
+      })
+      .strict()
+      .optional(),
+    tags: z.array(z.string().min(1).max(500)).max(50).optional(),
+    userId: z.string().min(1).max(500),
+  })
+  .strict();
+
 const permissionVaultBundleSchema: z.ZodType<PermissionVaultBundle> = z
   .object({
     connections: z.array(
@@ -1400,6 +2343,10 @@ const permissionVaultBundleSchema: z.ZodType<PermissionVaultBundle> = z
           .strict(),
       )
       .optional(),
+    privateCredentialTombstones: z
+      .array(privateCredentialTombstoneSchema)
+      .optional(),
+    privateCredentials: z.array(privateCredentialSchema).optional(),
     providers: z.array(
       z
         .object({
@@ -1505,6 +2452,26 @@ function hashState(state: string): string {
   return createHash("sha256").update(state).digest("base64url");
 }
 
+function modelPrivateCredentialId(userId: string, sourceId: string): string {
+  const bytes = createHash("sha256")
+    .update("one-status/model-private-credential/v1\0", "utf8")
+    .update(userId, "utf8")
+    .update("\0", "utf8")
+    .update(sourceId, "utf8")
+    .digest()
+    .subarray(0, 16);
+  bytes[6] = (bytes[6]! & 0x0f) | 0x50;
+  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
+  const hex = bytes.toString("hex");
+  return [
+    hex.slice(0, 8),
+    hex.slice(8, 12),
+    hex.slice(12, 16),
+    hex.slice(16, 20),
+    hex.slice(20),
+  ].join("-");
+}
+
 function safeReturnTo(value?: string): string {
   if (!value?.startsWith("/")) return "/integrations";
   try {
@@ -1520,6 +2487,312 @@ function safeReturnTo(value?: string): string {
 
 function uniqueStrings(values: string[]): string[] {
   return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
+}
+
+const defaultPrivateCredentialAccessPolicy: PrivateCredentialAccessPolicy = {
+  allowAgentRead: true,
+  allowedAgentIds: [],
+  allowedProjectIds: [],
+  deniedAgentIds: [],
+  deniedProjectIds: [],
+  requireApproval: false,
+};
+
+function normalizePrivateCredentialInput(
+  value: UpsertPrivateCredentialInput,
+): {
+  accessPolicy: PrivateCredentialAccessPolicy;
+  expiresAt: string | null;
+  fields: Record<string, string>;
+  id?: string;
+  kind: PrivateCredentialKind;
+  label: string;
+  purposes: string[];
+  secrets: Record<string, string>;
+  source: PrivateCredentialSource;
+  tags: string[];
+  userId: string;
+} {
+  const input = upsertPrivateCredentialInputSchema.parse(value);
+  const accessPolicy: PrivateCredentialAccessPolicy = {
+    allowAgentRead:
+      input.accessPolicy?.allowAgentRead ??
+      defaultPrivateCredentialAccessPolicy.allowAgentRead,
+    allowedAgentIds: normalizeCredentialStringList(
+      input.accessPolicy?.allowedAgentIds ?? [],
+      "Allowed Agent ID",
+    ),
+    allowedProjectIds: normalizeCredentialStringList(
+      input.accessPolicy?.allowedProjectIds ?? [],
+      "Allowed project ID",
+    ),
+    deniedAgentIds: normalizeCredentialStringList(
+      input.accessPolicy?.deniedAgentIds ?? [],
+      "Denied Agent ID",
+    ),
+    deniedProjectIds: normalizeCredentialStringList(
+      input.accessPolicy?.deniedProjectIds ?? [],
+      "Denied project ID",
+    ),
+    requireApproval:
+      input.accessPolicy?.requireApproval ??
+      defaultPrivateCredentialAccessPolicy.requireApproval,
+  };
+  assertDisjointValues(
+    accessPolicy.allowedAgentIds,
+    accessPolicy.deniedAgentIds,
+    "Credential Agent allow and deny lists overlap.",
+  );
+  assertDisjointValues(
+    accessPolicy.allowedProjectIds,
+    accessPolicy.deniedProjectIds,
+    "Credential project allow and deny lists overlap.",
+  );
+  const source: PrivateCredentialSource = {
+    type: input.source?.type ?? "user",
+    ...(input.source?.agentId
+      ? {
+          agentId: requiredMetadataValue(
+            input.source.agentId,
+            "Source Agent ID",
+            500,
+          ),
+        }
+      : {}),
+    ...(input.source?.deviceId
+      ? {
+          deviceId: requiredMetadataValue(
+            input.source.deviceId,
+            "Source device ID",
+            500,
+          ),
+        }
+      : {}),
+    ...(input.source?.projectId
+      ? {
+          projectId: requiredMetadataValue(
+            input.source.projectId,
+            "Source project ID",
+            500,
+          ),
+        }
+      : {}),
+  };
+  privateCredentialSourceSchema.parse(source);
+  return {
+    accessPolicy,
+    expiresAt: input.expiresAt ?? null,
+    fields: normalizeCredentialMap(input.fields ?? {}, true),
+    ...(input.id ? { id: input.id } : {}),
+    kind: input.kind,
+    label: requiredMetadataValue(input.label, "Credential label", 500),
+    purposes: normalizeCredentialStringList(
+      input.purposes,
+      "Credential purpose",
+    ),
+    secrets: normalizeCredentialMap(input.secrets ?? {}, false),
+    source,
+    tags: normalizeCredentialStringList(input.tags ?? [], "Credential tag"),
+    userId: requiredMetadataValue(input.userId, "User ID", 500),
+  };
+}
+
+function normalizeCredentialMap(
+  values: Record<string, string>,
+  trimValues: boolean,
+): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(values)
+      .map(([key, value]) => [key, trimValues ? value.trim() : value] as const)
+      .sort(([left], [right]) => left.localeCompare(right)),
+  );
+}
+
+function normalizeCredentialStringList(
+  values: string[],
+  label: string,
+): string[] {
+  return [
+    ...new Set(
+      values.map((value) => requiredMetadataValue(value, label, 500)),
+    ),
+  ].sort((left, right) => left.localeCompare(right));
+}
+
+function normalizeCredentialFilter(filter: {
+  kinds?: PrivateCredentialKind[];
+  purposes?: string[];
+  tags?: string[];
+}): {
+  kinds: PrivateCredentialKind[];
+  purposes: string[];
+  tags: string[];
+} {
+  return {
+    kinds: [
+      ...new Set(
+        (filter.kinds ?? []).map((kind) =>
+          z.enum(privateCredentialKinds).parse(kind),
+        ),
+      ),
+    ],
+    purposes: normalizeCredentialStringList(
+      filter.purposes ?? [],
+      "Credential purpose",
+    ),
+    tags: normalizeCredentialStringList(filter.tags ?? [], "Credential tag"),
+  };
+}
+
+function credentialMatchesFilter(
+  credential: PrivateCredential,
+  filter: { kinds: PrivateCredentialKind[]; purposes: string[]; tags: string[] },
+): boolean {
+  if (filter.kinds.length > 0 && !filter.kinds.includes(credential.kind)) {
+    return false;
+  }
+  if (
+    filter.purposes.length > 0 &&
+    !filter.purposes.every((purpose) =>
+      credential.purposes.some((stored) =>
+        credentialPurposeMatches(stored, purpose),
+      ),
+    )
+  ) {
+    return false;
+  }
+  const tags = new Set(credential.tags.map((tag) => tag.toLocaleLowerCase()));
+  return filter.tags.every((tag) => tags.has(tag.toLocaleLowerCase()));
+}
+
+function credentialPurposeMatches(
+  storedValue: string,
+  requestedValue: string,
+): boolean {
+  const stored = storedValue.toLocaleLowerCase();
+  const requested = requestedValue.toLocaleLowerCase();
+  if (stored === "*" || stored === requested) return true;
+  return [".", ":", "/"].some(
+    (separator) =>
+      stored.startsWith(`${requested}${separator}`) ||
+      requested.startsWith(`${stored}${separator}`),
+  );
+}
+
+function credentialAccessDecision(
+  credential: PrivateCredential,
+  input: {
+    agentId: string;
+    approved: boolean;
+    projectId?: string;
+    purpose: string;
+  },
+): CredentialAccessAuditEvent["reason"] {
+  if (
+    credential.expiresAt &&
+    Date.parse(credential.expiresAt) <= Date.now()
+  ) {
+    return "credential_expired";
+  }
+  if (
+    !credential.purposes.some((purpose) =>
+      credentialPurposeMatches(purpose, input.purpose),
+    )
+  ) {
+    return "purpose_mismatch";
+  }
+  const policy = credential.accessPolicy;
+  if (!policy.allowAgentRead || policy.deniedAgentIds.includes(input.agentId)) {
+    return "agent_denied";
+  }
+  if (
+    policy.allowedAgentIds.length > 0 &&
+    !policy.allowedAgentIds.includes(input.agentId)
+  ) {
+    return "agent_not_allowed";
+  }
+  if (input.projectId && policy.deniedProjectIds.includes(input.projectId)) {
+    return "project_denied";
+  }
+  if (
+    policy.allowedProjectIds.length > 0 &&
+    (!input.projectId || !policy.allowedProjectIds.includes(input.projectId))
+  ) {
+    return "project_not_allowed";
+  }
+  if (policy.requireApproval && !input.approved) return "approval_required";
+  return "allowed";
+}
+
+function maskPrivateCredential(
+  credential: PrivateCredential,
+): MaskedPrivateCredential {
+  return {
+    ...credential,
+    secrets: Object.fromEntries(
+      Object.keys(credential.secrets).map((key) => [key, "********" as const]),
+    ),
+  };
+}
+
+function samePrivateCredentialContent(
+  left: PrivateCredential,
+  right: PrivateCredential,
+): boolean {
+  const withoutTimestamps = (credential: PrivateCredential) => {
+    const { createdAt: _createdAt, updatedAt: _updatedAt, ...content } =
+      credential;
+    return content;
+  };
+  return (
+    JSON.stringify(withoutTimestamps(left)) ===
+    JSON.stringify(withoutTimestamps(right))
+  );
+}
+
+function nextCredentialTimestamp(...values: Array<string | undefined>): string {
+  const previous = Math.max(
+    0,
+    ...values
+      .map((value) => (value ? Date.parse(value) : Number.NaN))
+      .filter(Number.isFinite),
+  );
+  return new Date(Math.max(Date.now(), previous + 1)).toISOString();
+}
+
+function requiredUuid(value: string, label: string): string {
+  const result = z.uuid().safeParse(value);
+  if (!result.success) throw new Error(`${label} is invalid.`);
+  return result.data;
+}
+
+function requiredMetadataValue(
+  value: string,
+  label: string,
+  maxLength: number,
+): string {
+  const normalized = value.trim();
+  if (
+    !normalized ||
+    normalized.length > maxLength ||
+    /[\u0000-\u001f\u007f]/.test(normalized)
+  ) {
+    throw new Error(`${label} is invalid.`);
+  }
+  return normalized;
+}
+
+function assertDisjointValues(
+  left: string[],
+  right: string[],
+  message: string,
+): void {
+  const rightValues = new Set(right);
+  if (left.some((value) => rightValues.has(value))) throw new Error(message);
+}
+
+function assertUniqueValues(values: string[], message: string): void {
+  if (new Set(values).size !== values.length) throw new Error(message);
 }
 
 function validateCredential(value: OAuthCredential): OAuthCredential {

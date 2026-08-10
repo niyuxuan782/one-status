@@ -581,6 +581,7 @@ class MemoryDashboardBackend implements DashboardBackend {
           createdAt: new Date(0).toISOString(),
         },
         devices: [],
+        deviceLoginPolicy: { denyNewDeviceLogins: false },
       },
       profile: {
         baseUrl: "http://127.0.0.1:8787",

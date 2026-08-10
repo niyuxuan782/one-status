@@ -40,12 +40,12 @@ fn validate_profile(tool: ToolId, profile: &ModelProfile) -> SidecarResult<Profi
     }
 
     match (tool, profile.api_protocol) {
-        (ToolId::Codex, ApiProtocol::OpenaiResponses | ApiProtocol::OpenaiChatCompletions)
+        (ToolId::Codex, ApiProtocol::OpenaiResponses)
         | (ToolId::ClaudeCode, ApiProtocol::Anthropic)
         | (ToolId::Cursor, _) => {}
-        (ToolId::Codex, ApiProtocol::Anthropic) => {
+        (ToolId::Codex, ApiProtocol::OpenaiChatCompletions | ApiProtocol::Anthropic) => {
             return Err(SidecarError::Unsupported(
-                "Codex requires an OpenAI Responses or Chat Completions endpoint; protocol translation is outside this sidecar.".to_string(),
+                "This Codex version requires an OpenAI Responses endpoint. Route other protocols through the One Status Model Gateway.".to_string(),
             ));
         }
         (ToolId::ClaudeCode, _) => {
@@ -132,6 +132,27 @@ fn validate_profile(tool: ToolId, profile: &ModelProfile) -> SidecarResult<Profi
         .as_ref()
         .and_then(|value| Url::parse(value).ok())
         .and_then(|url| url.host_str().map(str::to_string));
+    let upstream = profile
+        .upstream
+        .as_ref()
+        .map(|upstream| {
+            validate_control_id("profile.upstream.sourceId", &upstream.source_id, 200)?;
+            validate_text("profile.upstream.displayName", &upstream.display_name, 200)?;
+            let endpoint = upstream
+                .endpoint
+                .as_deref()
+                .map(normalize_endpoint)
+                .transpose()?;
+            Ok(crate::models::UpstreamProfile {
+                source_id: upstream.source_id.clone(),
+                display_name: upstream.display_name.clone(),
+                source: upstream.source,
+                protocol: upstream.protocol,
+                api_format: upstream.api_format,
+                endpoint,
+            })
+        })
+        .transpose()?;
 
     Ok(ProfileSummary {
         id: profile.id.clone(),
@@ -143,6 +164,7 @@ fn validate_profile(tool: ToolId, profile: &ModelProfile) -> SidecarResult<Profi
         endpoint,
         endpoint_domain,
         credential_env_var: profile.credential_env_var.clone(),
+        upstream,
     })
 }
 
@@ -169,6 +191,20 @@ fn validate_identifier(field: &str, value: &str, max: usize) -> SidecarResult<()
     {
         return Err(SidecarError::InvalidRequest(format!(
             "{field} must contain 1-{max} ASCII letters, digits, dot, dash, or underscore characters."
+        )));
+    }
+    Ok(())
+}
+
+fn validate_control_id(field: &str, value: &str, max: usize) -> SidecarResult<()> {
+    if value.is_empty()
+        || value.len() > max
+        || !value.chars().all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.' | ':')
+        })
+    {
+        return Err(SidecarError::InvalidRequest(format!(
+            "{field} must contain 1-{max} ASCII letters, digits, dot, dash, underscore, or colon characters."
         )));
     }
     Ok(())

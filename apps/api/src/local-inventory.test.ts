@@ -249,6 +249,99 @@ describe("local inventory", () => {
     expect(JSON.stringify(snapshot)).not.toContain("SIDECAR_MANAGED_SECRET");
   });
 
+  it("restores Gateway-managed sources without importing agent tokens", async () => {
+    directory = await mkdtemp(join(tmpdir(), "one-status-inventory-"));
+    const home = join(directory, "home");
+    const codexHome = join(home, ".codex");
+    const claudeHome = join(home, ".claude");
+    const bin = join(directory, "bin");
+    const active = join(home, ".one-status", "device-sidecar", "active");
+    await mkdir(codexHome, { recursive: true });
+    await mkdir(claudeHome, { recursive: true });
+    await mkdir(active, { recursive: true });
+    await mkdir(bin, { recursive: true });
+    for (const executable of ["codex", "claude"]) {
+      await writeFile(join(bin, executable), "#!/bin/sh\nexit 0\n");
+      await chmod(join(bin, executable), 0o755);
+    }
+    const gatewayEndpoint =
+      "http://127.0.0.1:8787/v1/model-gateway/wallet-source";
+    await writeFile(
+      join(codexHome, "config.toml"),
+      `model = "shared-model"\nmodel_provider = "one-status-wallet"\n[model_providers.one-status-wallet]\nname = "Wallet source"\nbase_url = "${gatewayEndpoint}"\nenv_key = "ONE_STATUS_GATEWAY_TOKEN"\nwire_api = "responses"\nexperimental_bearer_token = "LOCAL_GATEWAY_TOKEN"\n`,
+    );
+    await writeFile(
+      join(claudeHome, "settings.json"),
+      JSON.stringify({
+        model: "shared-model",
+        env: {
+          ANTHROPIC_BASE_URL: gatewayEndpoint,
+          ANTHROPIC_AUTH_TOKEN: "LOCAL_GATEWAY_TOKEN",
+        },
+      }),
+    );
+    const upstream = {
+      sourceId: "wallet-source",
+      displayName: "Wallet source",
+      source: "third-party-compatible-api",
+      protocol: "anthropic",
+      apiFormat: "anthropic-messages",
+      endpoint: "https://provider.example.test",
+    };
+    for (const tool of ["codex", "claude-code"]) {
+      await writeFile(
+        join(active, `${tool}.json`),
+        JSON.stringify({
+          schemaVersion: 1,
+          tool,
+          profile: { endpoint: gatewayEndpoint, upstream },
+        }),
+      );
+    }
+    const options: LocalInventoryOptions = {
+      homeDir: home,
+      environment: {
+        HOME: home,
+        PATH: bin,
+        CODEX_HOME: codexHome,
+        CLAUDE_CONFIG_DIR: claudeHome,
+      },
+    };
+
+    const snapshot = await scanLocalInventory(options);
+    const credentials = await discoverLocalModelCredentials(options);
+
+    expect(snapshot.agents.slice(0, 2)).toEqual([
+      expect.objectContaining({
+        id: "codex",
+        model: expect.objectContaining({
+          managedByGateway: true,
+          managedSourceId: "wallet-source",
+          providerLabel: "Wallet source",
+          sourceKind: "compatible-api",
+          protocol: "anthropic",
+          endpoint: "https://provider.example.test",
+        }),
+      }),
+      expect.objectContaining({
+        id: "claude-code",
+        model: expect.objectContaining({
+          managedByGateway: true,
+          managedSourceId: "wallet-source",
+          protocol: "anthropic",
+        }),
+      }),
+    ]);
+    expect(localModelSourceId(snapshot.agents[0]!.model!)).toBe(
+      "wallet-source",
+    );
+    expect(snapshot.agents[0]!.model).not.toHaveProperty(
+      "credentialFingerprint",
+    );
+    expect(credentials).toEqual([]);
+    expect(JSON.stringify(snapshot)).not.toContain("LOCAL_GATEWAY_TOKEN");
+  });
+
   it("discovers a Codex auth.json API key for the active provider", async () => {
     directory = await mkdtemp(join(tmpdir(), "one-status-inventory-"));
     const home = join(directory, "home");

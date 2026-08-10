@@ -6,12 +6,12 @@
     <meta name="theme-color" content="#111315" />
     <meta
       name="description"
-      content="One Status 是跨设备的个人 AI 控制中心，通过端到端加密的密钥钱包统一管理 AI 工具、可配模型、记忆、连接与项目状态。"
+      content="One Status 是跨设备的个人 AI 控制中心，通过端到端加密的密钥钱包统一管理模型 API Key、账号密码、SSH、云凭据、卡密、AI 工具与记忆。"
     />
     <meta property="og:title" content="One Status - 所有设备上的 AI 工具与密钥钱包" />
     <meta
       property="og:description"
-      content="自动扫描 Codex、Claude Code 与 Cursor 配置，加密同步密钥和可配模型，并持续整理记忆、连接与 Handoff。"
+      content="自动扫描 Codex、Claude Code 与 Cursor 配置，加密同步模型 API Key、账号、SSH、云凭据和卡密，并让 Agent 按需调用。"
     />
     <meta property="og:type" content="website" />
     <meta property="og:url" content="https://niyuxuan782.github.io/one-status/" />
@@ -58,9 +58,9 @@
         <div class="hero-content">
           <p class="eyebrow"><span></span> PERSONAL AI CONTROL CENTER</p>
           <h1 id="hero-title">One Status</h1>
-          <p class="hero-line">所有设备上的 AI 工具、密钥、模型和记忆，集中在一处。</p>
+          <p class="hero-line">所有设备上的 AI 工具、模型、凭据和记忆，集中在一处。</p>
           <p class="hero-copy">
-            自动扫描 Codex、Claude Code 与 Cursor 配置，把密钥和可配模型收进 E2EE 钱包，并同步项目、记忆、连接与工作状态。
+            自动扫描模型配置，把账号密码、SSH、云平台凭据、卡密和 API Key 收进 E2EE 钥匙串，让 Codex 与 Claude Code 按任务直接使用。
           </p>
           <div class="hero-actions">
             <a class="button button-primary" href="#install">
@@ -78,7 +78,7 @@
           </div>
           <p class="release-line">
             <span class="status-dot"></span>
-            <span id="release-label">v0.7.0</span>
+            <span id="release-label">v0.8.0</span>
             <span>Open Core</span>
             <span>macOS · Windows · Linux</span>
             <span>Private by design</span>
@@ -89,7 +89,7 @@
 
       <section class="signal-band" aria-label="产品主线">
         <div><strong>Overview</strong><span>设备 · 工具 · 模型 · 用量</span></div>
-        <div><strong>Key Wallet</strong><span>自动扫描 · E2EE 同步</span></div>
+        <div><strong>Key Wallet</strong><span>自动登记 · 按需读取 · E2EE</span></div>
         <div><strong>Memory</strong><span>后台生成 · 用户确认</span></div>
         <div><strong>Connections</strong><span>授权与能力统一管理</span></div>
       </section>
@@ -139,22 +139,22 @@
       <section class="model-section" id="wallet" aria-labelledby="wallet-title">
         <div class="section-heading light compact-heading">
           <p class="eyebrow"><span></span> KEY WALLET · E2EE</p>
-          <h2 id="wallet-title">扫描一次，让每台设备都能安全切换模型</h2>
-          <p>密钥钱包自动识别 Agent 配置、Codex Providers、CC Switch Profile、Endpoint、协议、密钥引用和可配模型。条目在客户端加密后同步，云端只保存密文。</p>
+          <h2 id="wallet-title">一个钥匙串，供所有设备和 Agent 使用</h2>
+          <p>密钥钱包自动识别模型配置，也接收用户交给 Agent 的账号密码、SSH、云平台凭据、卡密、Token 和证书。条目在客户端加密后同步，云端只保存密文。</p>
         </div>
         <ol class="configuration-flow" aria-label="密钥钱包工作流">
-          <li><span>01</span><strong>扫描配置</strong><small>只读识别 Codex、Claude Code、CC Switch 与本机模型服务</small></li>
-          <li><span>02</span><strong>加密入库</strong><small>密钥、Endpoint 和模型能力进入 E2EE 钱包</small></li>
-          <li><span>03</span><strong>选择模型</strong><small>按设备与 AI 工具查看当前可用模型</small></li>
-          <li><span>04</span><strong>直接切换</strong><small>无需钱包密码，也不会把密钥明文交给 Agent</small></li>
-          <li><span>05</span><strong>查看密钥</strong><small>查看或复制明文时必须验证钱包密码</small></li>
+          <li><span>01</span><strong>自动扫描</strong><small>只读识别 Codex、Claude Code、CC Switch 与本机模型服务</small></li>
+          <li><span>02</span><strong>自动登记</strong><small>用户向 Agent 提供可复用凭据时，同轮加密写入钱包</small></li>
+          <li><span>03</span><strong>端到端同步</strong><small>账号、主机、用途与 Secret 随 E2EE Vault bundle 到达其他设备</small></li>
+          <li><span>04</span><strong>按需使用</strong><small>Agent 按服务、主机、账号、项目和用途选取；模型可以直接切换</small></li>
+          <li><span>05</span><strong>持续更新</strong><small>密码或 Token 轮换时更新原条目，所有读取留下脱敏审计</small></li>
         </ol>
         <div class="wallet-policy" aria-label="密钥钱包访问策略">
           <div><span class="wallet-icon locked" aria-hidden="true"></span><strong>查看 / 复制</strong><small>初始密码 123456 · 可修改</small></div>
           <i></i>
           <div><span class="wallet-icon switch" aria-hidden="true"></span><strong>切换模型</strong><small>已授权即可</small></div>
           <i></i>
-          <div><span class="wallet-icon agent" aria-hidden="true"></span><strong>Agent 调用</strong><small>仅受控引用</small></div>
+          <div><span class="wallet-icon agent" aria-hidden="true"></span><strong>Agent 读取</strong><small>按用途直接使用 · 脱敏审计</small></div>
         </div>
       </section>
 
@@ -264,13 +264,13 @@ dirty: false</code></pre>
               <p>安装后从 Applications 或开始菜单启动。页面会自动选择最新已发布版本。</p>
             </div>
             <div class="desktop-downloads">
-              <aside class="mac-preview-note" role="note" aria-label="macOS 预览版安装说明">
-                <strong>macOS 未公证预览版</strong>
-                <p>当前版本尚未接入 Apple Developer ID。推荐使用上方“一键安装”：脚本验证 SHA-256、Bundle ID 与发布包的 ad-hoc 签名后，默认安装到 <code>~/Applications/One Status.app</code>。直接安装 DMG 可能提示“无法验证开发者”或“App 已损坏”；被拦截时，请前往“系统设置 → 隐私与安全性”点击“仍要打开”。</p>
+              <aside class="mac-preview-note" role="note" aria-label="macOS 发布安全说明">
+                <strong id="mac-release-title">正在检查 macOS Release 签名</strong>
+                <p id="mac-release-note">签名状态将按当前 GitHub Release 的构建记录显示。</p>
               </aside>
               <div class="download-grid">
-                <a id="download-mac-arm" href="https://github.com/niyuxuan782/one-status/releases/latest"><strong>macOS Apple Silicon</strong><span>.dmg · 未公证预览</span></a>
-                <a id="download-mac-intel" href="https://github.com/niyuxuan782/one-status/releases/latest"><strong>macOS Intel</strong><span>.dmg · 未公证预览</span></a>
+                <a id="download-mac-arm" href="https://github.com/niyuxuan782/one-status/releases/latest"><strong>macOS Apple Silicon</strong><span data-mac-release-status>.dmg · 正在检查签名</span></a>
+                <a id="download-mac-intel" href="https://github.com/niyuxuan782/one-status/releases/latest"><strong>macOS Intel</strong><span data-mac-release-status>.dmg · 正在检查签名</span></a>
                 <a id="download-windows" href="https://github.com/niyuxuan782/one-status/releases/latest"><strong>Windows</strong><span>.exe · Windows 10/11 x64</span></a>
                 <a id="download-linux" href="https://github.com/niyuxuan782/one-status/releases/latest"><strong>Linux</strong><span>.AppImage · x64</span></a>
               </div>
@@ -284,8 +284,8 @@ dirty: false</code></pre>
               <p>脚本从 GitHub Release 下载产物，并使用同一 Release 的 SHA256SUMS 验证。</p>
               <ul class="install-facts">
                 <li><strong>macOS 默认位置</strong><code>~/Applications/One Status.app</code></li>
-                <li><strong>预览版签名</strong><span>验证 SHA-256、Bundle ID 与发布包的 ad-hoc 签名，保留 Hardened Runtime，不修改其他 App。</span></li>
-                <li><strong>DMG 直链</strong><span>若 macOS 拦截，请在“系统设置 → 隐私与安全性”中点击“仍要打开”。</span></li>
+                <li><strong>新签名版</strong><span>验证 SHA-256、Bundle ID、Developer ID、Hardened Runtime 与 Apple 公证票据。</span></li>
+                <li><strong>旧版保护</strong><span>未通过公证或票据校验时新版安装器立即停止，不清除 quarantine。</span></li>
               </ul>
             </div>
             <div class="command-stack">
@@ -342,7 +342,7 @@ brew services start niyuxuan782/tap/one-status</code>
         <div>
           <p class="eyebrow"><span></span> SECURITY · SETTINGS</p>
           <h2>切换保持顺手，密钥明文始终受保护</h2>
-          <p>钱包条目、记忆、任务状态和配置意图在设备端加密。模型切换只使用已授权引用；查看或复制密钥必须输入钱包密码。Agent 只获得连接允许的动作。</p>
+          <p>钱包条目、记忆、任务状态和配置意图在设备端加密。用户查看或复制密钥必须输入钱包密码；模型切换无需密码；Agent 使用绑定身份按用途读取获准凭据，并只留下脱敏审计。</p>
         </div>
         <div class="security-flow" aria-label="端到端加密流程">
           <div><strong>Device A</strong><span>Scan and encrypt locally</span></div>
@@ -384,6 +384,6 @@ brew services start niyuxuan782/tap/one-status</code>
     </footer>
 
     <div class="toast" hidden>已复制到剪贴板</div>
-    <script src="./app.js" defer></script>
+    <script src="./app.js?v=0.8.0-20260811" defer></script>
   </body>
 </html>

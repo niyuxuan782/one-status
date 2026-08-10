@@ -29,6 +29,59 @@ import type { RuntimeToolGateway } from "./tool-gateway.js";
 
 type Vault = Pick<SyncedStatusVault, "read" | "mutate">;
 
+const privateCredentialKindSchema = z.enum([
+  "account",
+  "ssh",
+  "cloud_console",
+  "github",
+  "database",
+  "api",
+  "license",
+  "card_key",
+  "model",
+  "oauth",
+  "email",
+  "vpn",
+  "certificate",
+  "signing",
+  "container_registry",
+  "package_registry",
+  "domain",
+  "remote_desktop",
+  "webhook",
+  "generic",
+]);
+const credentialMetadataSchema = z.string().min(1).max(500);
+const credentialMapKeySchema = z
+  .string()
+  .min(1)
+  .max(64)
+  .regex(/^[A-Za-z][A-Za-z0-9_.-]*$/);
+const credentialFieldsSchema = z.record(
+  credentialMapKeySchema,
+  z.string().min(1).max(8_000),
+).refine((value) => Object.keys(value).length <= 64);
+const credentialSecretsSchema = z
+  .record(
+    credentialMapKeySchema,
+    z.string().min(1).max(128_000),
+  )
+  .refine(
+    (value) =>
+      Object.keys(value).length >= 1 && Object.keys(value).length <= 64,
+  );
+const credentialStringListSchema = z.array(credentialMetadataSchema).max(64);
+const credentialAccessPolicySchema = z
+  .object({
+    allowAgentRead: z.boolean().optional(),
+    allowedAgentIds: credentialStringListSchema.optional(),
+    allowedProjectIds: credentialStringListSchema.optional(),
+    deniedAgentIds: credentialStringListSchema.optional(),
+    deniedProjectIds: credentialStringListSchema.optional(),
+    requireApproval: z.boolean().optional(),
+  })
+  .strict();
+
 export function createMcpServer(
   vault: Vault,
   agentId: string,
@@ -49,6 +102,9 @@ export function createMcpServer(
         "Use capabilities_get to discover installed Capability Packs and the built-in cross-Agent capability catalog. " +
         "When the user states a durable personal preference, behavior, work habit, technical habit, long-term goal, future plan, or explicitly asks you to remember personal information, call persona.record with a concise structured observation. " +
         "Use persona.profile to load the current effective Persona. Respect persona.get_policy, never record blocked categories or secrets, and never send raw messages, transcripts, credentials, or unrelated conversation text to Persona tools. " +
+        "When the user provides an API key, password, token, private key, account login, license, card key, model credential, SSH credential, cloud credential, or another reusable secret, call credentials_register in the same turn without asking for the wallet password; put matching data such as host, URL, username, and account in fields and secret material only in secrets. " +
+        "When the user says a stored password, token, key, Endpoint, username, or related credential value changed or rotated, resolve the existing entry and call credentials_update in the same turn so its identity and history remain stable. Model source API keys discovered by One Status are available through the same resolve and get flow with kind model and purpose model.api or model.configure. " +
+        "Before a task needs a stored credential, call credentials_resolve with its exact purpose and matching host, service, or project tags, then call credentials_get for the selected credential. credentials_list and credentials_resolve return metadata only; credentials_get returns secret material for immediate task execution. Never echo, summarize, log, write to Status or Persona, or include retrieved secret material in an error. " +
         "Only call a connection and action returned by the latest tools_list result, and construct arguments from that action's inputSchema; then use tools_execute so provider credentials remain inside One Status. " +
         "Read-only actions may run immediately. For an action marked requiresConfirmation, call tools_request_approval and ask the user to approve the exact request in the One Status Dashboard before calling tools_execute with the returned approvalId. " +
         "When no eligible action is returned, tell the user which service or action must be connected, granted, or reauthorized in One Status instead of requesting provider credentials.",
@@ -575,6 +631,178 @@ export function createMcpServer(
 
   if (toolGateway) {
     server.registerTool(
+      "credentials_register",
+      {
+        title: "Register a private credential",
+        description:
+          "Store a reusable credential in the encrypted One Status Permission Vault. Call this automatically when the user supplies a reusable secret. Put searchable non-secret values such as host, URL, username, account, region, and model ID in fields; put passwords, tokens, API keys, private keys, client secrets, license values, and card keys only in secrets. The Gateway binds the source Agent and records a metadata-only audit event. The response masks every secret.",
+        inputSchema: {
+          kind: privateCredentialKindSchema,
+          label: credentialMetadataSchema,
+          purposes: credentialStringListSchema.min(1).max(32),
+          fields: credentialFieldsSchema.default({}),
+          secrets: credentialSecretsSchema,
+          tags: credentialStringListSchema.max(50).default([]),
+          projectId: credentialMetadataSchema.optional(),
+          expiresAt: z.iso.datetime({ offset: true }).nullable().optional(),
+          accessPolicy: credentialAccessPolicySchema.optional(),
+        },
+        annotations: {
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: false,
+          openWorldHint: false,
+        },
+      },
+      async (input) =>
+        toolResult(
+          credentialMetadataPayload(
+            await toolGateway.registerCredential(input),
+          ),
+        ),
+    );
+
+    server.registerTool(
+      "credentials_list",
+      {
+        title: "List private credential metadata",
+        description:
+          "List encrypted Vault credential metadata with optional kind, purpose, and tag filters. This returns labels, matching fields, policies, provenance, timestamps, and masked secret names only. It never returns secret values.",
+        inputSchema: {
+          kinds: z
+            .array(privateCredentialKindSchema)
+            .max(privateCredentialKindSchema.options.length)
+            .default([]),
+          purposes: credentialStringListSchema.max(32).default([]),
+          tags: credentialStringListSchema.max(50).default([]),
+          limit: z.number().int().min(1).max(200).default(100),
+        },
+        annotations: {
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false,
+        },
+      },
+      async (input) =>
+        toolResult(
+          credentialMetadataPayload(await toolGateway.listCredentials(input)),
+        ),
+    );
+
+    server.registerTool(
+      "credentials_resolve",
+      {
+        title: "Resolve a credential for a task",
+        description:
+          "Select eligible credential metadata for an exact task purpose, with optional kind, project, and tags such as service, host, account, or environment. Call this before credentials_get. Results are access-policy filtered and all secret values remain masked.",
+        inputSchema: {
+          purpose: credentialMetadataSchema,
+          kinds: z
+            .array(privateCredentialKindSchema)
+            .max(privateCredentialKindSchema.options.length)
+            .default([]),
+          tags: credentialStringListSchema.max(50).default([]),
+          projectId: credentialMetadataSchema.optional(),
+          limit: z.number().int().min(1).max(50).default(20),
+        },
+        annotations: {
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false,
+        },
+      },
+      async (input) =>
+        toolResult(
+          credentialMetadataPayload(
+            await toolGateway.resolveCredential(input),
+          ),
+        ),
+    );
+
+    server.registerTool(
+      "credentials_get",
+      {
+        title: "Read a credential for immediate use",
+        description:
+          "Read one resolved credential, including its secret values, for the stated immediate task purpose. One Status enforces the credential's Agent and project policy and records a metadata-only access audit. Never echo or persist the returned secret, and never include it in logs, Status, Persona, Activity, or errors.",
+        inputSchema: {
+          credentialId: z.uuid(),
+          purpose: credentialMetadataSchema,
+          projectId: credentialMetadataSchema.optional(),
+        },
+        annotations: {
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: false,
+          openWorldHint: false,
+        },
+      },
+      async (input) =>
+        toolResult(
+          credentialToolPayload(await toolGateway.getCredential(input)),
+        ),
+    );
+
+    server.registerTool(
+      "credentials_update",
+      {
+        title: "Update a private credential",
+        description:
+          "Patch one Vault credential. Omitted fields remain unchanged; supplied fields and secrets merge by key. Use null expiresAt to clear expiration. The Gateway binds the calling Agent and returns only masked credential data.",
+        inputSchema: {
+          credentialId: z.uuid(),
+          kind: privateCredentialKindSchema.optional(),
+          label: credentialMetadataSchema.optional(),
+          purposes: credentialStringListSchema.min(1).max(32).optional(),
+          fields: credentialFieldsSchema.optional(),
+          secrets: credentialSecretsSchema.optional(),
+          tags: credentialStringListSchema.max(50).optional(),
+          projectId: credentialMetadataSchema.optional(),
+          expiresAt: z.iso.datetime({ offset: true }).nullable().optional(),
+          accessPolicy: credentialAccessPolicySchema.optional(),
+        },
+        annotations: {
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false,
+        },
+      },
+      async (input) =>
+        toolResult(
+          credentialMetadataPayload(
+            await toolGateway.updateCredential(input),
+          ),
+        ),
+    );
+
+    server.registerTool(
+      "credentials_delete",
+      {
+        title: "Delete a private credential",
+        description:
+          "Delete one credential from the local encrypted Vault and create an E2EE synchronization tombstone. The audit response contains metadata only.",
+        inputSchema: {
+          credentialId: z.uuid(),
+        },
+        annotations: {
+          readOnlyHint: false,
+          destructiveHint: true,
+          idempotentHint: true,
+          openWorldHint: false,
+        },
+      },
+      async ({ credentialId }) =>
+        toolResult(
+          credentialMetadataPayload(
+            await toolGateway.deleteCredential(credentialId),
+          ),
+        ),
+    );
+
+    server.registerTool(
       "tools_list",
       {
         title: "List approved One Status tools",
@@ -704,6 +932,35 @@ function toolResult(payload: Record<string, unknown>) {
     content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
     structuredContent: payload,
   };
+}
+
+function credentialToolPayload(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : { result: value };
+}
+
+function credentialMetadataPayload(value: unknown): Record<string, unknown> {
+  return credentialToolPayload(maskCredentialSecrets(value));
+}
+
+function maskCredentialSecrets(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(maskCredentialSecrets);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value).map(([key, nested]) => {
+      if (key !== "secrets") return [key, maskCredentialSecrets(nested)];
+      if (!nested || typeof nested !== "object" || Array.isArray(nested)) {
+        return [key, "********"];
+      }
+      return [
+        key,
+        Object.fromEntries(
+          Object.keys(nested).map((secretKey) => [secretKey, "********"]),
+        ),
+      ];
+    }),
+  );
 }
 
 export type { Vault, StatusDocument };

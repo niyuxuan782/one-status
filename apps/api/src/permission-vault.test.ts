@@ -67,6 +67,70 @@ describe("Permission Vault", () => {
     vault.close();
   });
 
+  it("bridges model wallet keys into stable Agent-readable credentials", () => {
+    const vault = new PermissionVault({
+      path: ":memory:",
+      key: new Uint8Array(32).fill(45),
+    });
+    vault.setModelCredential(
+      "user-1",
+      "third-party-openai",
+      "initial-model-secret",
+    );
+    const [credential] = vault.listPrivateCredentials("user-1", {
+      kinds: ["model"],
+    });
+    expect(credential).toMatchObject({
+      fields: { sourceId: "third-party-openai" },
+      kind: "model",
+      purposes: ["model.api", "model.configure"],
+      secrets: { apiKey: "********" },
+      tags: ["model-wallet"],
+    });
+    expect(
+      vault.findPrivateCredentialsForAgent({
+        agentId: "codex",
+        kinds: ["model"],
+        purpose: "model",
+        userId: "user-1",
+      }),
+    ).toEqual([expect.objectContaining({ id: credential!.id })]);
+    expect(
+      vault.readPrivateCredentialForAgent({
+        agentId: "codex",
+        credentialId: credential!.id,
+        purpose: "model.api",
+        userId: "user-1",
+      })?.secrets,
+    ).toEqual({ apiKey: "initial-model-secret" });
+
+    expect(
+      vault.patchPrivateCredential({
+        credentialId: credential!.id,
+        secrets: { apiKey: "rotated-model-secret" },
+        userId: "user-1",
+      }),
+    ).toMatchObject({ id: credential!.id, secrets: { apiKey: "********" } });
+    expect(vault.getModelCredential("user-1", "third-party-openai")).toBe(
+      "rotated-model-secret",
+    );
+    expect(vault.exportBundle("user-1").privateCredentials).toEqual([]);
+    expect(vault.exportBundle("user-1").modelCredentials).toEqual([
+      expect.objectContaining({
+        apiKey: "rotated-model-secret",
+        sourceId: "third-party-openai",
+      }),
+    ]);
+    expect(vault.deletePrivateCredential("user-1", credential!.id)).toBe(true);
+    expect(vault.listPrivateCredentials("user-1", { kinds: ["model"] })).toEqual(
+      [],
+    );
+    expect(vault.isModelCredentialIgnored("user-1", "third-party-openai")).toBe(
+      true,
+    );
+    vault.close();
+  });
+
   it("keeps an ignored discovered source deleted until manually restored", () => {
     const vault = new PermissionVault({
       path: ":memory:",
@@ -489,6 +553,264 @@ describe("Permission Vault", () => {
       userId: "user-1",
     });
     expect(flow.returnTo).toBe("/integrations");
+    vault.close();
+  });
+
+  it("encrypts structured private credentials and masks every secret", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "one-status-private-vault-"));
+    directories.push(directory);
+    const path = join(directory, "permissions.sqlite");
+    const vault = new PermissionVault({
+      path,
+      keyPath: join(directory, "permission.key"),
+    });
+    const stored = vault.upsertPrivateCredential({
+      fields: {
+        host: "124.220.104.225",
+        port: "22",
+        username: "ubuntu",
+      },
+      kind: "ssh",
+      label: "Production SSH",
+      purposes: ["deployment.ssh"],
+      secrets: {
+        password: "server-password-plaintext",
+        privateKey: "-----BEGIN PRIVATE KEY-----\nprivate-material\n-----END PRIVATE KEY-----",
+      },
+      source: {
+        agentId: "codex",
+        projectId: "one-status",
+        type: "agent",
+      },
+      tags: ["production", "tencent-cloud"],
+      userId: "user-1",
+    });
+
+    expect(stored).toMatchObject({
+      fields: { host: "124.220.104.225", username: "ubuntu" },
+      kind: "ssh",
+      secrets: { password: "********", privateKey: "********" },
+      source: { agentId: "codex", projectId: "one-status" },
+    });
+    expect(JSON.stringify(vault.listPrivateCredentials("user-1"))).not.toContain(
+      "server-password-plaintext",
+    );
+    expect(
+      vault.revealPrivateCredential("user-1", stored.id, "incorrect"),
+    ).toBeNull();
+    expect(
+      vault.revealPrivateCredential("user-1", stored.id, "123456")?.secrets,
+    ).toEqual({
+      password: "server-password-plaintext",
+      privateKey:
+        "-----BEGIN PRIVATE KEY-----\nprivate-material\n-----END PRIVATE KEY-----",
+    });
+    vault.upsertPrivateCredential({
+      fields: {
+        host: "124.220.104.225",
+        port: "22",
+        username: "ubuntu",
+      },
+      id: stored.id,
+      kind: "ssh",
+      label: "Production SSH",
+      purposes: ["deployment.ssh"],
+      secrets: { password: "rotated-server-password" },
+      source: {
+        agentId: "codex",
+        projectId: "one-status",
+        type: "agent",
+      },
+      tags: ["production", "tencent-cloud"],
+      userId: "user-1",
+    });
+    expect(
+      vault.revealPrivateCredential("user-1", stored.id, "123456")?.secrets,
+    ).toEqual({
+      password: "rotated-server-password",
+      privateKey:
+        "-----BEGIN PRIVATE KEY-----\nprivate-material\n-----END PRIVATE KEY-----",
+    });
+    expect(
+      vault.patchPrivateCredential({
+        credentialId: stored.id,
+        label: "Primary production SSH",
+        userId: "user-1",
+      }),
+    ).toMatchObject({
+      id: stored.id,
+      label: "Primary production SSH",
+      secrets: { password: "********", privateKey: "********" },
+    });
+    expect(
+      vault.revealPrivateCredential("user-1", stored.id, "123456")?.secrets,
+    ).toEqual({
+      password: "rotated-server-password",
+      privateKey:
+        "-----BEGIN PRIVATE KEY-----\nprivate-material\n-----END PRIVATE KEY-----",
+    });
+    vault.close();
+
+    const persisted = await readFile(path, "utf8");
+    expect(persisted).not.toContain("124.220.104.225");
+    expect(persisted).not.toContain("ubuntu");
+    expect(persisted).not.toContain("server-password-plaintext");
+    expect(persisted).not.toContain("rotated-server-password");
+    expect(persisted).not.toContain("private-material");
+  });
+
+  it("selects credentials by purpose and audits controlled Agent reads", () => {
+    const vault = new PermissionVault({
+      path: ":memory:",
+      key: new Uint8Array(32).fill(41),
+    });
+    const credential = vault.upsertPrivateCredential({
+      accessPolicy: {
+        allowedAgentIds: ["codex"],
+        allowedProjectIds: ["one-status"],
+      },
+      fields: { host: "db.internal", username: "service" },
+      kind: "database",
+      label: "One Status database",
+      purposes: ["deployment.database"],
+      secrets: { password: "database-secret" },
+      source: { type: "user" },
+      tags: ["production"],
+      userId: "user-1",
+    });
+
+    expect(
+      vault.findPrivateCredentialsForAgent({
+        agentId: "codex",
+        projectId: "one-status",
+        purpose: "deployment",
+        tags: ["production"],
+        userId: "user-1",
+      }),
+    ).toEqual([expect.objectContaining({ id: credential.id })]);
+    expect(
+      vault.findPrivateCredentialsForAgent({
+        agentId: "claude-code",
+        projectId: "one-status",
+        purpose: "deployment",
+        userId: "user-1",
+      }),
+    ).toEqual([]);
+    expect(
+      vault.readPrivateCredentialForAgent({
+        agentId: "codex",
+        credentialId: credential.id,
+        projectId: "one-status",
+        purpose: "deployment.database",
+        userId: "user-1",
+      })?.secrets,
+    ).toEqual({ password: "database-secret" });
+    expect(
+      vault.readPrivateCredentialForAgent({
+        agentId: "claude-code",
+        credentialId: credential.id,
+        projectId: "one-status",
+        purpose: "deployment.database",
+        userId: "user-1",
+      }),
+    ).toBeNull();
+    expect(vault.listCredentialAccessAuditEvents("user-1")).toEqual([
+      expect.objectContaining({
+        agentId: "claude-code",
+        decision: "deny",
+        reason: "agent_not_allowed",
+      }),
+      expect.objectContaining({
+        agentId: "codex",
+        decision: "allow",
+        reason: "allowed",
+      }),
+    ]);
+    expect(
+      JSON.stringify(vault.listCredentialAccessAuditEvents("user-1")),
+    ).not.toContain("database-secret");
+    vault.close();
+  });
+
+  it("syncs private credential tombstones and preserves them for legacy bundles", () => {
+    const first = new PermissionVault({
+      path: ":memory:",
+      key: new Uint8Array(32).fill(42),
+    });
+    const second = new PermissionVault({
+      path: ":memory:",
+      key: new Uint8Array(32).fill(43),
+    });
+    const credential = first.upsertPrivateCredential({
+      fields: { account: "ryan" },
+      kind: "github",
+      label: "GitHub personal access token",
+      purposes: ["github.repository"],
+      secrets: { token: "github-private-token" },
+      userId: "user-1",
+    });
+    second.importBundle("user-1", first.exportBundle("user-1"));
+    expect(
+      second.revealPrivateCredential("user-1", credential.id, "123456")
+        ?.secrets,
+    ).toEqual({ token: "github-private-token" });
+
+    const legacyBundle = structuredClone(first.exportBundle("user-1"));
+    delete legacyBundle.privateCredentials;
+    delete legacyBundle.privateCredentialTombstones;
+    second.importBundle("user-1", legacyBundle);
+    expect(second.listPrivateCredentials("user-1")).toHaveLength(1);
+
+    expect(second.deletePrivateCredential("user-1", credential.id)).toBe(true);
+    const deletion = second.exportBundle("user-1");
+    expect(deletion.privateCredentials).toEqual([]);
+    expect(deletion.privateCredentialTombstones).toEqual([
+      expect.objectContaining({ credentialId: credential.id }),
+    ]);
+    first.importBundle("user-1", deletion);
+    expect(first.listPrivateCredentials("user-1")).toEqual([]);
+    first.close();
+    second.close();
+  });
+
+  it("rejects ambiguous or malformed private credential records", () => {
+    const vault = new PermissionVault({
+      path: ":memory:",
+      key: new Uint8Array(32).fill(44),
+    });
+    expect(() =>
+      vault.upsertPrivateCredential({
+        accessPolicy: {
+          allowedAgentIds: ["codex"],
+          deniedAgentIds: ["codex"],
+        },
+        kind: "api",
+        label: "Service API",
+        purposes: ["service.read"],
+        secrets: { apiKey: "secret" },
+        userId: "user-1",
+      }),
+    ).toThrow("allow and deny lists overlap");
+    expect(() =>
+      vault.upsertPrivateCredential({
+        fields: { "invalid key": "value" },
+        kind: "generic",
+        label: "Invalid",
+        purposes: ["test"],
+        secrets: { password: "secret" },
+        userId: "user-1",
+      }),
+    ).toThrow();
+    expect(() =>
+      vault.upsertPrivateCredential({
+        kind: "api",
+        label: "Unknown field",
+        purposes: ["test"],
+        secrets: { token: "secret" },
+        userId: "user-1",
+        unexpected: true,
+      } as never),
+    ).toThrow();
     vault.close();
   });
 

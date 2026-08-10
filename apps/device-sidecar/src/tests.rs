@@ -104,6 +104,60 @@ args = ["mcp"]
 }
 
 #[test]
+fn codex_gateway_projection_preserves_upstream_identity() {
+    let home = TempDir::new().unwrap();
+    std::env::set_var("ONE_STATUS_GATEWAY_TEST_TOKEN", "agent-scoped-local-token");
+    let request = json!({
+        "home": home.path(),
+        "tool": "codex",
+        "profile": {
+            "id": "wallet-source",
+            "displayName": "Wallet source",
+            "modelId": "claude-model",
+            "source": "custom-endpoint",
+            "apiProtocol": "openai-responses",
+            "endpoint": "http://127.0.0.1:8787/v1/model-gateway/wallet-source",
+            "credentialEnvVar": "ONE_STATUS_GATEWAY_TEST_TOKEN",
+            "upstream": {
+                "sourceId": "wallet-source",
+                "displayName": "Wallet source",
+                "source": "third-party-compatible-api",
+                "protocol": "anthropic",
+                "apiFormat": "anthropic-messages",
+                "endpoint": "https://provider.example.test"
+            }
+        }
+    });
+    let (_, preview) = run(CommandName::Preview, request.clone());
+    assert!(preview["ok"].as_bool().unwrap(), "{preview}");
+    assert!(!preview.to_string().contains("agent-scoped-local-token"));
+    let mut apply_request = request;
+    apply_request["expectedPlanId"] = preview["data"]["planId"].clone();
+    let (exit, applied) = run(CommandName::Apply, apply_request);
+    assert_eq!(exit, 0, "{applied}");
+
+    let config = fs::read_to_string(home.path().join(".codex/config.toml")).unwrap();
+    assert!(config.contains("wire_api = \"responses\""));
+    assert!(config.contains("base_url = \"http://127.0.0.1:8787/v1/model-gateway/wallet-source\""));
+    assert!(config.contains("experimental_bearer_token = \"agent-scoped-local-token\""));
+    assert!(!config.contains("env_key"));
+    let state: Value = serde_json::from_slice(
+        &fs::read(
+            home.path()
+                .join(".one-status/device-sidecar/active/codex.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(state["profile"]["upstream"]["sourceId"], "wallet-source");
+    assert_eq!(
+        state["profile"]["upstream"]["apiFormat"],
+        "anthropic-messages"
+    );
+    assert!(!state.to_string().contains("agent-scoped-local-token"));
+}
+
+#[test]
 fn claude_apply_removes_embedded_key_and_preserves_other_sections() {
     let home = TempDir::new().unwrap();
     std::env::set_var("ANTHROPIC_AUTH_TOKEN", "vault-test-secret");

@@ -7,10 +7,13 @@ import {
   generateStatusKey,
   importStatusKey,
   StatusDecryptionError,
+  StatusKeyUnwrapError,
+  unwrapStatusKey,
+  wrapStatusKey,
 } from "./index.js";
 
 describe("status encryption", () => {
-  it("round-trips a status document and recovery key", () => {
+  it("round-trips a status document and internal Status Key", () => {
     const key = generateStatusKey();
     const importedKey = importStatusKey(exportStatusKey(key));
     const status = createEmptyStatus();
@@ -40,5 +43,25 @@ describe("status encryption", () => {
     const envelope = encryptStatus(createEmptyStatus(), key, 1);
     envelope.revision = 2;
     expect(() => decryptStatus(envelope, key, 2)).toThrow(StatusDecryptionError);
+  });
+
+  it("wraps a Status Key with the account password", async () => {
+    const key = generateStatusKey();
+    const wrapped = await wrapStatusKey(key, "correct horse battery staple");
+
+    await expect(
+      unwrapStatusKey(wrapped, "correct horse battery staple"),
+    ).resolves.toEqual(key);
+  });
+
+  it("rejects an incorrect Status Key password", async () => {
+    const wrapped = await wrapStatusKey(
+      generateStatusKey(),
+      "correct horse battery staple",
+    );
+
+    await expect(
+      unwrapStatusKey(wrapped, "incorrect password value"),
+    ).rejects.toBeInstanceOf(StatusKeyUnwrapError);
   });
 });

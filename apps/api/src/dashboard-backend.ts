@@ -35,7 +35,11 @@ export interface DashboardBackend {
   mutateStatus(
     mutator: (status: StatusDocument) => void,
   ): Promise<DashboardStatusSnapshot>;
+  blockDevice?(deviceId: string): Promise<void>;
+  revokeDeviceSessions?(deviceId: string): Promise<void>;
   revokeDevice(deviceId: string): Promise<void>;
+  setDeviceLoginPolicy?(denyNewDeviceLogins: boolean): Promise<void>;
+  unblockDevice?(deviceId: string): Promise<void>;
   userId(): Promise<string>;
 }
 
@@ -104,15 +108,32 @@ export class LocalDashboardBackend implements DashboardBackend {
   }
 
   async revokeDevice(deviceId: string): Promise<void> {
+    const { client } = await this.#deviceClient(deviceId);
+    await client.revokeDevice(deviceId);
+  }
+
+  async revokeDeviceSessions(deviceId: string): Promise<void> {
+    const { client } = await this.#deviceClient(deviceId);
+    await client.revokeDeviceSessions(deviceId);
+  }
+
+  async blockDevice(deviceId: string): Promise<void> {
+    const { client } = await this.#deviceClient(deviceId);
+    await client.blockDevice(deviceId);
+  }
+
+  async unblockDevice(deviceId: string): Promise<void> {
+    const { client } = await this.#deviceClient(deviceId);
+    await client.unblockDevice(deviceId);
+  }
+
+  async setDeviceLoginPolicy(denyNewDeviceLogins: boolean): Promise<void> {
     const profile = await this.loadProfile();
-    if (deviceId === profile.deviceId) {
-      throw new Error("The active dashboard device cannot revoke itself.");
-    }
     const client = new OneStatusClient({
       baseUrl: profile.baseUrl,
       token: profile.token,
     });
-    await client.revokeDevice(deviceId);
+    await client.setDeviceLoginPolicy(denyNewDeviceLogins);
   }
 
   async userId(): Promise<string> {
@@ -133,6 +154,23 @@ export class LocalDashboardBackend implements DashboardBackend {
       client,
       profile,
       vault: client.createVault(importStatusKey(profile.statusKey)),
+    };
+  }
+
+  async #deviceClient(deviceId: string): Promise<{
+    client: OneStatusClient;
+    profile: LocalProfile;
+  }> {
+    const profile = await this.loadProfile();
+    if (deviceId === profile.deviceId) {
+      throw new Error("The active dashboard device cannot manage itself.");
+    }
+    return {
+      client: new OneStatusClient({
+        baseUrl: profile.baseUrl,
+        token: profile.token,
+      }),
+      profile,
     };
   }
 }

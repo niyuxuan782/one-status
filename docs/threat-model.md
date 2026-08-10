@@ -7,7 +7,7 @@
 - 账号密码
 - 设备会话 Token
 - 短期 Agent credential
-- 后续接入的 OAuth Token 与工具调用权限
+- OAuth Token、模型 API Key、账号密码、SSH、云平台凭据、卡密与工具调用权限
 
 ## 当前信任边界
 
@@ -29,7 +29,7 @@
 
 | 风险 | 当前控制 |
 | --- | --- |
-| 数据库读取 | AES-256-GCM 密文，Status Key 不上传 |
+| 数据库读取 | Status 与封装后的 Status Key 均为 AES-256-GCM 密文 |
 | 密文篡改与跨 revision 替换 | GCM authentication tag 与 revision-bound AAD |
 | 密码泄漏 | `scrypt` 独立 salt 与 constant-time comparison |
 | 会话库泄漏 | 随机 Token 只以 SHA-256 摘要保存 |
@@ -51,6 +51,13 @@
 | 跨账号 Status 读取 | 所有 Status 查询绑定认证后的 `userId` |
 | OAuth 凭据落盘 | 独立 Permission Vault、AES-256-GCM、独立 256 位本地 key、文件权限 `0600` |
 | OAuth 凭据跨设备 | HKDF 派生同步密钥、独立 AES-256-GCM envelope、目标设备本地重新加密 |
+| 通用钥匙串落盘 | 每条完整 payload 使用 AES-256-GCM 加密；SQLite、列表和 Dashboard snapshot 不含明文字段 |
+| 通用钥匙串跨设备 | Permission Vault bundle 使用 Status Key 派生密钥二次加密；删除墓碑随 E2EE bundle 合并 |
+| Agent 凭据登记与读取 | 路由只接受短期 Agent credential，服务端绑定 user、device、agent；请求体不接受来源身份覆盖 |
+| 凭据元数据响应 | register、list、resolve、update 和 delete 统一遮罩全部 Secret；`credentials_get` 只返回当前任务读取结果 |
+| 凭据错误与日志泄漏 | MCP 客户端将凭据 API 失败统一为固定错误；普通 Status、Persona、Activity 与审计记录不保存 Secret |
+| 凭据轮换产生重复项 | MCP instructions 要求先 resolve 原条目，再调用 update；Secret 按字段合并并保留稳定 ID |
+| Agent 凭据读取审计 | 每次读取记录 Agent、项目、用途、决策、原因与时间，不记录明文 Secret |
 | OAuth callback 重放 | state 只保存 SHA-256 摘要、10 分钟 TTL、消费后删除、PKCE |
 | Slack Client Secret 落盘 | Slack 使用 public client PKCE，只保存 Client ID；exchange 与 refresh 不发送 Client Secret |
 | Dashboard 跨站写入 | 回环 Host 校验、HttpOnly SameSite cookie、Origin 与 CSRF 双校验、CSP |
@@ -62,8 +69,8 @@
 ## 已知限制
 
 - Windows 与 Linux 默认 profile 尚未接入 Credential Manager 或 Secret Service；显式自定义 path 为便携场景保留明文 `0600` 文件模式。
-- 账号登录会创建可下载密文的新设备会话，尚未要求已有设备批准。
-- 用户需要通过离线渠道传递 Status Key。
+- 新设备默认凭账密直接登录；用户可开启“拒绝新设备登录”，并从其他设备撤销 Session、封禁或解除封禁设备。
+- 账号密码进入当前 HTTPS 登录处理进程；密码封装保护数据库静态泄露场景，无法防御恶意服务端在登录时截获密码。
 - 整份 Status 共用一个 envelope，大文档会增加同步流量和冲突概率。
 - 服务端仍可同时回放旧版本号和旧密文，客户端目前没有设备侧可信版本锚点。
 - 客户端在线执行 mutation，尚未持久化离线写入队列。
@@ -85,5 +92,5 @@
 3. 短时 access token、可轮换 refresh token 和 Token version。
 4. 逐记录密钥派生，AAD 绑定 account、record、revision 和 key version。
 5. API 限流、密码爆破防护、TLS、日志全局脱敏和安全审计。
-6. OAuth Token 使用独立 Permission Vault，Agent 永远只获得受控动作结果。
+6. OAuth Token 继续通过固定 Provider action 使用；通用钥匙串明文只允许经绑定身份的 `credentials_get` 按用途读取。
 7. 加入密钥丢失、设备丢失、恶意服务端、重放、跨账号隔离和日志泄漏测试。

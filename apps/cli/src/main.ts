@@ -112,8 +112,6 @@ async function register(flags: Map<string, string>): Promise<void> {
   await prepareLocalProfileStorage(resolveProfilePath(), true);
   const statusKey = generateStatusKey();
   const exportedKey = exportStatusKey(statusKey);
-  console.log(`Status Key: ${exportedKey}`);
-  console.log("Keep the Status Key offline. A new device needs it to decrypt your status.");
   const anonymous = new OneStatusClient({ baseUrl });
   const session = await anonymous.register(
     {
@@ -134,21 +132,53 @@ async function login(flags: Map<string, string>): Promise<void> {
   const email = requiredFlag(flags, "email");
   const deviceName = requiredFlag(flags, "device");
   const password = await requiredSecret("ONE_STATUS_PASSWORD");
-  const exportedKey = await requiredSecret("ONE_STATUS_STATUS_KEY");
-  const statusKey = importStatusKey(exportedKey);
   const anonymous = new OneStatusClient({ baseUrl });
-  const session = await anonymous.login({
-    email,
-    password,
-    deviceName,
-    installationId: await resolveInstallationId(baseUrl, flags),
-  });
+  const migrationCandidate = await loadStatusKeyMigrationCandidate(baseUrl);
+  const session = await anonymous.login(
+    {
+      email,
+      password,
+      deviceName,
+      installationId: await resolveInstallationId(baseUrl, flags),
+    },
+    migrationCandidate,
+  );
   const client = new OneStatusClient({ baseUrl, token: session.token });
-  await client.createVault(statusKey).read();
+  if (migrationCandidate && migrationCandidate.userId !== session.userId) {
+    await client.logout().catch(() => undefined);
+    throw new Error(
+      "The existing local profile belongs to another One Status account.",
+    );
+  }
+  await client.createVault(session.statusKey).read();
 
-  await saveSession({ baseUrl, deviceName, exportedKey, session });
+  await saveSession({
+    baseUrl,
+    deviceName,
+    exportedKey: exportStatusKey(session.statusKey),
+    session,
+  });
   console.log("Device connected and status decrypted successfully.");
   console.log(`Profile: ${resolveProfilePath()}`);
+}
+
+async function loadStatusKeyMigrationCandidate(baseUrl: string): Promise<
+  | { statusKey: Uint8Array; userId: string }
+  | undefined
+> {
+  if (!existsSync(resolveProfilePath())) return undefined;
+  const profile = await loadLocalProfile();
+  if (normalizedBaseUrl(profile.baseUrl) !== normalizedBaseUrl(baseUrl)) {
+    return undefined;
+  }
+  return {
+    statusKey: importStatusKey(profile.statusKey),
+    userId: profile.userId,
+  };
+}
+
+function normalizedBaseUrl(value: string): string {
+  return new URL(value).toString().replace(/\/$/, "");
 }
 
 async function showStatus(): Promise<void> {
@@ -820,7 +850,7 @@ function printHelp(): void {
 
 Usage:
   ONE_STATUS_PASSWORD=... one-status register --email <email> --device <name>
-  ONE_STATUS_PASSWORD=... ONE_STATUS_STATUS_KEY=... one-status login --email <email> --device <name>
+  ONE_STATUS_PASSWORD=... one-status login --email <email> --device <name>
   one-status show
   one-status remember --content <text> [--scope user|project|session] [--project <id>]
   one-status set-preference --key <key> --value <value>
@@ -848,8 +878,6 @@ Environment:
   ONE_STATUS_HOME        Local profile directory
   ONE_STATUS_PASSWORD    Account password for register/login
   ONE_STATUS_PASSWORD_FILE  File containing the account password
-  ONE_STATUS_STATUS_KEY  Recovery key for a new device
-  ONE_STATUS_STATUS_KEY_FILE  File containing the recovery key
   ONE_STATUS_TOOL_GATEWAY_URL  Local or HTTPS Permission Vault API base URL
   ONE_STATUS_AGENT_ID    Identity bound into the short-lived Gateway credential
   ONE_STATUS_AGENT_TOKEN Optional pre-issued Agent credential (osa1_...)

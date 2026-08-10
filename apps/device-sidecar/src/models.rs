@@ -57,6 +57,24 @@ pub enum ApiProtocol {
     Anthropic,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum UpstreamProtocol {
+    Openai,
+    Anthropic,
+    Ollama,
+    AzureOpenai,
+    Custom,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum UpstreamApiFormat {
+    OpenaiResponses,
+    OpenaiChatCompletions,
+    AnthropicMessages,
+}
+
 impl ApiProtocol {
     pub fn as_str(self) -> &'static str {
         match self {
@@ -81,6 +99,21 @@ pub struct ModelProfile {
     pub endpoint: Option<String>,
     #[serde(default)]
     pub credential_env_var: Option<String>,
+    #[serde(default)]
+    pub upstream: Option<UpstreamProfile>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct UpstreamProfile {
+    pub source_id: String,
+    pub display_name: String,
+    pub source: SourceType,
+    pub protocol: UpstreamProtocol,
+    #[serde(default)]
+    pub api_format: Option<UpstreamApiFormat>,
+    #[serde(default)]
+    pub endpoint: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -311,6 +344,8 @@ pub struct ProfileSummary {
     pub endpoint_domain: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub credential_env_var: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upstream: Option<UpstreamProfile>,
 }
 
 #[derive(Clone, Debug, Serialize)]

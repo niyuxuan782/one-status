@@ -41,7 +41,13 @@ export interface LocalAgentAsset {
 }
 
 export interface LocalAgentModelConfiguration {
+  apiFormat?:
+    | "openai-responses"
+    | "openai-chat-completions"
+    | "anthropic-messages";
   credentialFingerprint?: string;
+  managedByGateway?: boolean;
+  managedSourceId?: string;
   modelId?: string;
   providerId: string;
   providerLabel: string;
@@ -173,13 +179,16 @@ export async function scanLocalInventory(
     claude: await findExecutable("claude", environment, home),
     cursor: await findExecutable("cursor", environment, home),
   };
+  const codexHome = environment.CODEX_HOME ?? join(home, ".codex");
+  const claudeHome = environment.CLAUDE_CONFIG_DIR ?? join(home, ".claude");
+  const managedStateRoot = join(home, ".one-status", "device-sidecar", "active");
   const codexConfig = await readStructuredFile(
-    join(environment.CODEX_HOME ?? join(home, ".codex"), "config.toml"),
+    join(codexHome, "config.toml"),
     "toml",
     warnings,
   );
   const codexAuth = await readStructuredFile(
-    join(environment.CODEX_HOME ?? join(home, ".codex"), "auth.json"),
+    join(codexHome, "auth.json"),
     "json",
     warnings,
   );
@@ -189,7 +198,17 @@ export async function scanLocalInventory(
     warnings,
   );
   const claudeSettings = await readStructuredFile(
-    join(home, ".claude", "settings.json"),
+    join(claudeHome, "settings.json"),
+    "json",
+    warnings,
+  );
+  const codexManaged = await readStructuredFile(
+    join(managedStateRoot, "codex.json"),
+    "json",
+    warnings,
+  );
+  const claudeManaged = await readStructuredFile(
+    join(managedStateRoot, "claude-code.json"),
     "json",
     warnings,
   );
@@ -200,7 +219,10 @@ export async function scanLocalInventory(
       executables.codex,
       runCommand,
       runAgentCommands,
-      readCodexModelConfiguration(codexConfig, codexAuth, environment),
+      applyManagedGatewayOrigin(
+        readCodexModelConfiguration(codexConfig, codexAuth, environment),
+        codexManaged,
+      ),
     ),
     inspectAgent(
       "claude-code",
@@ -208,7 +230,10 @@ export async function scanLocalInventory(
       executables.claude,
       runCommand,
       runAgentCommands,
-      readClaudeModelConfiguration(claudeSettings, environment),
+      applyManagedGatewayOrigin(
+        readClaudeModelConfiguration(claudeSettings, environment),
+        claudeManaged,
+      ),
     ),
     inspectAgent("cursor", "Cursor", executables.cursor, runCommand, false),
   ]);
@@ -280,11 +305,12 @@ export async function discoverLocalModelCredentials(
   const home = options.homeDir ?? homedir();
   const warnings: string[] = [];
   const codexHome = environment.CODEX_HOME ?? join(home, ".codex");
+  const claudeHome = environment.CLAUDE_CONFIG_DIR ?? join(home, ".claude");
   const [codexConfig, codexAuth, claudeSettings] = await Promise.all([
     readStructuredFile(join(codexHome, "config.toml"), "toml", warnings),
     readStructuredFile(join(codexHome, "auth.json"), "json", warnings),
     readStructuredFile(
-      join(home, ".claude", "settings.json"),
+      join(claudeHome, "settings.json"),
       "json",
       warnings,
     ),
@@ -307,6 +333,7 @@ export async function discoverLocalModelCredentials(
   ];
   const discoveries = new Map<string, LocalModelCredentialDiscovery>();
   for (const candidate of candidates) {
+    if (isModelGatewayEndpoint(candidate.model.endpoint)) continue;
     if (!candidate.apiKey || !candidate.model.credentialFingerprint) continue;
     const sourceId = localModelSourceId(candidate.model);
     discoveries.set(sourceId, {
@@ -372,6 +399,10 @@ function readCodexProviderModelConfiguration(
     embeddedBearerAvailable,
   );
   return {
+    apiFormat:
+      stringProperty(provider, "wire_api") === "chat"
+        ? "openai-chat-completions"
+        : "openai-responses",
     ...(modelId ? { modelId } : {}),
     ...(apiKey
       ? { credentialFingerprint: modelCredentialFingerprint(apiKey) }
@@ -424,6 +455,7 @@ function readClaudeModelConfiguration(
   );
   const providerId = endpoint ? `anthropic-${shortHash(endpoint)}` : "anthropic";
   return {
+    apiFormat: "anthropic-messages",
     modelId,
     ...(apiKey
       ? { credentialFingerprint: modelCredentialFingerprint(apiKey) }
@@ -645,10 +677,20 @@ function readClaudeApiKey(
 export function localModelSourceId(
   model: Pick<
     LocalAgentModelConfiguration,
-    "credentialFingerprint" | "endpoint" | "protocol" | "providerId"
+    | "credentialFingerprint"
+    | "endpoint"
+    | "managedSourceId"
+    | "protocol"
+    | "providerId"
   >,
   identityKey?: Uint8Array,
 ): string {
+  if (
+    model.managedSourceId &&
+    /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(model.managedSourceId)
+  ) {
+    return model.managedSourceId;
+  }
   const base = normalizeControlId(model.providerId);
   const routeFingerprint = createHash("sha256")
     .update("one-status/model-route/v1\0", "utf8")
@@ -734,14 +776,121 @@ function safeModelEndpoint(value?: string): string | undefined {
   try {
     const url = new URL(value);
     if (url.protocol !== "http:" && url.protocol !== "https:") return undefined;
+    const keepsAzureApiVersion =
+      url.searchParams.size === 1 &&
+      url.searchParams.has("api-version") &&
+      Boolean(url.searchParams.get("api-version"));
     url.username = "";
     url.password = "";
-    url.search = "";
+    if (!keepsAzureApiVersion) url.search = "";
     url.hash = "";
     return url.toString().replace(/\/$/, "");
   } catch {
     return undefined;
   }
+}
+
+function isModelGatewayEndpoint(value?: string): boolean {
+  if (!value) return false;
+  try {
+    const url = new URL(value);
+    return (
+      isLoopbackHostname(url.hostname) &&
+      /\/v1\/model-gateway\/[^/]+(?:\/|$)/.test(url.pathname)
+    );
+  } catch {
+    return false;
+  }
+}
+
+function applyManagedGatewayOrigin(
+  model: LocalAgentModelConfiguration,
+  state: Record<string, unknown>,
+): LocalAgentModelConfiguration {
+  const profile = isRecord(state.profile) ? state.profile : {};
+  const upstream = isRecord(profile.upstream) ? profile.upstream : {};
+  const projectedEndpoint = safeModelEndpoint(
+    stringProperty(profile, "endpoint"),
+  );
+  if (
+    !isModelGatewayEndpoint(model.endpoint) ||
+    projectedEndpoint !== safeModelEndpoint(model.endpoint)
+  ) {
+    return model;
+  }
+  const sourceId = stringProperty(upstream, "sourceId");
+  const displayName = stringProperty(upstream, "displayName");
+  const sourceKind = managedSourceKind(stringProperty(upstream, "source"));
+  const protocol = managedProtocol(stringProperty(upstream, "protocol"));
+  const apiFormat = managedApiFormat(stringProperty(upstream, "apiFormat"));
+  if (
+    !sourceId ||
+    !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(sourceId) ||
+    !displayName ||
+    !sourceKind ||
+    !protocol
+  ) {
+    return model;
+  }
+  const endpoint = safeModelEndpoint(stringProperty(upstream, "endpoint"));
+  const result: LocalAgentModelConfiguration = {
+    ...model,
+    managedByGateway: true,
+    managedSourceId: sourceId,
+    providerId: sourceId,
+    providerLabel: displayName,
+    sourceKind,
+    protocol,
+    ...(apiFormat ? { apiFormat } : {}),
+    credentialStatus:
+      sourceKind === "local-service" ? "not-required" : "available",
+    ...(endpoint
+      ? { endpoint, endpointHost: new URL(endpoint).host }
+      : {}),
+  };
+  delete result.credentialFingerprint;
+  if (!endpoint) {
+    delete result.endpoint;
+    delete result.endpointHost;
+  }
+  return result;
+}
+
+function managedSourceKind(
+  value?: string,
+): LocalAgentModelConfiguration["sourceKind"] | undefined {
+  if (value === "third-party-compatible-api") return "compatible-api";
+  if (value === "local-model-service") return "local-service";
+  if (
+    value === "official-account" ||
+    value === "official-api" ||
+    value === "custom-endpoint"
+  ) {
+    return value;
+  }
+  return undefined;
+}
+
+function managedProtocol(
+  value?: string,
+): LocalAgentModelConfiguration["protocol"] | undefined {
+  return value === "openai" ||
+    value === "anthropic" ||
+    value === "ollama" ||
+    value === "azure-openai" ||
+    value === "custom"
+    ? value
+    : undefined;
+}
+
+function managedApiFormat(
+  value?: string,
+): LocalAgentModelConfiguration["apiFormat"] | undefined {
+  return value === "openai-responses" ||
+    value === "openai-chat-completions" ||
+    value === "anthropic-messages"
+    ? value
+    : undefined;
 }
 
 function isLoopbackHostname(hostname: string): boolean {

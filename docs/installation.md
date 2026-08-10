@@ -60,7 +60,7 @@ pnpm --filter @one-status/desktop dist:linux
 
 Release workflow 在对应操作系统 runner 生成 macOS arm64/x64 DMG 与 ZIP、Windows x64 NSIS 与 portable EXE、Linux x64 AppImage 与 DEB。Desktop App 内嵌本机 API，并在健康检查确认后复用已有 `127.0.0.1:8787` One Status 服务。
 
-Preview 构建尚未完成 Apple Developer ID notarization 和 Windows Authenticode 签名。Release Notes 与 Homebrew Cask 会明确显示该状态，不会自动绕过 Gatekeeper 或 SmartScreen。
+公开的 `v0.8.0` macOS 附件仍是未公证旧包。新 Release workflow 要求 Developer ID、Apple notarization、stapled ticket 与 Gatekeeper 全部通过后才允许发布；Pages 会按每个 Release 的实际记录显示签名状态。Windows Authenticode 仍待接入。
 
 v0.8.0 构建会把模型配置 Rust Sidecar 放入 Desktop App resources，并同时生成独立原生附件，供 CLI、一键安装与 Homebrew 使用。原生构建需要验证：
 
@@ -156,7 +156,7 @@ Homebrew service 在 `127.0.0.1:8787` 启动同步 API 与本地工作台，数�
 
 公开 Formula 根据 macOS arm64、macOS x64、Linux x64 选择独立 Sidecar 资源，逐项校验 SHA-256，并安装到 `libexec`。交互式 CLI 可通过同目录或 PATH 自动发现 Sidecar；`brew services` 会设置 `ONE_STATUS_DEVICE_SIDECAR` 为 Cellar 内的固定路径。
 
-没有本地 profile 时，工作台直接显示注册与登录界面。默认云地址可通过 `ONE_STATUS_DEFAULT_SYNC_URL` 设置；新设备登录会先验证恢复密钥能够解密远端 Status，再保存 profile。
+没有本地 profile 时，工作台直接显示注册与登录界面。默认云地址可通过 `ONE_STATUS_DEFAULT_SYNC_URL` 设置；新设备输入邮箱和账号密码后，客户端自动解封内部 Status Key、验证远端 Status 并保存 profile。
 
 macOS 默认 profile 文件不保存设备 session Token 和 Status Key，这两项进入系统 Keychain。旧版 v1 明文 profile 会在首次成功读取 Keychain 后原子迁移；迁移失败时旧文件保持原状。通过显式 path 使用多 profile 或测试环境时，继续采用权限为 `0600` 的文件模式。
 

@@ -45,6 +45,9 @@ describe("Permission Vault encrypted sync", () => {
       "third-party-a",
       "third-party-model-secret",
     );
+    const [firstModelCredential] = first.listPrivateCredentials("user-1", {
+      kinds: ["model"],
+    });
     expect(first.verifyModelWalletPassword("user-1", "123456")).toBe(true);
     expect(
       first.changeModelWalletPassword("user-1", "123456", "654321"),
@@ -72,6 +75,18 @@ describe("Permission Vault encrypted sync", () => {
     expect(second.getModelCredential("user-1", "third-party-a")).toBe(
       "third-party-model-secret",
     );
+    const [secondModelCredential] = second.listPrivateCredentials("user-1", {
+      kinds: ["model"],
+    });
+    expect(secondModelCredential?.id).toBe(firstModelCredential?.id);
+    expect(
+      second.readPrivateCredentialForAgent({
+        agentId: "claude-code",
+        credentialId: secondModelCredential!.id,
+        purpose: "model.api",
+        userId: "user-1",
+      })?.secrets,
+    ).toEqual({ apiKey: "third-party-model-secret" });
     expect(second.exportBundle("user-1").walletPassword).toEqual(
       walletPassword,
     );
@@ -108,6 +123,8 @@ describe("Permission Vault encrypted sync", () => {
     vi.spyOn(legacy, "exportBundle").mockImplementation((userId) => {
       const bundle = legacyExport(userId);
       delete bundle.modelCredentialIgnores;
+      delete bundle.privateCredentialTombstones;
+      delete bundle.privateCredentials;
       delete bundle.walletPassword;
       return bundle;
     });
@@ -123,12 +140,23 @@ describe("Permission Vault encrypted sync", () => {
       current.changeModelWalletPassword("user-1", "123456", "654321"),
     ).toBe(true);
     current.ignoreModelCredential("user-1", "deleted-source");
+    const privateCredential = current.upsertPrivateCredential({
+      fields: { host: "server.internal", username: "ubuntu" },
+      kind: "ssh",
+      label: "Production SSH",
+      purposes: ["deployment.ssh"],
+      secrets: { password: "private-sync-secret" },
+      userId: "user-1",
+    });
     expect(current.exportBundle("user-1").modelCredentialIgnores).toEqual([
       expect.objectContaining({ sourceId: "deleted-source" }),
     ]);
     await new PermissionSyncService(backend, current, context).run(
       () => undefined,
     );
+    expect(current.listPrivateCredentials("user-1")).toEqual([
+      expect.objectContaining({ id: privateCredential.id }),
+    ]);
     expect(current.exportBundle("user-1").modelCredentialIgnores).toEqual([
       expect.objectContaining({ sourceId: "deleted-source" }),
     ]);
@@ -138,6 +166,19 @@ describe("Permission Vault encrypted sync", () => {
     expect(nextDevice.exportBundle("user-1").modelCredentialIgnores).toEqual([
       expect.objectContaining({ sourceId: "deleted-source" }),
     ]);
+    expect(nextDevice.listPrivateCredentials("user-1")).toEqual([
+      expect.objectContaining({ id: privateCredential.id }),
+    ]);
+    expect(nextDevice.verifyModelWalletPassword("user-1", "654321")).toBe(
+      true,
+    );
+    expect(
+      nextDevice.revealPrivateCredential(
+        "user-1",
+        privateCredential.id,
+        "654321",
+      )?.secrets,
+    ).toEqual({ password: "private-sync-secret" });
 
     expect(nextDevice.verifyModelWalletPassword("user-1", "123456")).toBe(
       false,
@@ -168,6 +209,8 @@ describe("Permission Vault encrypted sync", () => {
     vi.spyOn(legacy, "exportBundle").mockImplementation((userId) => {
       const bundle = legacyExport(userId);
       delete bundle.modelCredentialIgnores;
+      delete bundle.privateCredentialTombstones;
+      delete bundle.privateCredentials;
       delete bundle.walletPassword;
       return bundle;
     });
@@ -201,6 +244,83 @@ describe("Permission Vault encrypted sync", () => {
     modern.close();
     legacy.close();
     nextDevice.close();
+  });
+
+  it("resolves concurrent private credential updates, deletion, and recreation", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-10T10:00:00.000Z"));
+    const backend = new MemoryBackend();
+    const first = createVault(34);
+    const second = createVault(35);
+    const third = createVault(36);
+    const context = async () => ({
+      statusKey: new Uint8Array(32).fill(37),
+      userId: "user-1",
+    });
+    const firstSync = new PermissionSyncService(backend, first, context);
+    const secondSync = new PermissionSyncService(backend, second, context);
+    const credential = first.upsertPrivateCredential({
+      fields: { host: "server.internal", username: "ubuntu" },
+      kind: "ssh",
+      label: "Production SSH",
+      purposes: ["deployment.ssh"],
+      secrets: { password: "initial-secret" },
+      userId: "user-1",
+    });
+    await firstSync.run(() => undefined);
+    await secondSync.run(() => undefined);
+
+    await secondSync.run(async () => {
+      vi.setSystemTime(new Date("2026-08-10T10:01:00.000Z"));
+      second.upsertPrivateCredential({
+        fields: { host: "server.internal", username: "ubuntu" },
+        id: credential.id,
+        kind: "ssh",
+        label: "Production SSH",
+        purposes: ["deployment.ssh"],
+        secrets: { password: "concurrent-update" },
+        userId: "user-1",
+      });
+      vi.setSystemTime(new Date("2026-08-10T10:02:00.000Z"));
+      await firstSync.run(() => {
+        expect(
+          first.deletePrivateCredential("user-1", credential.id),
+        ).toBe(true);
+      });
+    });
+
+    expect(second.listPrivateCredentials("user-1")).toEqual([]);
+    expect(second.exportBundle("user-1").privateCredentialTombstones).toEqual([
+      expect.objectContaining({ credentialId: credential.id }),
+    ]);
+    await new PermissionSyncService(backend, third, context).run(
+      () => undefined,
+    );
+    expect(third.listPrivateCredentials("user-1")).toEqual([]);
+
+    vi.setSystemTime(new Date("2026-08-10T10:03:00.000Z"));
+    await firstSync.run(() => {
+      first.upsertPrivateCredential({
+        fields: { host: "server.internal", username: "ubuntu" },
+        id: credential.id,
+        kind: "ssh",
+        label: "Production SSH",
+        purposes: ["deployment.ssh"],
+        secrets: { password: "recreated-secret" },
+        userId: "user-1",
+      });
+    });
+    await secondSync.run(() => undefined);
+    expect(
+      second.revealPrivateCredential("user-1", credential.id, "123456")
+        ?.secrets,
+    ).toEqual({ password: "recreated-secret" });
+    expect(
+      JSON.stringify(backend.status.permissions.vault),
+    ).not.toContain("recreated-secret");
+    first.close();
+    second.close();
+    third.close();
   });
 
   it("fails closed when another Status Key is used", async () => {
@@ -397,6 +517,7 @@ class MemoryBackend implements DashboardBackend {
           createdAt: "2026-08-08T10:00:00.000Z",
         },
         devices: [],
+        deviceLoginPolicy: { denyNewDeviceLogins: false },
       },
       profile: {
         baseUrl: "https://os.example.test",

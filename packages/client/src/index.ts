@@ -1,13 +1,22 @@
-import { randomBytes, randomUUID } from "node:crypto";
-import { decryptStatus, encryptStatus } from "@one-status/crypto";
+import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
+import {
+  decryptStatus,
+  encryptStatus,
+  unwrapStatusKey,
+  wrapStatusKey,
+} from "@one-status/crypto";
 import {
   accountResponseSchema,
   authResponseSchema,
   createEmptyStatus,
+  deviceBlockResponseSchema,
   deviceHeartbeatResponseSchema,
+  deviceLoginPolicySchema,
   deviceRevocationResponseSchema,
+  deviceSessionRevocationResponseSchema,
   parseStatusDocument,
   sessionRevocationResponseSchema,
+  statusKeyMigrationResponseSchema,
   statusSnapshotSchema,
   type AuthRequest,
   type AuthResponse,
@@ -20,6 +29,15 @@ export interface OneStatusClientOptions {
   token?: string;
   fetch?: typeof globalThis.fetch;
   requestTimeoutMs?: number;
+}
+
+export type AuthenticatedDeviceSession = AuthResponse & {
+  statusKey: Uint8Array;
+};
+
+export interface StatusKeyMigrationCandidate {
+  statusKey: Uint8Array;
+  userId: string;
 }
 
 export class OneStatusApiError extends Error {
@@ -82,23 +100,88 @@ export class OneStatusClient {
   async register(
     input: AuthRequest,
     statusKey: Uint8Array,
-  ): Promise<AuthResponse> {
-    return authResponseSchema.parse(
+  ): Promise<AuthenticatedDeviceSession> {
+    const wrappedStatusKey = await wrapStatusKey(statusKey, input.password);
+    const initialEnvelope = encryptStatus(createEmptyStatus(), statusKey, 1);
+    const session = authResponseSchema.parse(
       await this.#request("/v1/auth/register", {
         method: "POST",
         body: JSON.stringify({
           ...input,
-          initialEnvelope: encryptStatus(createEmptyStatus(), statusKey, 1),
+          initialEnvelope,
+          wrappedStatusKey,
         }),
       }),
     );
+    return { ...session, statusKey };
   }
 
-  async login(input: AuthRequest): Promise<AuthResponse> {
-    return authResponseSchema.parse(
+  async login(
+    input: AuthRequest,
+    migrationCandidate?: StatusKeyMigrationCandidate,
+  ): Promise<AuthenticatedDeviceSession> {
+    const session = authResponseSchema.parse(
       await this.#request("/v1/auth/login", {
         method: "POST",
         body: JSON.stringify(input),
+      }),
+    );
+    const authenticated = this.#authenticated(session.token);
+    if (!session.wrappedStatusKey) {
+      try {
+        if (
+          !migrationCandidate ||
+          migrationCandidate.userId !== session.userId
+        ) {
+          throw statusKeyMigrationRequiredError();
+        }
+        await authenticated.createVault(migrationCandidate.statusKey).read();
+        const migration = await authenticated.migrateStatusKey(
+          input.password,
+          migrationCandidate.statusKey,
+        );
+        const storedStatusKey = await unwrapStatusKey(
+          migration.wrappedStatusKey,
+          input.password,
+        );
+        if (!sameStatusKey(storedStatusKey, migrationCandidate.statusKey)) {
+          throw new Error(
+            "The migrated Status Key does not match this device's local key.",
+          );
+        }
+        return {
+          ...session,
+          wrappedStatusKey: migration.wrappedStatusKey,
+          statusKey: migrationCandidate.statusKey,
+        };
+      } catch (error) {
+        await authenticated.logout().catch(() => undefined);
+        throw error;
+      }
+    }
+    try {
+      return {
+        ...session,
+        statusKey: await unwrapStatusKey(
+          session.wrappedStatusKey,
+          input.password,
+        ),
+      };
+    } catch (error) {
+      await authenticated.logout().catch(() => undefined);
+      throw error;
+    }
+  }
+
+  async migrateStatusKey(password: string, statusKey: Uint8Array) {
+    if (!this.#token) {
+      throw new Error("A device session token is required to migrate a Status Key.");
+    }
+    const wrappedStatusKey = await wrapStatusKey(statusKey, password);
+    return statusKeyMigrationResponseSchema.parse(
+      await this.#request("/v1/account/wrapped-status-key", {
+        method: "PUT",
+        body: JSON.stringify({ password, wrappedStatusKey }),
       }),
     );
   }
@@ -121,6 +204,40 @@ export class OneStatusClient {
     return deviceRevocationResponseSchema.parse(
       await this.#request(`/v1/devices/${encodeURIComponent(deviceId)}`, {
         method: "DELETE",
+      }),
+    );
+  }
+
+  async revokeDeviceSessions(deviceId: string) {
+    return deviceSessionRevocationResponseSchema.parse(
+      await this.#request(
+        `/v1/devices/${encodeURIComponent(deviceId)}/revoke-sessions`,
+        { method: "POST" },
+      ),
+    );
+  }
+
+  async blockDevice(deviceId: string) {
+    return deviceBlockResponseSchema.parse(
+      await this.#request(`/v1/devices/${encodeURIComponent(deviceId)}/block`, {
+        method: "PUT",
+      }),
+    );
+  }
+
+  async unblockDevice(deviceId: string) {
+    return deviceBlockResponseSchema.parse(
+      await this.#request(`/v1/devices/${encodeURIComponent(deviceId)}/block`, {
+        method: "DELETE",
+      }),
+    );
+  }
+
+  async setDeviceLoginPolicy(denyNewDeviceLogins: boolean) {
+    return deviceLoginPolicySchema.parse(
+      await this.#request("/v1/account/device-login-policy", {
+        method: "PUT",
+        body: JSON.stringify({ denyNewDeviceLogins }),
       }),
     );
   }
@@ -155,6 +272,15 @@ export class OneStatusClient {
         }),
       }),
     );
+  }
+
+  #authenticated(token: string): OneStatusClient {
+    return new OneStatusClient({
+      baseUrl: this.#baseUrl,
+      fetch: this.#fetch,
+      requestTimeoutMs: this.#requestTimeoutMs,
+      token,
+    });
   }
 
   async #request(path: string, init: RequestInit = {}): Promise<unknown> {
@@ -327,6 +453,22 @@ function readApiError(body: unknown): {
   }
   const error = body.error;
   return error && typeof error === "object" ? error : {};
+}
+
+function statusKeyMigrationRequiredError(): OneStatusApiError {
+  return new OneStatusApiError(
+    "This account must migrate its encrypted Status Key. Sign in on a previously connected device with the account password, then retry this device.",
+    409,
+    "status_key_migration_required",
+    null,
+  );
+}
+
+function sameStatusKey(left: Uint8Array, right: Uint8Array): boolean {
+  return (
+    left.byteLength === right.byteLength &&
+    timingSafeEqual(Buffer.from(left), Buffer.from(right))
+  );
 }
 
 function isTransportError(error: unknown): boolean {

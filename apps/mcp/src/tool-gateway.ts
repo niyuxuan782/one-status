@@ -1,17 +1,59 @@
 import type { McpRuntimeConfig, McpRuntimeConfigLoader } from "./config.js";
 
 export interface RuntimeToolGateway {
+  deleteCredential(credentialId: string): Promise<unknown>;
   execute(input: {
     action: string;
     approvalId?: string;
     arguments?: Record<string, unknown>;
     connectionId: string;
   }): Promise<unknown>;
+  getCredential(input: {
+    credentialId: string;
+    projectId?: string;
+    purpose: string;
+  }): Promise<unknown>;
   list(): Promise<{ connections: unknown[] }>;
+  listCredentials(input: {
+    kinds?: string[];
+    limit?: number;
+    purposes?: string[];
+    tags?: string[];
+  }): Promise<unknown>;
+  registerCredential(input: {
+    accessPolicy?: Record<string, unknown>;
+    expiresAt?: string | null;
+    fields?: Record<string, string>;
+    kind: string;
+    label: string;
+    projectId?: string;
+    purposes: string[];
+    secrets: Record<string, string>;
+    tags?: string[];
+  }): Promise<unknown>;
   requestApproval(input: {
     action: string;
     arguments?: Record<string, unknown>;
     connectionId: string;
+  }): Promise<unknown>;
+  resolveCredential(input: {
+    kinds?: string[];
+    limit?: number;
+    projectId?: string;
+    purpose: string;
+    tags?: string[];
+  }): Promise<unknown>;
+  updateCredential(input: {
+    accessPolicy?: Record<string, unknown>;
+    credentialId: string;
+    expiresAt?: string | null;
+    fields?: Record<string, string>;
+    kind?: string;
+    label?: string;
+    projectId?: string;
+    purposes?: string[];
+    secrets?: Record<string, string>;
+    tags?: string[];
   }): Promise<unknown>;
 }
 
@@ -90,8 +132,66 @@ function createGateway(
   };
 
   return {
+    async deleteCredential(credentialId) {
+      return credentialRequest(() =>
+        toolRequest(
+          `/v1/tools/private-credentials/${encodeURIComponent(credentialId)}`,
+          { method: "DELETE" },
+        ),
+      );
+    },
     async list() {
       return toolRequest("/v1/tools") as Promise<{ connections: unknown[] }>;
+    },
+    async listCredentials(input) {
+      return credentialRequest(() =>
+        toolRequest("/v1/tools/private-credentials/list", {
+          method: "POST",
+          body: JSON.stringify(input),
+        }),
+      );
+    },
+    async registerCredential(input) {
+      return credentialRequest(() =>
+        toolRequest("/v1/tools/private-credentials", {
+          method: "POST",
+          body: JSON.stringify(input),
+        }),
+      );
+    },
+    async resolveCredential(input) {
+      return credentialRequest(() =>
+        toolRequest("/v1/tools/private-credentials/resolve", {
+          method: "POST",
+          body: JSON.stringify(input),
+        }),
+      );
+    },
+    async getCredential(input) {
+      return credentialRequest(() =>
+        toolRequest(
+          `/v1/tools/private-credentials/${encodeURIComponent(input.credentialId)}/read`,
+          {
+            method: "POST",
+            body: JSON.stringify({
+              purpose: input.purpose,
+              ...(input.projectId ? { projectId: input.projectId } : {}),
+            }),
+          },
+        ),
+      );
+    },
+    async updateCredential(input) {
+      const { credentialId, ...body } = input;
+      return credentialRequest(() =>
+        toolRequest(
+          `/v1/tools/private-credentials/${encodeURIComponent(credentialId)}`,
+          {
+            method: "PATCH",
+            body: JSON.stringify(body),
+          },
+        ),
+      );
     },
     async execute(input) {
       const response = (await toolRequest("/v1/tools/execute", {
@@ -107,6 +207,18 @@ function createGateway(
       });
     },
   };
+}
+
+async function credentialRequest(
+  operation: () => Promise<unknown>,
+): Promise<unknown> {
+  try {
+    return await operation();
+  } catch {
+    // A provider or validation response can contain submitted material. Keep it
+    // outside MCP errors and stderr; detailed diagnostics stay in the local Vault.
+    throw new Error("One Status credential operation failed.");
+  }
 }
 
 async function issueAgentCredential(config: McpRuntimeConfig): Promise<string> {

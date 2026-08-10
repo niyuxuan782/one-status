@@ -35,7 +35,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh api "repos/${GITHUB_REPOSITORY}/releases/latest" \
-            --jq '{tag_name, html_url, assets: [.assets[] | {name, browser_download_url}]}' \
+            --jq '{tag_name, html_url, macos_notarized: ((.body // "") | contains("macOS packages are signed with Developer ID, notarized by Apple")), assets: [.assets[] | {name, browser_download_url}]}' \
             > apps/site/public/release.json
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3

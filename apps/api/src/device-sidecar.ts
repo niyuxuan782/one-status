@@ -343,21 +343,44 @@ function sidecarInvocation(input: ModelConfigurationInput): {
   environment?: NodeJS.ProcessEnv;
   request: { tool: AgentToolId; profile: Record<string, unknown> };
 } {
-  const credentialEnvVar = credentialVariable(input.source, input.toolId);
+  const credentialEnvVar = input.gateway
+    ? gatewayCredentialVariable(input.source.id, input.toolId)
+    : credentialVariable(input.source, input.toolId);
+  const endpoint = input.gateway?.endpoint ?? input.source.endpoint;
+  const apiProtocol = input.gateway
+    ? input.gateway.protocol === "anthropic"
+      ? "anthropic"
+      : "openai-responses"
+    : apiProtocolForSource(input.source.protocol, input.source.apiFormat);
   const profile = {
     id: sidecarProfileId(input.source.id),
     displayName: input.source.label,
     modelId: input.model.modelId,
     modelName: input.model.name,
-    source: sourceKind(input.source.kind),
-    apiProtocol: apiProtocol(input.source.protocol),
-    ...(input.source.endpoint ? { endpoint: input.source.endpoint } : {}),
+    source: input.gateway ? "custom-endpoint" : sourceKind(input.source.kind),
+    apiProtocol,
+    ...(endpoint ? { endpoint } : {}),
     ...(credentialEnvVar ? { credentialEnvVar } : {}),
+    ...(input.gateway
+      ? {
+          upstream: {
+            sourceId: input.source.id,
+            displayName: input.source.label,
+            source: sourceKind(input.source.kind),
+            protocol: input.source.protocol,
+            ...(input.source.apiFormat
+              ? { apiFormat: input.source.apiFormat }
+              : {}),
+            ...(input.source.endpoint ? { endpoint: input.source.endpoint } : {}),
+          },
+        }
+      : {}),
   };
+  const projectedCredential = input.gateway?.token ?? input.apiKey;
   return {
     request: { tool: input.toolId, profile },
-    ...(input.apiKey && credentialEnvVar
-      ? { environment: { [credentialEnvVar]: input.apiKey } }
+    ...(projectedCredential && credentialEnvVar
+      ? { environment: { [credentialEnvVar]: projectedCredential } }
       : {}),
   };
 }
@@ -454,14 +477,33 @@ function sourceKind(kind: ModelSource["kind"]): string {
   }
 }
 
-function apiProtocol(
+function apiProtocolForSource(
   protocol: ModelSource["protocol"],
+  apiFormat?: ModelSource["apiFormat"],
 ): string {
+  if (apiFormat === "anthropic-messages") return "anthropic";
+  if (apiFormat === "openai-chat-completions") {
+    return "openai-chat-completions";
+  }
+  if (apiFormat === "openai-responses") return "openai-responses";
   if (protocol === "anthropic") return "anthropic";
   if (protocol === "azure-openai" || protocol === "ollama") {
     return "openai-chat-completions";
   }
   return "openai-responses";
+}
+
+function gatewayCredentialVariable(
+  sourceId: string,
+  toolId: AgentToolId,
+): string {
+  if (toolId === "claude-code") return "ANTHROPIC_AUTH_TOKEN";
+  const digest = createHash("sha256")
+    .update(`gateway:${sourceId}`)
+    .digest("hex")
+    .slice(0, 16)
+    .toUpperCase();
+  return `ONE_STATUS_GATEWAY_${digest}_TOKEN`;
 }
 
 function credentialVariable(
@@ -501,11 +543,20 @@ export function resolveDeviceSidecarExecutable(
   const cliDirectory = entrypoint
     ? dirname(resolve(entrypoint))
     : undefined;
+  const workspaceSidecarDirectory = cliDirectory
+    ? resolve(cliDirectory, "..", "..", "device-sidecar", "target")
+    : undefined;
   const candidates = [
     typeof process.resourcesPath === "string"
       ? join(process.resourcesPath, "bin", executable)
       : undefined,
     cliDirectory ? join(cliDirectory, executable) : undefined,
+    workspaceSidecarDirectory
+      ? join(workspaceSidecarDirectory, "debug", executable)
+      : undefined,
+    workspaceSidecarDirectory
+      ? join(workspaceSidecarDirectory, "release", executable)
+      : undefined,
     resolve(process.cwd(), "apps", "device-sidecar", "target", "release", executable),
     resolve(process.cwd(), "apps", "device-sidecar", "target", "debug", executable),
   ];

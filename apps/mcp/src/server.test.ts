@@ -300,8 +300,26 @@ describe("One Status MCP", () => {
     let executedInput: unknown;
     let approvalInput: unknown;
     const server = createMcpServer(new MemoryVault(), "codex", {
+      async deleteCredential() {
+        return { deleted: true };
+      },
       async list() {
         return { connections: [{ id: "connection-1" }] };
+      },
+      async listCredentials() {
+        return { credentials: [] };
+      },
+      async registerCredential() {
+        return { credential: {} };
+      },
+      async resolveCredential() {
+        return { credentials: [] };
+      },
+      async getCredential() {
+        return { credential: {} };
+      },
+      async updateCredential() {
+        return { credential: {} };
       },
       async execute(input) {
         executedInput = input;
@@ -390,6 +408,195 @@ describe("One Status MCP", () => {
       approvalId: "8aac7c59-f780-4ebb-a72e-b3c9ecbbf999",
       connectionId: "2cc16694-140d-4575-8189-3283163c15c7",
     });
+
+    await client.close();
+    await server.close();
+  });
+
+  it("registers, resolves, reads, updates, and deletes private credentials", async () => {
+    const secret = "ssh-password-private-value";
+    const credentialId = "fca88ca5-f8a1-4fe1-8c35-f89bb5664a2d";
+    const calls: Array<{ input: unknown; operation: string }> = [];
+    const masked = {
+      id: credentialId,
+      kind: "ssh",
+      label: "One Status production server",
+      purposes: ["ssh.connect"],
+      fields: { host: "124.220.104.225", username: "ubuntu" },
+      secrets: { password: "********" },
+      tags: ["one-status", "production"],
+    };
+    const server = createMcpServer(new MemoryVault(), "codex", {
+      async deleteCredential(id) {
+        calls.push({ operation: "delete", input: id });
+        return { credentialId: id, deleted: true };
+      },
+      async execute() {
+        return {};
+      },
+      async getCredential(input) {
+        calls.push({ operation: "get", input });
+        return {
+          credential: { ...masked, secrets: { password: secret } },
+          audit: { decision: "allow", purpose: input.purpose },
+        };
+      },
+      async list() {
+        return { connections: [] };
+      },
+      async listCredentials(input) {
+        calls.push({ operation: "list", input });
+        return {
+          credentials: [{ ...masked, secrets: { password: secret } }],
+        };
+      },
+      async registerCredential(input) {
+        calls.push({ operation: "register", input });
+        return {
+          credential: { ...masked, secrets: { password: secret } },
+          audit: { action: "register", credentialId },
+        };
+      },
+      async requestApproval() {
+        return {};
+      },
+      async resolveCredential(input) {
+        calls.push({ operation: "resolve", input });
+        return {
+          credentials: [{ ...masked, secrets: { password: secret } }],
+        };
+      },
+      async updateCredential(input) {
+        calls.push({ operation: "update", input });
+        return {
+          credential: { ...masked, secrets: { password: secret } },
+        };
+      },
+    });
+    const client = new Client({ name: "credential-test", version: "1.0.0" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+
+    const tools = await client.listTools();
+    const names = tools.tools.map((tool) => tool.name);
+    for (const name of [
+      "credentials_register",
+      "credentials_list",
+      "credentials_resolve",
+      "credentials_get",
+      "credentials_update",
+      "credentials_delete",
+    ]) {
+      expect(names).toContain(name);
+    }
+    expect(client.getInstructions()).toContain(
+      "call credentials_register in the same turn",
+    );
+    expect(client.getInstructions()).toContain(
+      "call credentials_resolve with its exact purpose",
+    );
+    expect(client.getInstructions()).toContain(
+      "call credentials_update in the same turn",
+    );
+    expect(client.getInstructions()).toContain("purpose model.api");
+    expect(client.getInstructions()).toContain(
+      "Never echo, summarize, log, write to Status or Persona",
+    );
+    expect(
+      tools.tools.find((tool) => tool.name === "credentials_get"),
+    ).toMatchObject({
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: false,
+      },
+    });
+    expect(
+      tools.tools.find((tool) => tool.name === "credentials_delete"),
+    ).toMatchObject({ annotations: { destructiveHint: true } });
+    expect(
+      (
+        tools.tools.find((tool) => tool.name === "credentials_register")
+          ?.inputSchema.properties?.kind as { enum?: string[] }
+      ).enum,
+    ).toEqual(expect.arrayContaining(["account", "card_key", "model"]));
+
+    const registered = await client.callTool({
+      name: "credentials_register",
+      arguments: {
+        kind: "ssh",
+        label: "One Status production server",
+        purposes: ["ssh.connect"],
+        fields: { host: "124.220.104.225", username: "ubuntu" },
+        secrets: { password: secret },
+        tags: ["one-status", "production"],
+        projectId: "one-status",
+      },
+    });
+    expect(JSON.stringify(registered.structuredContent)).toContain("********");
+    expect(JSON.stringify(registered.structuredContent)).not.toContain(secret);
+
+    const listed = await client.callTool({
+      name: "credentials_list",
+      arguments: { kinds: ["ssh"], purposes: ["ssh.connect"] },
+    });
+    const resolved = await client.callTool({
+      name: "credentials_resolve",
+      arguments: {
+        purpose: "ssh.connect",
+        kinds: ["ssh"],
+        tags: ["production"],
+        projectId: "one-status",
+      },
+    });
+    for (const response of [listed, resolved]) {
+      expect(JSON.stringify(response.structuredContent)).toContain("********");
+      expect(JSON.stringify(response.structuredContent)).not.toContain(secret);
+    }
+
+    const read = await client.callTool({
+      name: "credentials_get",
+      arguments: {
+        credentialId,
+        purpose: "ssh.connect",
+        projectId: "one-status",
+      },
+    });
+    expect(read.structuredContent).toMatchObject({
+      credential: { secrets: { password: secret } },
+      audit: { decision: "allow", purpose: "ssh.connect" },
+    });
+
+    const updated = await client.callTool({
+      name: "credentials_update",
+      arguments: {
+        credentialId,
+        fields: { host: "ssh.os.example" },
+        secrets: { password: "rotated-private-value" },
+      },
+    });
+    expect(JSON.stringify(updated.structuredContent)).toContain("********");
+    expect(JSON.stringify(updated.structuredContent)).not.toContain(secret);
+    await client.callTool({
+      name: "credentials_delete",
+      arguments: { credentialId },
+    });
+
+    expect(calls).toEqual([
+      expect.objectContaining({ operation: "register" }),
+      expect.objectContaining({ operation: "list" }),
+      expect.objectContaining({ operation: "resolve" }),
+      {
+        operation: "get",
+        input: { credentialId, projectId: "one-status", purpose: "ssh.connect" },
+      },
+      expect.objectContaining({ operation: "update" }),
+      { operation: "delete", input: credentialId },
+    ]);
+    const registration = calls[0]?.input as Record<string, unknown>;
+    expect(registration).not.toHaveProperty("agentId");
+    expect(registration).not.toHaveProperty("source");
 
     await client.close();
     await server.close();

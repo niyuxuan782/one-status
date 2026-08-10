@@ -1,16 +1,102 @@
 import { describe, expect, it } from "vitest";
 import {
+  accountResponseSchema,
+  authResponseSchema,
   configurationIntentSchema,
   createEmptyStatus,
   memoryEntrySchema,
   modelSourceSchema,
   parseStatusDocument,
   personaEventSchema,
+  registerRequestSchema,
   removeDeviceControlState,
   statusDocumentSchema,
+  statusKeyMigrationRequestSchema,
+  statusKeyMigrationResponseSchema,
 } from "./index.js";
 
 describe("status protocol", () => {
+  it("applies additive account defaults for older cloud responses", () => {
+    expect(
+      accountResponseSchema.parse({
+        user: {
+          id: "user-1",
+          email: "legacy@example.test",
+          createdAt: "2026-08-10T00:00:00.000Z",
+        },
+        devices: [{
+          id: "device-1",
+          name: "Legacy Mac",
+          createdAt: "2026-08-10T00:00:00.000Z",
+          lastSeenAt: "2026-08-10T00:00:00.000Z",
+          online: true,
+        }],
+      }),
+    ).toMatchObject({
+      devices: [{ blocked: false }],
+      deviceLoginPolicy: { denyNewDeviceLogins: false },
+    });
+
+    expect(
+      authResponseSchema.parse({
+        userId: "user-1",
+        deviceId: "device-1",
+        token: "legacy-token",
+        expiresAt: "2026-08-11T00:00:00.000Z",
+      }).wrappedStatusKey,
+    ).toBeNull();
+  });
+
+  it("accepts legacy registration requests without a wrapped Status Key", () => {
+    expect(
+      registerRequestSchema.parse({
+        email: "legacy@example.test",
+        password: "legacy account password",
+        deviceName: "Legacy Mac",
+        initialEnvelope: {
+          format: "one-status.encrypted-status",
+          version: 1,
+          algorithm: "AES-256-GCM",
+          revision: 1,
+          iv: "iv",
+          ciphertext: "ciphertext",
+          authTag: "auth-tag",
+        },
+      }).wrappedStatusKey,
+    ).toBeUndefined();
+  });
+
+  it("validates the one-time wrapped Status Key migration contract", () => {
+    const wrappedStatusKey = {
+      format: "one-status.wrapped-status-key" as const,
+      version: 1 as const,
+      algorithm: "AES-256-GCM" as const,
+      kdf: {
+        algorithm: "scrypt" as const,
+        salt: "s".repeat(22),
+        cost: 16_384 as const,
+        blockSize: 8 as const,
+        parallelization: 1 as const,
+        keyLength: 32 as const,
+      },
+      iv: "i".repeat(16),
+      ciphertext: "c".repeat(43),
+      authTag: "a".repeat(22),
+    };
+    expect(
+      statusKeyMigrationRequestSchema.parse({
+        password: "legacy account password",
+        wrappedStatusKey,
+      }),
+    ).toMatchObject({ wrappedStatusKey });
+    expect(
+      statusKeyMigrationResponseSchema.parse({
+        migrated: true,
+        wrappedStatusKey,
+      }),
+    ).toEqual({ migrated: true, wrappedStatusKey });
+  });
+
   it("creates a future-ready empty status document", () => {
     expect(statusDocumentSchema.parse(createEmptyStatus())).toMatchObject({
       schemaVersion: 4,
@@ -252,6 +338,25 @@ describe("status protocol", () => {
         updatedAt: "2026-08-09T00:00:00.000Z",
       }),
     ).toThrow(/user info, query, or fragment/);
+  });
+
+  it("allows only Azure OpenAI api-version in an endpoint query", () => {
+    expect(
+      modelSourceSchema.parse({
+        id: "azure-a",
+        label: "Azure A",
+        kind: "compatible-api",
+        protocol: "azure-openai",
+        apiFormat: "openai-chat-completions",
+        endpoint:
+          "https://resource.openai.azure.com/openai/deployments/main?api-version=2025-04-01-preview",
+        supportedTools: ["codex", "claude-code"],
+        credentialRef: "model-source:azure-a",
+        credentialStatus: "available",
+        createdAt: "2026-08-09T00:00:00.000Z",
+        updatedAt: "2026-08-09T00:00:00.000Z",
+      }),
+    ).toMatchObject({ protocol: "azure-openai" });
   });
 
   it("validates an immutable configuration snapshot and complete claim lease", () => {

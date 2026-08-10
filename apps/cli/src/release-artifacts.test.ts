@@ -36,6 +36,86 @@ async function sha256(path: string): Promise<string> {
 }
 
 describe("Device Sidecar release artifacts", () => {
+  it("keeps manual release runs artifact-only and tag pushes publishable", async () => {
+    const workflow = await readFile(
+      resolve(root, ".github", "workflows", "release.yml"),
+      "utf8",
+    );
+
+    expect(workflow).toContain("workflow_dispatch:");
+    expect(workflow).toContain('tags: ["v*"]');
+    expect(workflow.match(/uses: actions\/upload-artifact@v4/g)).toHaveLength(2);
+    expect(workflow).toContain("name: one-status-cli");
+    expect(workflow).toContain(
+      "name: one-status-desktop-${{ matrix.platform }}-${{ matrix.arch }}",
+    );
+    expect(workflow.match(
+      /if: github\.event_name == 'push' && startsWith\(github\.ref, 'refs\/tags\/v'\)/g,
+    )).toHaveLength(3);
+  });
+
+  it("uses electron-builder for app notarization and submits each DMG once", async () => {
+    const workflow = await readFile(
+      resolve(root, ".github", "workflows", "release.yml"),
+      "utf8",
+    );
+    const desktopPackage = JSON.parse(
+      await readFile(resolve(root, "apps", "desktop", "package.json"), "utf8"),
+    ) as { build: { mac: { notarize?: boolean } } };
+
+    expect(desktopPackage.build.mac.notarize).toBe(true);
+    expect(workflow).toContain("APPLE_APP_SPECIFIC_PASSWORD:");
+    expect(workflow).toContain("CSC_LINK:");
+    expect(workflow).toContain("xcrun stapler validate \"$app_path\"");
+    expect(workflow.match(/xcrun notarytool submit "\$image"/g)).toHaveLength(1);
+    expect(workflow.match(/xcrun stapler staple "\$image"/g)).toHaveLength(1);
+    expect(workflow).not.toContain('xcrun notarytool submit "$app_path"');
+    expect(workflow).not.toContain('xcrun stapler staple "$app_path"');
+
+    const submit = workflow.indexOf('xcrun notarytool submit "$image"');
+    const staple = workflow.indexOf('xcrun stapler staple "$image"');
+    const validate = workflow.indexOf('xcrun stapler validate "$image"');
+    expect(submit).toBeGreaterThan(-1);
+    expect(staple).toBeGreaterThan(submit);
+    expect(validate).toBeGreaterThan(staple);
+  });
+
+  it("renders the macOS signing label from each published Release", async () => {
+    const pagesWorkflow = await readFile(
+      resolve(root, ".github", "workflows", "pages.yml"),
+      "utf8",
+    );
+    const siteScript = await readFile(
+      resolve(root, "apps", "site", "public", "app.js"),
+      "utf8",
+    );
+    const bundledRelease = JSON.parse(
+      await readFile(
+        resolve(root, "apps", "site", "public", "release.json"),
+        "utf8",
+      ),
+    ) as { macos_notarized?: boolean };
+
+    expect(pagesWorkflow).toContain("macos_notarized:");
+    expect(pagesWorkflow).toContain(
+      "macOS packages are signed with Developer ID, notarized by Apple",
+    );
+    expect(siteScript).toContain("release.macos_notarized === true");
+    expect(bundledRelease.macos_notarized).toBe(false);
+  });
+
+  it("keeps the macOS installer on the notarized Gatekeeper path", async () => {
+    const installer = await readFile(
+      resolve(root, "apps", "site", "public", "install.sh"),
+      "utf8",
+    );
+
+    expect(installer).toContain("Authority=Developer ID Application:");
+    expect(installer).toContain("spctl --assess --type execute");
+    expect(installer).toContain("xcrun stapler validate");
+    expect(installer).not.toContain('xattr -cr "$INSTALL_STAGING"');
+  });
+
   it("packages the native executable with attribution files", async () => {
     const directory = await temporaryDirectory();
     const binary = resolve(directory, "one-status-device-sidecar");

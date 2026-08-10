@@ -4,13 +4,17 @@ import {
   ONE_STATUS_VERSION,
   putStatusRequestSchema,
   registerRequestSchema,
+  statusKeyMigrationRequestSchema,
 } from "@one-status/protocol";
 import { z, ZodError } from "zod";
 import {
+  DeviceLoginBlockedError,
   EmailAlreadyRegisteredError,
   InvalidCredentialsError,
   MutationIdConflictError,
+  NewDeviceLoginDeniedError,
   OneStatusDatabase,
+  StatusKeyMigrationNotAllowedError,
   VersionConflictError,
   type AuthenticatedSession,
 } from "./database.js";
@@ -88,6 +92,21 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
     if (error instanceof InvalidCredentialsError) {
       return reply.code(401).send({
         error: { code: "invalid_credentials", message: error.message },
+      });
+    }
+    if (error instanceof DeviceLoginBlockedError) {
+      return reply.code(403).send({
+        error: { code: "device_blocked", message: error.message },
+      });
+    }
+    if (error instanceof NewDeviceLoginDeniedError) {
+      return reply.code(403).send({
+        error: { code: "new_device_login_denied", message: error.message },
+      });
+    }
+    if (error instanceof StatusKeyMigrationNotAllowedError) {
+      return reply.code(403).send({
+        error: { code: "status_key_migration_forbidden", message: error.message },
       });
     }
     if (error instanceof AuthRateLimitError) {
@@ -211,6 +230,7 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
       body.password,
       body.deviceName,
       body.initialEnvelope,
+      body.wrappedStatusKey,
       body.installationId,
     );
     return reply.code(201).send(session);
@@ -244,6 +264,17 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
     return database.getAccount(session.userId);
   });
 
+  app.put("/v1/account/wrapped-status-key", async (request, reply) => {
+    const session = authenticate(request.headers.authorization, database);
+    if (!session) return unauthorized(reply);
+    const body = statusKeyMigrationRequestSchema.parse(request.body);
+    return database.migrateWrappedStatusKey(
+      session,
+      body.password,
+      body.wrappedStatusKey,
+    );
+  });
+
   app.delete("/v1/devices/:deviceId", async (request, reply) => {
     const session = authenticate(request.headers.authorization, database);
     if (!session) {
@@ -252,12 +283,75 @@ export function createApp(options: CreateAppOptions): FastifyInstance {
     const { deviceId } = z
       .object({ deviceId: z.uuid() })
       .parse(request.params);
+    if (deviceId === session.deviceId) {
+      return selfDeviceManagementForbidden(reply);
+    }
     if (!database.revokeDevice(session.userId, deviceId)) {
       return reply.code(404).send({
         error: { code: "device_not_found", message: "Device was not found." },
       });
     }
     return { revoked: true, deviceId };
+  });
+
+  app.post("/v1/devices/:deviceId/revoke-sessions", async (request, reply) => {
+    const session = authenticate(request.headers.authorization, database);
+    if (!session) return unauthorized(reply);
+    const { deviceId } = z
+      .object({ deviceId: z.uuid() })
+      .parse(request.params);
+    if (deviceId === session.deviceId) {
+      return selfDeviceManagementForbidden(reply);
+    }
+    const revokedSessions = database.revokeDeviceSessions(
+      session.userId,
+      deviceId,
+    );
+    if (revokedSessions === undefined) return deviceNotFound(reply);
+    return { deviceId, revokedSessions };
+  });
+
+  app.put("/v1/devices/:deviceId/block", async (request, reply) => {
+    const session = authenticate(request.headers.authorization, database);
+    if (!session) return unauthorized(reply);
+    const { deviceId } = z
+      .object({ deviceId: z.uuid() })
+      .parse(request.params);
+    if (deviceId === session.deviceId) {
+      return selfDeviceManagementForbidden(reply);
+    }
+    if (!database.blockDevice(session.userId, deviceId)) {
+      return deviceNotFound(reply);
+    }
+    return { deviceId, blocked: true };
+  });
+
+  app.delete("/v1/devices/:deviceId/block", async (request, reply) => {
+    const session = authenticate(request.headers.authorization, database);
+    if (!session) return unauthorized(reply);
+    const { deviceId } = z
+      .object({ deviceId: z.uuid() })
+      .parse(request.params);
+    if (deviceId === session.deviceId) {
+      return selfDeviceManagementForbidden(reply);
+    }
+    if (!database.unblockDevice(session.userId, deviceId)) {
+      return deviceNotFound(reply);
+    }
+    return { deviceId, blocked: false };
+  });
+
+  app.put("/v1/account/device-login-policy", async (request, reply) => {
+    const session = authenticate(request.headers.authorization, database);
+    if (!session) return unauthorized(reply);
+    const body = z
+      .object({ denyNewDeviceLogins: z.boolean() })
+      .strict()
+      .parse(request.body);
+    return database.setDeviceLoginPolicy(
+      session.userId,
+      body.denyNewDeviceLogins,
+    );
   });
 
   app.post("/v1/devices/heartbeat", async (request, reply) => {
@@ -363,5 +457,24 @@ function unauthorized(reply: {
 }): unknown {
   return reply.code(401).send({
     error: { code: "unauthorized", message: "A valid device session is required." },
+  });
+}
+
+function deviceNotFound(reply: {
+  code(statusCode: number): { send(body: unknown): unknown };
+}): unknown {
+  return reply.code(404).send({
+    error: { code: "device_not_found", message: "Device was not found." },
+  });
+}
+
+function selfDeviceManagementForbidden(reply: {
+  code(statusCode: number): { send(body: unknown): unknown };
+}): unknown {
+  return reply.code(409).send({
+    error: {
+      code: "active_device_target",
+      message: "Use logout to end the current device session.",
+    },
   });
 }
