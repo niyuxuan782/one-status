@@ -89,7 +89,7 @@ export function renderDashboardPage(csrfToken: string): string {
     <div class="workspace">
       <header class="topbar">
         <button class="icon-button mobile-menu" id="mobile-menu" type="button" title="打开导航">${iconMap.menu}</button>
-        <div><p class="eyebrow">ONE STATUS</p><h1 id="page-title">概览</h1></div>
+        <div class="topbar-heading"><p class="eyebrow">ONE STATUS</p><h1 id="page-title">概览</h1></div>
         <div class="topbar-actions">
           <span class="sync-state" id="sync-state"><span></span>已同步</span>
           <button class="icon-button" id="refresh" type="button" title="刷新">${iconMap.refresh}</button>
@@ -499,6 +499,10 @@ tr:last-child td { border-bottom: 0; }
 a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+}
+@media (min-width: 721px) {
+  .topbar { min-height: 56px; justify-content: flex-end; }
+  .topbar-heading { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 }
 @media (max-width: 920px) {
   .metrics { grid-template-columns: 1fr 1fr; }
@@ -1449,6 +1453,7 @@ function dashboardClient(): void {
     const devices = snapshot.account.devices;
     const control = snapshot.status.deviceControl;
     const models = Object.values(control.models) as any[];
+    const modelGroups = groupModelsById(models);
     const installedToolCount = Object.values(control.reports).reduce(
       (total: number, report: any) =>
         total + report.tools.filter((tool: any) => tool.installed).length,
@@ -1461,12 +1466,14 @@ function dashboardClient(): void {
       )}
       <div class="device-matrix">${devices.map((device: any) => renderDeviceBlock(device)).join("")}</div>
       <section class="data-section mt-20">
-        ${sectionHeader("可配置模型", `${models.length} 个模型 · ${snapshot.modelUsage?.scannedAt ? `用量统计于 ${formatDate(snapshot.modelUsage.scannedAt)}` : "等待本机会话用量扫描"}`)}
-        ${models.length ? `<div class="table-wrap"><table class="model-table overview-model-table"><thead><tr><th>模型</th><th>密钥来源</th><th>兼容工具</th><th>已配置</th><th>消耗量</th><th>最近统计</th><th></th></tr></thead><tbody>${models.map((model: any) => {
-          const source = control.sources[model.sourceId];
-          const configured = Object.values(control.reports).flatMap((report: any) => report.tools).filter((tool: any) => tool.currentModelRef === model.id).length;
-          const usage = modelUsageSummary(model);
-          return `<tr><td><strong>${escapeHtml(model.name)}</strong><br><small>${escapeHtml(model.modelId)}</small></td><td><strong>${escapeHtml(source?.label || model.sourceId)}</strong><br><small>${escapeHtml(endpointHost(source?.endpoint) || modelSourceKindLabel(source?.kind))}</small></td><td>${renderToolTags(model.supportedTools)}</td><td>${configured} 个工具</td><td><strong>${escapeHtml(usage.primary)}</strong><br><small>${escapeHtml(usage.detail)}</small></td><td>${usage.updatedAt ? formatDate(usage.updatedAt) : "等待扫描"}</td><td><button class="button secondary" data-action="configure-model" data-model="${escapeHtml(model.id)}" type="button">切换</button></td></tr>`;
+        ${sectionHeader("可配置模型", `${modelGroups.length} 个模型 · ${snapshot.modelUsage?.scannedAt ? `用量统计于 ${formatDate(snapshot.modelUsage.scannedAt)}` : "等待本机会话用量扫描"}`)}
+        ${modelGroups.length ? `<div class="table-wrap"><table class="model-table overview-model-table"><thead><tr><th>模型</th><th>密钥来源</th><th>兼容工具</th><th>已配置</th><th>消耗量</th><th>最近统计</th><th></th></tr></thead><tbody>${modelGroups.map((group: any) => {
+          const sources = group.models.map((model: any) => control.sources[model.sourceId]).filter(Boolean);
+          const sourceLabels = [...new Set(sources.map((source: any) => source.label))];
+          const sourceHosts = [...new Set(sources.map((source: any) => endpointHost(source.endpoint) || modelSourceKindLabel(source.kind)).filter(Boolean))];
+          const configured = Object.values(control.reports).flatMap((report: any) => report.tools).filter((tool: any) => tool.currentModelId === group.modelId).length;
+          const usage = modelUsageSummary(group.modelId, sources.length);
+          return `<tr><td><strong>${escapeHtml(group.name)}</strong><br><small>${escapeHtml(group.modelId)}</small></td><td><strong>${escapeHtml(sourceLabels.join("、") || "未识别")}</strong><br><small>${escapeHtml(sourceHosts.join("、") || "默认 Endpoint")}</small></td><td>${renderToolTags(group.supportedTools)}</td><td>${configured} 个工具</td><td><strong>${escapeHtml(usage.primary)}</strong><br><small>${escapeHtml(usage.detail)}</small></td><td>${usage.updatedAt ? formatDate(usage.updatedAt) : "等待扫描"}</td><td><a class="button secondary" href="/models">配置</a></td></tr>`;
         }).join("")}</tbody></table></div>` : emptyState("database", "暂无可配置模型", "密钥钱包完成自动扫描后会在这里显示模型")}
       </section>`;
   }
@@ -2376,56 +2383,56 @@ function dashboardClient(): void {
       return value;
     }
   }
-  function modelUsageSummary(model: any): {
+  function groupModelsById(models: any[]): any[] {
+    const groups = new Map<string, any>();
+    for (const model of models) {
+      const existing = groups.get(model.modelId);
+      if (existing) {
+        existing.models.push(model);
+        existing.supportedTools = [
+          ...new Set([...existing.supportedTools, ...model.supportedTools]),
+        ];
+        continue;
+      }
+      groups.set(model.modelId, {
+        modelId: model.modelId,
+        name: model.name,
+        models: [model],
+        supportedTools: [...model.supportedTools],
+      });
+    }
+    return [...groups.values()].sort((left, right) =>
+      left.modelId.localeCompare(right.modelId),
+    );
+  }
+  function modelUsageSummary(modelId: string, sourceCount: number): {
     detail: string;
     primary: string;
     updatedAt?: string;
   } {
-    const control = snapshot.status.deviceControl;
-    const usageCollection = snapshot.modelUsage || control.usage || {};
-    const collectedEntries = Array.isArray(usageCollection)
-      ? usageCollection
-      : Array.isArray(usageCollection.entries)
-        ? usageCollection.entries
-        : [];
-    const directEntries = collectedEntries.filter((entry: any) =>
-      [model.id, model.modelId].includes(entry.modelId) ||
-      entry.modelRef === model.id ||
-      entry.id === model.id,
+    const localEntries = (snapshot.modelUsage?.entries || []).map(
+      (entry: any) => ({
+        ...entry,
+        deviceId: snapshot.profile.deviceId,
+        scannedAt: snapshot.modelUsage.scannedAt,
+      }),
     );
-    const syncedEntries = Object.entries(control.reports).flatMap(
-      ([deviceId, report]: [string, any]) =>
-        (report.modelUsage?.entries || []).map((entry: any) => ({
+    const syncedEntries = (snapshot.syncedModelUsage || []).flatMap(
+      (usage: any) =>
+        (usage.entries || []).map((entry: any) => ({
           ...entry,
-          deviceId,
+          deviceId: usage.deviceId,
+          scannedAt: usage.scannedAt,
         })),
-    ).filter((entry: any) =>
-      [model.id, model.modelId].includes(entry.modelId) ||
-      entry.modelRef === model.id ||
-      entry.id === model.id,
     );
-    const syncedFallback = directEntries.length
+    const syncedFallback = localEntries.length
       ? syncedEntries.filter(
           (entry: any) => entry.deviceId !== snapshot.profile.deviceId,
         )
       : syncedEntries;
-    const direct = Array.isArray(usageCollection)
-      ? undefined
-      : usageCollection[model.id] || usageCollection[model.modelId];
-    const reported = (Object.values(control.reports) as any[])
-      .flatMap((report: any) => report.tools || [])
-      .filter((tool: any) =>
-        tool.currentModelRef === model.id || tool.currentModelId === model.modelId,
-      )
-      .map((tool: any) => tool.usage || tool.modelUsage)
-      .filter(Boolean);
-    const entries = directEntries.length || syncedFallback.length
-      ? [...directEntries, ...syncedFallback]
-      : direct
-        ? [direct]
-        : model.usage
-          ? [model.usage]
-          : reported;
+    const entries = [...localEntries, ...syncedFallback].filter(
+      (entry: any) => entry.modelId === modelId,
+    );
     if (entries.length === 0) {
       return { primary: "尚无用量", detail: "等待本机会话扫描" };
     }
@@ -2438,6 +2445,9 @@ function dashboardClient(): void {
     const requests = sumUsage(entries, ["requests", "requestCount", "sessions"]);
     const costUsd = sumUsage(entries, ["costUsd", "cost_usd", "estimatedCostUsd"]);
     const details = [
+      sourceCount > 1
+        ? `${sourceCount} 个来源，按模型 ID 合计`
+        : "按模型 ID 统计",
       input ? `输入 ${formatCompactNumber(input)}` : "",
       output ? `输出 ${formatCompactNumber(output)}` : "",
       cached ? `缓存 ${formatCompactNumber(cached)}` : "",

@@ -54,6 +54,23 @@ describe("MCP status mutations", () => {
     });
   });
 
+  it("rejects writes to the internal preference namespace", () => {
+    const status = createEmptyStatus();
+
+    expect(() =>
+      applyStatusMutation(
+        status,
+        {
+          type: "set_preference",
+          key: "__one_status_internal:model-usage:v1:fake-device",
+          value: JSON.stringify({ entries: [] }),
+        },
+        "codex",
+      ),
+    ).toThrow("internal preferences");
+    expect(status.preferences).toEqual({});
+  });
+
   it("preserves a published Handoff when an Agent updates project metadata", () => {
     const status = createEmptyStatus();
     const handoff = {

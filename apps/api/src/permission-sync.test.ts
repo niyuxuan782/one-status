@@ -79,6 +79,13 @@ describe("Permission Vault encrypted sync", () => {
     expect(second.verifyModelWalletPassword("user-1", "654321")).toBe(true);
 
     await secondSync.run(() => {
+      second.ignoreModelCredential("user-1", "third-party-a");
+    });
+    await firstSync.run(() => undefined);
+    expect(first.getModelCredential("user-1", "third-party-a")).toBeUndefined();
+    expect(first.isModelCredentialIgnored("user-1", "third-party-a")).toBe(true);
+
+    await secondSync.run(() => {
       second.deleteConnection("user-1", connection.id);
     });
     await firstSync.run(() => undefined);
@@ -86,6 +93,114 @@ describe("Permission Vault encrypted sync", () => {
     expect(first.listGrants("user-1")).toEqual([]);
     first.close();
     second.close();
+  });
+
+  it("repairs wallet extensions omitted by a legacy client", async () => {
+    const backend = new MemoryBackend();
+    const legacy = createVault(21);
+    const current = createVault(22);
+    const nextDevice = createVault(23);
+    const context = async () => ({
+      statusKey: new Uint8Array(32).fill(24),
+      userId: "user-1",
+    });
+    const legacyExport = legacy.exportBundle.bind(legacy);
+    vi.spyOn(legacy, "exportBundle").mockImplementation((userId) => {
+      const bundle = legacyExport(userId);
+      delete bundle.modelCredentialIgnores;
+      delete bundle.walletPassword;
+      return bundle;
+    });
+    legacy.configureProvider("user-1", "slack", {
+      clientId: "legacy-slack-client",
+    });
+    await new PermissionSyncService(backend, legacy, context).run(
+      () => undefined,
+    );
+
+    expect(current.verifyModelWalletPassword("user-1", "123456")).toBe(true);
+    expect(
+      current.changeModelWalletPassword("user-1", "123456", "654321"),
+    ).toBe(true);
+    current.ignoreModelCredential("user-1", "deleted-source");
+    expect(current.exportBundle("user-1").modelCredentialIgnores).toEqual([
+      expect.objectContaining({ sourceId: "deleted-source" }),
+    ]);
+    await new PermissionSyncService(backend, current, context).run(
+      () => undefined,
+    );
+    expect(current.exportBundle("user-1").modelCredentialIgnores).toEqual([
+      expect.objectContaining({ sourceId: "deleted-source" }),
+    ]);
+    await new PermissionSyncService(backend, nextDevice, context).run(
+      () => undefined,
+    );
+    expect(nextDevice.exportBundle("user-1").modelCredentialIgnores).toEqual([
+      expect.objectContaining({ sourceId: "deleted-source" }),
+    ]);
+
+    expect(nextDevice.verifyModelWalletPassword("user-1", "123456")).toBe(
+      false,
+    );
+    expect(nextDevice.verifyModelWalletPassword("user-1", "654321")).toBe(
+      true,
+    );
+    expect(
+      nextDevice.isModelCredentialIgnored("user-1", "deleted-source"),
+    ).toBe(true);
+    legacy.close();
+    current.close();
+    nextDevice.close();
+  });
+
+  it("keeps a modern deletion when a legacy client re-uploads the credential", async () => {
+    const backend = new MemoryBackend();
+    const modern = createVault(25);
+    const legacy = createVault(26);
+    const nextDevice = createVault(27);
+    const context = async () => ({
+      statusKey: new Uint8Array(32).fill(28),
+      userId: "user-1",
+    });
+    const modernSync = new PermissionSyncService(backend, modern, context);
+    const legacySync = new PermissionSyncService(backend, legacy, context);
+    const legacyExport = legacy.exportBundle.bind(legacy);
+    vi.spyOn(legacy, "exportBundle").mockImplementation((userId) => {
+      const bundle = legacyExport(userId);
+      delete bundle.modelCredentialIgnores;
+      delete bundle.walletPassword;
+      return bundle;
+    });
+
+    modern.setModelCredential("user-1", "removed-source", "initial-secret");
+    await modernSync.run(() => undefined);
+    await legacySync.run(() => undefined);
+    await modernSync.run(() => {
+      modern.ignoreModelCredential("user-1", "removed-source");
+    });
+
+    await legacySync.run(() => {
+      legacy.setModelCredential(
+        "user-1",
+        "removed-source",
+        "legacy-reuploaded-secret",
+      );
+    });
+
+    expect(legacy.getModelCredential("user-1", "removed-source")).toBeUndefined();
+    expect(legacy.isModelCredentialIgnored("user-1", "removed-source")).toBe(
+      true,
+    );
+    await new PermissionSyncService(backend, nextDevice, context).run(
+      () => undefined,
+    );
+    expect(nextDevice.getModelCredential("user-1", "removed-source"))
+      .toBeUndefined();
+    expect(nextDevice.isModelCredentialIgnored("user-1", "removed-source"))
+      .toBe(true);
+    modern.close();
+    legacy.close();
+    nextDevice.close();
   });
 
   it("fails closed when another Status Key is used", async () => {
@@ -226,6 +341,44 @@ describe("Permission Vault encrypted sync", () => {
       accessToken: "rotated",
       refreshToken: "rotated-refresh",
     });
+    first.close();
+    second.close();
+  });
+
+  it("keeps a concurrent cloud wallet password over a stale future device clock", async () => {
+    const backend = new MemoryBackend();
+    const first = createVault(31);
+    const second = createVault(32);
+    const context = async () => ({
+      statusKey: new Uint8Array(32).fill(33),
+      userId: "user-1",
+    });
+    const firstSync = new PermissionSyncService(backend, first, context);
+    const secondSync = new PermissionSyncService(backend, second, context);
+
+    expect(first.verifyModelWalletPassword("user-1", "123456")).toBe(true);
+    await firstSync.run(() => undefined);
+    await secondSync.run(() => undefined);
+
+    vi.useFakeTimers();
+    await secondSync.run(async () => {
+      vi.setSystemTime(new Date("2030-01-01T00:00:00.000Z"));
+      expect(
+        second.changeModelWalletPassword("user-1", "123456", "222222"),
+      ).toBe(true);
+
+      vi.setSystemTime(new Date("2026-08-10T00:00:00.000Z"));
+      await firstSync.run(() => {
+        expect(
+          first.changeModelWalletPassword("user-1", "123456", "111111"),
+        ).toBe(true);
+      });
+    });
+
+    expect(second.verifyModelWalletPassword("user-1", "222222")).toBe(false);
+    expect(second.verifyModelWalletPassword("user-1", "111111")).toBe(true);
+    await firstSync.run(() => undefined);
+    expect(first.verifyModelWalletPassword("user-1", "111111")).toBe(true);
     first.close();
     second.close();
   });

@@ -67,6 +67,52 @@ describe("Permission Vault", () => {
     vault.close();
   });
 
+  it("keeps an ignored discovered source deleted until manually restored", () => {
+    const vault = new PermissionVault({
+      path: ":memory:",
+      key: new Uint8Array(32).fill(23),
+    });
+    expect(
+      vault.setDiscoveredModelCredential(
+        "user-1",
+        "discovered-source",
+        "same-secret",
+      ),
+    ).toBe(true);
+    expect(vault.ignoreModelCredential("user-1", "discovered-source")).toBe(
+      true,
+    );
+    expect(vault.isModelCredentialIgnored("user-1", "discovered-source")).toBe(
+      true,
+    );
+    expect(
+      vault.setDiscoveredModelCredential(
+        "user-1",
+        "discovered-source",
+        "same-secret",
+      ),
+    ).toBe(false);
+    expect(vault.hasModelCredential("user-1", "discovered-source")).toBe(false);
+    expect(vault.exportBundle("user-1").modelCredentialIgnores).toEqual([
+      expect.objectContaining({ sourceId: "discovered-source" }),
+    ]);
+
+    expect(
+      vault.setModelCredential(
+        "user-1",
+        "discovered-source",
+        "manually-restored-secret",
+      ),
+    ).toBe(true);
+    expect(vault.isModelCredentialIgnored("user-1", "discovered-source")).toBe(
+      false,
+    );
+    expect(vault.getModelCredential("user-1", "discovered-source")).toBe(
+      "manually-restored-secret",
+    );
+    vault.close();
+  });
+
   it("gates wallet reveal with a persisted scrypt verifier", async () => {
     const directory = await mkdtemp(
       join(tmpdir(), "one-status-wallet-password-"),
@@ -106,6 +152,25 @@ describe("Permission Vault", () => {
     expect(reopened.verifyModelWalletPassword("user-1", "123456")).toBe(false);
     expect(reopened.verifyModelWalletPassword("user-1", "654321")).toBe(true);
     reopened.close();
+  });
+
+  it("preserves a custom wallet password when importing a legacy bundle", () => {
+    const vault = new PermissionVault({
+      path: ":memory:",
+      key: new Uint8Array(32).fill(24),
+    });
+    expect(vault.verifyModelWalletPassword("user-1", "123456")).toBe(true);
+    expect(
+      vault.changeModelWalletPassword("user-1", "123456", "654321"),
+    ).toBe(true);
+    const legacy = structuredClone(vault.exportBundle("user-1"));
+    delete legacy.walletPassword;
+
+    vault.importBundle("user-1", legacy);
+
+    expect(vault.verifyModelWalletPassword("user-1", "123456")).toBe(false);
+    expect(vault.verifyModelWalletPassword("user-1", "654321")).toBe(true);
+    vault.close();
   });
 
   it("encrypts model source API keys and exposes availability metadata", () => {

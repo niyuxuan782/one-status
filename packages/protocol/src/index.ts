@@ -528,7 +528,6 @@ export const deviceReportSchema = z
     architecture: z.string().min(1).max(80),
     backgroundVersion: z.string().min(1).max(64),
     tools: z.array(deviceToolReportSchema).max(agentToolIdSchema.options.length),
-    modelUsage: deviceModelUsageSchema.optional(),
     reportedAt: timestampSchema,
   })
   .strict()
@@ -966,9 +965,11 @@ export function createEmptyStatus(): StatusDocument {
 }
 
 export function parseStatusDocument(value: unknown): StatusDocument {
-  const current = statusDocumentSchema.safeParse(value);
+  const compatibleValue = stripTransientDeviceReportUsage(value);
+  const current = statusDocumentSchema.safeParse(compatibleValue);
   if (current.success) return current.data;
-  const version4 = legacyPersonaStatusDocumentV4Schema.safeParse(value);
+  const version4 =
+    legacyPersonaStatusDocumentV4Schema.safeParse(compatibleValue);
   if (version4.success) {
     return {
       ...version4.data,
@@ -1005,6 +1006,51 @@ export function parseStatusDocument(value: unknown): StatusDocument {
       ...entry,
       state: "confirmed" as const,
     })),
+  };
+}
+
+function stripTransientDeviceReportUsage(value: unknown): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const document = value as Record<string, unknown>;
+  const deviceControl = document.deviceControl;
+  if (
+    !deviceControl ||
+    typeof deviceControl !== "object" ||
+    Array.isArray(deviceControl)
+  ) {
+    return value;
+  }
+  const reports = (deviceControl as Record<string, unknown>).reports;
+  if (!reports || typeof reports !== "object" || Array.isArray(reports)) {
+    return value;
+  }
+  let changed = false;
+  const compatibleReports = Object.fromEntries(
+    Object.entries(reports).map(([deviceId, report]) => {
+      if (
+        !report ||
+        typeof report !== "object" ||
+        Array.isArray(report) ||
+        !("modelUsage" in report)
+      ) {
+        return [deviceId, report];
+      }
+      changed = true;
+      return [
+        deviceId,
+        Object.fromEntries(
+          Object.entries(report).filter(([key]) => key !== "modelUsage"),
+        ),
+      ];
+    }),
+  );
+  if (!changed) return value;
+  return {
+    ...document,
+    deviceControl: {
+      ...(deviceControl as Record<string, unknown>),
+      reports: compatibleReports,
+    },
   };
 }
 

@@ -13,6 +13,7 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   discoverLocalModelCredentials,
+  localModelSourceId,
   scanLocalInventory,
   type LocalInventoryOptions,
 } from "./local-inventory.js";
@@ -22,6 +23,25 @@ describe("local inventory", () => {
 
   afterEach(async () => {
     if (directory) await rm(directory, { recursive: true, force: true });
+  });
+
+  it("uses the shared Status key to conceal credential fingerprints in source IDs", () => {
+    const model = {
+      providerId: "third-party",
+      protocol: "openai" as const,
+      endpoint: "https://api.example.test/v1",
+      credentialFingerprint: "a".repeat(64),
+    };
+    const first = localModelSourceId(model, new Uint8Array(32).fill(1));
+    const same = localModelSourceId(model, new Uint8Array(32).fill(1));
+    const anotherAccount = localModelSourceId(
+      model,
+      new Uint8Array(32).fill(2),
+    );
+
+    expect(first).toBe(same);
+    expect(first).not.toBe(anotherAccount);
+    expect(first).not.toContain("a".repeat(16));
   });
 
   it("discovers local assets while removing MCP secret values", async () => {
@@ -158,13 +178,15 @@ describe("local inventory", () => {
       expect.arrayContaining([
         expect.objectContaining({
           apiKey: "CODEX_MODEL_KEY_SECRET",
-          sourceId: expect.stringMatching(/^custom-openai-[a-f0-9]{16}$/),
+          sourceId: expect.stringMatching(
+            /^custom-openai-[a-f0-9]{12}-[a-f0-9]{16}$/,
+          ),
           toolId: "codex",
         }),
         expect.objectContaining({
           apiKey: "CLAUDE_MODEL_KEY_SECRET",
           sourceId: expect.stringMatching(
-            /^anthropic-[a-f0-9]{12}-[a-f0-9]{16}$/,
+            /^anthropic-[a-f0-9]{12}-[a-f0-9]{12}-[a-f0-9]{16}$/,
           ),
           toolId: "claude-code",
         }),
@@ -252,7 +274,9 @@ describe("local inventory", () => {
     expect(credentials).toEqual([
       expect.objectContaining({
         apiKey: "CODEX_AUTH_JSON_SECRET",
-        sourceId: expect.stringMatching(/^auth-provider-[a-f0-9]{16}$/),
+        sourceId: expect.stringMatching(
+          /^auth-provider-[a-f0-9]{12}-[a-f0-9]{16}$/,
+        ),
         toolId: "codex",
       }),
     ]);
@@ -347,11 +371,54 @@ describe("local inventory", () => {
       }),
       2,
     );
+    for (const [id, endpoint] of [
+      ["shared-a", "https://shared-a.example.test/v1"],
+      ["shared-b", "https://shared-b.example.test/v1"],
+    ] as const) {
+      insert.run(
+        id,
+        "codex",
+        id,
+        JSON.stringify({
+          auth: { OPENAI_API_KEY: "CC_SWITCH_SHARED_SECRET" },
+          config:
+            `model = "gpt-shared"\nmodel_provider = "shared-provider"\n[model_providers.shared-provider]\nbase_url = "${endpoint}"\n`,
+        }),
+        3,
+      );
+    }
+    insert.run(
+      "missing-codex-key",
+      "codex",
+      "Missing Codex Key",
+      JSON.stringify({
+        config:
+          'model = "gpt-missing"\nmodel_provider = "missing-provider"\n[model_providers.missing-provider]\nbase_url = "https://missing.example.test/v1"\n',
+      }),
+      4,
+    );
+    insert.run(
+      "missing-claude-key",
+      "claude",
+      "Missing Claude Key",
+      JSON.stringify({
+        model: "claude-missing",
+        env: {
+          ANTHROPIC_BASE_URL: "https://claude-missing.example.test/v1",
+        },
+      }),
+      5,
+    );
     database.close();
 
     const credentials = await discoverLocalModelCredentials({
       homeDir: home,
-      environment: { HOME: home, PATH: "" },
+      environment: {
+        HOME: home,
+        PATH: "",
+        OPENAI_API_KEY: "PROCESS_OPENAI_SECRET",
+        ANTHROPIC_API_KEY: "PROCESS_ANTHROPIC_SECRET",
+      },
       ccSwitchDbPath: databasePath,
     });
 
@@ -376,6 +443,22 @@ describe("local inventory", () => {
         }),
       ]),
     );
+    const shared = credentials.filter(
+      (entry) => entry.model.providerId === "shared-provider",
+    );
+    expect(shared).toHaveLength(2);
+    expect(new Set(shared.map((entry) => entry.sourceId)).size).toBe(2);
+    expect(shared.map((entry) => entry.model.endpoint).sort()).toEqual([
+      "https://shared-a.example.test/v1",
+      "https://shared-b.example.test/v1",
+    ]);
+    expect(
+      credentials.some(
+        (entry) =>
+          entry.model.providerLabel === "Missing Codex Key" ||
+          entry.model.providerLabel === "Missing Claude Key",
+      ),
+    ).toBe(false);
   });
 
   it("keeps a shell-owned Codex environment credential unverified", async () => {

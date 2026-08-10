@@ -42,7 +42,7 @@ Codex and Claude Code connect directly to their model providers, so they require
 
 - Codex: syntax-preserving edits to top-level `model`, `model_provider`, and the selected `model_providers.one-status-*` table. `mcp_servers`, projects, rules, comments, and unrelated provider tables remain intact.
 - Claude Code: field-preserving JSON edits to `model` and model-routing keys in `env`. The Vault value is projected into Claude Code's native credential field without appearing in sidecar responses.
-- Cursor: writes `~/.cursor/one-status/model-profile.json` for the One Status Cursor extension. Cursor has no public native setting for direct model switching, so user settings, Rules, and MCP files remain untouched.
+- Cursor: writes `~/.cursor/one-status/model-profile.json` only when the One Status Cursor extension is installed. Without the extension, preview and apply fail closed and leave Cursor settings untouched.
 
 Transaction backups live under `~/.one-status/device-sidecar/transactions` with owner-only permissions. Rollback restores both bytes and the recorded pre-transaction permissions, and refuses to overwrite files whose hash or expected applied mode changed after apply.
 

@@ -83,14 +83,15 @@ if ! curl --fail --location --silent --show-error \
   fail "could not read the One Status release manifest. Check your network connection and try again."
 fi
 
-TAG="$(sed -n 's/^[[:space:]]*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/p' "$RELEASE_JSON" | head -n 1)"
+TAG="$(grep -Eo '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' "$RELEASE_JSON" | sed -n 's/^"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)"$/\1/p' | head -n 1)"
 if ! printf '%s\n' "$TAG" | grep -Eq '^v[0-9]+(\.[0-9]+){2}([.+-][0-9A-Za-z.-]+)?$'; then
   fail "the GitHub latest release response did not contain a valid semantic version tag_name."
 fi
 VERSION="${TAG#v}"
 
 release_asset_urls() {
-  sed -n 's/^[[:space:]]*"browser_download_url":[[:space:]]*"\([^"]*\)".*/\1/p' "$RELEASE_JSON"
+  grep -Eo '"browser_download_url"[[:space:]]*:[[:space:]]*"[^"]*"' "$RELEASE_JSON" |
+    sed -n 's/^"browser_download_url"[[:space:]]*:[[:space:]]*"\([^"]*\)"$/\1/p'
 }
 
 release_filename() {
@@ -322,6 +323,16 @@ esac
 ASSET_URL="$(find_desktop_asset "$PLATFORM" "$ARCHITECTURE" || true)"
 [ -n "$ASSET_URL" ] || fail "release $TAG has no $PLATFORM $ARCHITECTURE desktop package. See https://github.com/$REPOSITORY/releases/tag/$TAG for available files."
 ASSET_NAME="$(release_filename "$ASSET_URL")"
+if [ "$PLATFORM" = "mac" ]; then
+  INSTALL_DIRECTORY="${ONE_STATUS_INSTALL_DIR:-$HOME/Applications}"
+  APP_DESTINATION="$INSTALL_DIRECTORY/One Status.app"
+else
+  INSTALL_DIRECTORY="${ONE_STATUS_INSTALL_DIR:-$HOME/.local/bin}"
+  APP_DESTINATION="$INSTALL_DIRECTORY/one-status-app"
+fi
+say "release: $TAG"
+say "asset: $ASSET_NAME"
+say "destination: $APP_DESTINATION"
 ARCHIVE="$TEMP_DIRECTORY/$ASSET_NAME"
 download_file "$ASSET_URL" "$ARCHIVE"
 verify_checksum "$ARCHIVE" "$ASSET_NAME" "$CHECKSUM_FILE"
@@ -338,26 +349,56 @@ if [ "$PLATFORM" = "mac" ]; then
   BUNDLE_IDENTIFIER="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP_SOURCE/Contents/Info.plist" 2>/dev/null || true)"
   [ "$BUNDLE_IDENTIFIER" = "top.furesta.onestatus" ] || fail "$ASSET_NAME contains an unexpected app bundle identifier."
 
-  INSTALL_DIRECTORY="${ONE_STATUS_INSTALL_DIR:-$HOME/Applications}"
-  APP_DESTINATION="$INSTALL_DIRECTORY/One Status.app"
   INSTALL_STAGING="$INSTALL_DIRECTORY/.One Status.app.tmp.$$"
   mkdir -p "$INSTALL_DIRECTORY"
   rm -rf -- "$INSTALL_STAGING"
   cp -R "$APP_SOURCE" "$INSTALL_STAGING"
+
+  command -v codesign >/dev/null 2>&1 || fail "codesign is required to verify the macOS application."
   command -v xattr >/dev/null 2>&1 || fail "xattr is required to preserve macOS Gatekeeper enforcement."
-  QUARANTINE_TIMESTAMP="$(printf '%x' "$(date +%s)")"
-  if ! xattr -w com.apple.quarantine "0081;$QUARANTINE_TIMESTAMP;One Status Installer;" "$INSTALL_STAGING"; then
-    fail "could not apply the macOS quarantine attribute; installation has been stopped."
+  PRESERVE_QUARANTINE="no"
+  if codesign -dv --verbose=4 "$INSTALL_STAGING" 2>&1 | grep -Eq '^Authority=Developer ID Application:'; then
+    if ! codesign --verify --deep --strict "$INSTALL_STAGING"; then
+      fail "the Apple Developer ID signature is invalid; installation has been stopped."
+    fi
+    SIGNATURE_DESCRIPTION="Apple Developer ID signature verified"
+    if command -v spctl >/dev/null 2>&1 &&
+      command -v xcrun >/dev/null 2>&1 &&
+      spctl --assess --type execute "$INSTALL_STAGING" >/dev/null 2>&1 &&
+      xcrun stapler validate "$INSTALL_STAGING" >/dev/null 2>&1; then
+      PRESERVE_QUARANTINE="yes"
+      LAUNCH_DESCRIPTION="Gatekeeper and notarization checks passed; quarantine preserved"
+    else
+      LAUNCH_DESCRIPTION="notarization checks did not pass; quarantine was not added"
+    fi
+  else
+    if ! xattr -cr "$INSTALL_STAGING"; then
+      fail "could not remove unsupported Finder metadata from the macOS preview build."
+    fi
+    if ! codesign --force --deep --sign - "$INSTALL_STAGING"; then
+      fail "could not apply a local ad-hoc signature to the macOS preview build."
+    fi
+    if ! codesign --verify --deep --strict "$INSTALL_STAGING"; then
+      fail "the local ad-hoc signature could not be verified; installation has been stopped."
+    fi
+    SIGNATURE_DESCRIPTION="local ad-hoc signature applied (preview build; not notarized)"
+    LAUNCH_DESCRIPTION="SHA-256 and Bundle ID verified; quarantine was not added to the preview build"
+  fi
+
+  if [ "$PRESERVE_QUARANTINE" = "yes" ]; then
+    QUARANTINE_TIMESTAMP="$(printf '%x' "$(date +%s)")"
+    if ! xattr -w com.apple.quarantine "0081;$QUARANTINE_TIMESTAMP;One Status Installer;" "$INSTALL_STAGING"; then
+      fail "could not apply the macOS quarantine attribute; installation has been stopped."
+    fi
   fi
   rm -rf -- "$APP_DESTINATION"
   mv "$INSTALL_STAGING" "$APP_DESTINATION"
   INSTALL_STAGING=""
   say "installed desktop $TAG at $APP_DESTINATION"
-  say "open One Status from Applications; macOS Gatekeeper will validate the application."
+  say "signature: $SIGNATURE_DESCRIPTION"
+  say "launch trust: $LAUNCH_DESCRIPTION"
 else
-  INSTALL_DIRECTORY="${ONE_STATUS_INSTALL_DIR:-$HOME/.local/bin}"
   mkdir -p "$INSTALL_DIRECTORY"
-  APP_DESTINATION="$INSTALL_DIRECTORY/one-status-app"
   INSTALL_STAGING="$INSTALL_DIRECTORY/.one-status-app.tmp.$$"
   cp "$ARCHIVE" "$INSTALL_STAGING"
   chmod 0755 "$INSTALL_STAGING"

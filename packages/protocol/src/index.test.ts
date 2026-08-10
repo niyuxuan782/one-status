@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   configurationIntentSchema,
   createEmptyStatus,
-  deviceReportSchema,
   memoryEntrySchema,
   modelSourceSchema,
   parseStatusDocument,
@@ -36,8 +35,9 @@ describe("status protocol", () => {
     });
   });
 
-  it("accepts bounded per-model usage in a device report", () => {
-    const report = deviceReportSchema.parse({
+  it("removes the transient v0.8 usage field for v0.7 compatibility", () => {
+    const status = createEmptyStatus() as unknown as Record<string, any>;
+    status.deviceControl.reports["device-a"] = {
       deviceId: "device-a",
       deviceName: "Ryan's MacBook Pro",
       operatingSystem: "macos",
@@ -50,27 +50,18 @@ describe("status protocol", () => {
         scope: "latest-100-session-files-per-tool",
         filesScanned: 4,
         truncated: false,
-        entries: [
-          {
-            toolId: "codex",
-            modelId: "gpt-5.4",
-            dataSource: "codex-session",
-            inputTokens: 12_000,
-            cachedInputTokens: 10_000,
-            cacheCreationInputTokens: 0,
-            outputTokens: 800,
-            requests: 3,
-            latestAt: "2026-08-10T01:59:00.000Z",
-          },
-        ],
+        entries: [],
       },
       reportedAt: "2026-08-10T02:00:00.000Z",
-    });
+    };
 
-    expect(report.modelUsage?.entries[0]).toMatchObject({
-      modelId: "gpt-5.4",
-      inputTokens: 12_000,
-    });
+    const parsed = parseStatusDocument(status);
+    expect(parsed.deviceControl.reports["device-a"]).not.toHaveProperty(
+      "modelUsage",
+    );
+    expect(status.deviceControl.reports["device-a"]).toHaveProperty(
+      "modelUsage",
+    );
   });
 
   it("migrates schema v1 memory into confirmed schema v4 memory", () => {

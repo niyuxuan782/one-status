@@ -265,6 +265,63 @@ describe("local dashboard", () => {
     ).toBeUndefined();
   });
 
+  it("removes revoked device reports, pending intents, and usage snapshots", async () => {
+    const revokedDeviceId = "b1f73188-f9ed-4ec1-b40b-13ab78f8519e";
+    backend.status.deviceControl.reports[revokedDeviceId] = {
+      deviceId: revokedDeviceId,
+      deviceName: "Old Mac",
+      operatingSystem: "macos",
+      osVersion: "15.0",
+      architecture: "arm64",
+      backgroundVersion: "0.8.0",
+      tools: [],
+      reportedAt: "2026-08-10T00:00:00.000Z",
+    };
+    backend.status.deviceControl.intents["old-intent"] = {
+      id: "old-intent",
+      deviceId: revokedDeviceId,
+      toolId: "codex",
+      modelId: "model-a",
+      sourceId: "source-a",
+      status: "pending",
+      requestedAt: "2026-08-10T00:00:00.000Z",
+      requestedByDeviceId: "device-1",
+      updatedAt: "2026-08-10T00:00:00.000Z",
+      attempts: 0,
+    };
+    const usageKey =
+      `__one_status_internal:model-usage:v1:${revokedDeviceId}`;
+    backend.status.preferences[usageKey] = "{}";
+    const page = await app.inject({
+      method: "GET",
+      url: "/",
+      headers: { accept: "text/html", host: "127.0.0.1:8787" },
+    });
+    const setCookie = page.headers["set-cookie"]!;
+    const cookie = (Array.isArray(setCookie) ? setCookie[0]! : setCookie).split(
+      ";",
+    )[0]!;
+    const csrf = page.body.match(
+      /name="one-status-csrf" content="([^"]+)"/,
+    )?.[1];
+
+    const response = await app.inject({
+      method: "DELETE",
+      url: `/v1/dashboard/devices/${revokedDeviceId}`,
+      headers: {
+        cookie,
+        host: "127.0.0.1:8787",
+        origin: "http://127.0.0.1:8787",
+        "x-one-status-csrf": csrf!,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(backend.status.deviceControl.reports[revokedDeviceId]).toBeUndefined();
+    expect(backend.status.deviceControl.intents["old-intent"]).toBeUndefined();
+    expect(backend.status.preferences[usageKey]).toBeUndefined();
+  });
+
   it("serves the six-page control center and removes legacy page entries", async () => {
     const script = await app.inject({
       method: "GET",

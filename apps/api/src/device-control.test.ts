@@ -16,8 +16,12 @@ import {
   ModelConfigurationApplyError,
   type ModelConfigurationAdapter,
 } from "./device-control.js";
-import type { LocalInventorySnapshot } from "./local-inventory.js";
+import {
+  localModelSourceId,
+  type LocalInventorySnapshot,
+} from "./local-inventory.js";
 import type { LocalModelUsageSnapshot } from "./device-sidecar.js";
+import { readStoredModelUsage } from "./model-usage.js";
 import { PermissionVault } from "./permission-vault.js";
 
 const DEVICE_A = "2e0f24e2-b009-4091-b6d9-5236abe1ff00";
@@ -65,7 +69,7 @@ describe("DeviceControlService", () => {
     expect(JSON.stringify(snapshot.status)).not.toContain(API_KEY);
   });
 
-  it("publishes redacted per-model usage with the encrypted device report", async () => {
+  it("publishes redacted usage through a backward-compatible preference", async () => {
     const usage: LocalModelUsageSnapshot = {
       scannedAt: "2026-08-10T02:00:00.000Z",
       scope: "latest-100-session-files-per-tool",
@@ -94,28 +98,33 @@ describe("DeviceControlService", () => {
 
     const snapshot = await service.synchronizeCurrentDevice();
 
-    expect(snapshot.status.deviceControl.reports[DEVICE_A]?.modelUsage)
-      .toMatchObject({
+    expect(readStoredModelUsage(snapshot.status)).toEqual([
+      expect.objectContaining({
+        deviceId: DEVICE_A,
         scannedAt: usage.scannedAt,
         filesScanned: 4,
         entries: [
-          {
+          expect.objectContaining({
             toolId: "codex",
             modelId: "gpt-5.4",
             inputTokens: 12_000,
             cachedInputTokens: 10_000,
             outputTokens: 800,
             requests: 3,
-          },
+          }),
         ],
-      });
+      }),
+    ]);
+    expect(snapshot.status.deviceControl.reports[DEVICE_A]).not.toHaveProperty(
+      "modelUsage",
+    );
     expect(JSON.stringify(snapshot.status)).not.toContain("local-only-warning");
   });
 
   it("automatically imports discovered credentials into the encrypted Vault", async () => {
     const fingerprint = "a".repeat(64);
-    const sourceId = `third-party-a-${fingerprint.slice(0, 16)}`;
     const discoveredKey = "automatically-discovered-private-key";
+    const statusKey = new Uint8Array(32).fill(42);
     const vault = new PermissionVault({
       path: ":memory:",
       key: new Uint8Array(32).fill(41),
@@ -124,6 +133,23 @@ describe("DeviceControlService", () => {
     seedCatalog(backend.status);
     backend.status.deviceControl.sources[SOURCE_ID]!.credentialStatus = "missing";
     inventory.agents[0]!.model!.credentialFingerprint = fingerprint;
+    const sourceId = localModelSourceId(
+      inventory.agents[0]!.model!,
+      statusKey,
+    );
+    const dormantModel = {
+      modelId: "gpt-dormant",
+      providerId: "dormant-provider",
+      providerLabel: "Dormant provider",
+      sourceKind: "compatible-api" as const,
+      protocol: "openai" as const,
+      endpoint: "https://dormant.example.test/v1",
+      endpointHost: "dormant.example.test",
+      credentialFingerprint: "b".repeat(64),
+      credentialStatus: "available" as const,
+      health: "healthy" as const,
+    };
+    const dormantSourceId = localModelSourceId(dormantModel, statusKey);
     service = new DeviceControlService(
       backend,
       {
@@ -136,25 +162,14 @@ describe("DeviceControlService", () => {
               apiKey: discoveredKey,
               credentialFingerprint: fingerprint,
               model: inventory.agents[0]!.model!,
-              sourceId,
+              sourceId: localModelSourceId(inventory.agents[0]!.model!),
               toolId: "codex" as const,
             },
             {
               apiKey: "dormant-provider-private-key",
               credentialFingerprint: "b".repeat(64),
-              model: {
-                modelId: "gpt-dormant",
-                providerId: "dormant-provider",
-                providerLabel: "Dormant provider",
-                sourceKind: "compatible-api" as const,
-                protocol: "openai" as const,
-                endpoint: "https://dormant.example.test/v1",
-                endpointHost: "dormant.example.test",
-                credentialFingerprint: "b".repeat(64),
-                credentialStatus: "available" as const,
-                health: "healthy" as const,
-              },
-              sourceId: `dormant-provider-${"b".repeat(16)}`,
+              model: dormantModel,
+              sourceId: localModelSourceId(dormantModel),
               toolId: "codex" as const,
             },
           ];
@@ -162,6 +177,8 @@ describe("DeviceControlService", () => {
       },
       vault,
       configurator,
+      undefined,
+      async () => statusKey,
     );
 
     const snapshot = await service.synchronizeCurrentDevice();
@@ -173,6 +190,7 @@ describe("DeviceControlService", () => {
     expect(snapshot.status.deviceControl.sources[sourceId]).toMatchObject({
       credentialRef: `model-source:${sourceId}`,
       credentialStatus: "available",
+      supportedTools: ["codex", "claude-code", "cursor"],
     });
     expect(snapshot.status.deviceControl.sources[SOURCE_ID]).toBeUndefined();
     expect(snapshot.status.deviceControl.models[MODEL_ID]).toBeUndefined();
@@ -182,11 +200,11 @@ describe("DeviceControlService", () => {
       sourceId,
       currentModelId: "gpt-5.4",
     });
-    const dormantSourceId = `dormant-provider-${"b".repeat(16)}`;
     expect(snapshot.status.deviceControl.sources[dormantSourceId]).toMatchObject({
       label: "Dormant provider",
       endpoint: "https://dormant.example.test/v1",
       credentialStatus: "available",
+      supportedTools: ["codex", "claude-code", "cursor"],
     });
     expect(
       Object.values(snapshot.status.deviceControl.models).find(
@@ -197,6 +215,21 @@ describe("DeviceControlService", () => {
     expect(JSON.stringify(snapshot.status)).not.toContain(
       "dormant-provider-private-key",
     );
+    expect(JSON.stringify(snapshot.status)).not.toContain(fingerprint.slice(0, 16));
+    vault.ignoreModelCredential("user-1", sourceId);
+    await backend.mutateStatus((status) => {
+      for (const [modelId, model] of Object.entries(
+        status.deviceControl.models,
+      )) {
+        if (model.sourceId === sourceId) {
+          delete status.deviceControl.models[modelId];
+        }
+      }
+      delete status.deviceControl.sources[sourceId];
+    });
+    const afterDelete = await service.synchronizeCurrentDevice();
+    expect(afterDelete.status.deviceControl.sources[sourceId]).toBeUndefined();
+    expect(vault.getModelCredential("user-1", sourceId)).toBeUndefined();
     vault.close();
   });
 
@@ -227,6 +260,85 @@ describe("DeviceControlService", () => {
         targets: [{ deviceId: DEVICE_A, toolId: "codex" }],
       }),
     ).rejects.toThrow("Add a model source credential");
+  });
+
+  it("migrates an official API source to its concealed credential identity", async () => {
+    const statusKey = new Uint8Array(32).fill(52);
+    const fingerprint = "c".repeat(64);
+    const officialKey = "official-api-private-key";
+    const model = {
+      modelId: "gpt-5.4",
+      providerId: "openai",
+      providerLabel: "OpenAI",
+      sourceKind: "official-api" as const,
+      protocol: "openai" as const,
+      credentialFingerprint: fingerprint,
+      credentialStatus: "available" as const,
+      health: "healthy" as const,
+    };
+    const insecureSourceId = localModelSourceId(model);
+    const secureSourceId = localModelSourceId(model, statusKey);
+    const now = "2026-08-10T01:00:00.000Z";
+    const vault = new PermissionVault({
+      path: ":memory:",
+      key: new Uint8Array(32).fill(53),
+    });
+    backend.status = createEmptyStatus();
+    backend.status.deviceControl.sources[insecureSourceId] = {
+      id: insecureSourceId,
+      label: "OpenAI",
+      kind: "official-api",
+      protocol: "openai",
+      supportedTools: ["codex"],
+      credentialRef: `model-source:${insecureSourceId}`,
+      credentialStatus: "available",
+      createdAt: now,
+      updatedAt: now,
+    };
+    backend.status.deviceControl.models[`${insecureSourceId}:legacy-model`] = {
+      id: `${insecureSourceId}:legacy-model`,
+      sourceId: insecureSourceId,
+      name: "GPT-5.4",
+      modelId: "gpt-5.4",
+      supportedTools: ["codex"],
+      createdAt: now,
+      updatedAt: now,
+    };
+    vault.setModelCredential("user-1", insecureSourceId, officialKey);
+    inventory.agents[0]!.model = model;
+    service = new DeviceControlService(
+      backend,
+      {
+        async refresh() {
+          return inventory;
+        },
+        async discoverModelCredentials() {
+          return [{
+            apiKey: officialKey,
+            credentialFingerprint: fingerprint,
+            model,
+            sourceId: insecureSourceId,
+            toolId: "codex" as const,
+          }];
+        },
+      },
+      vault,
+      configurator,
+      undefined,
+      async () => statusKey,
+    );
+
+    const snapshot = await service.synchronizeCurrentDevice();
+
+    expect(snapshot.status.deviceControl.sources[insecureSourceId]).toBeUndefined();
+    expect(snapshot.status.deviceControl.sources[secureSourceId]).toMatchObject({
+      kind: "official-api",
+      credentialStatus: "available",
+    });
+    expect(vault.getModelCredential("user-1", insecureSourceId)).toBeUndefined();
+    expect(vault.getModelCredential("user-1", secureSourceId)).toBe(officialKey);
+    expect(JSON.stringify(snapshot.status)).not.toContain(fingerprint.slice(0, 16));
+    vault.close();
   });
 
   it("applies a confirmed configuration immediately on the current device", async () => {

@@ -528,6 +528,11 @@ fn usage_aggregates_codex_and_claude_sessions_without_returning_content() {
 #[test]
 fn cursor_writes_only_the_extension_manifest() {
     let home = TempDir::new().unwrap();
+    fs::create_dir_all(
+        home.path()
+            .join(".cursor/extensions/top.furesta.one-status-0.8.0"),
+    )
+    .unwrap();
     let settings = home
         .path()
         .join("Library/Application Support/Cursor/User/settings.json");
@@ -558,6 +563,32 @@ fn cursor_writes_only_the_extension_manifest() {
         "{\"mcp\":{\"keep\":true},\"rules\":\"keep\"}"
     );
     assert!(home
+        .path()
+        .join(".cursor/one-status/model-profile.json")
+        .exists());
+}
+
+#[test]
+fn cursor_fails_closed_when_the_required_extension_is_missing() {
+    let home = TempDir::new().unwrap();
+    let request = json!({
+        "home": home.path(),
+        "tool": "cursor",
+        "profile": {
+            "id": "local",
+            "displayName": "Local",
+            "modelId": "qwen-local",
+            "source": "local-model-service",
+            "apiProtocol": "openai-chat-completions",
+            "endpoint": "http://127.0.0.1:11434/v1"
+        }
+    });
+
+    let (exit, response) = run(CommandName::Preview, request);
+
+    assert_eq!(exit, 1);
+    assert_eq!(response["error"]["code"], "unsupported_configuration");
+    assert!(!home
         .path()
         .join(".cursor/one-status/model-profile.json")
         .exists());

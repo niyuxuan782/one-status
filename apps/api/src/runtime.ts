@@ -78,6 +78,10 @@ export async function startApiServer(
           permissionVault,
           new SidecarModelConfigurationAdapter(),
           modelUsage,
+          async () => {
+            const profile = await loadLocalProfile();
+            return importStatusKey(profile.statusKey);
+          },
         )
       : undefined;
   let stopDeviceControl: (() => void) | undefined;

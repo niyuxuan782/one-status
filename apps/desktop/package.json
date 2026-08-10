@@ -43,6 +43,7 @@
     "executableName": "one-status",
     "productName": "One Status",
     "asar": true,
+    "afterPack": "scripts/after-pack.mjs",
     "directories": {
       "output": "release"
     },
@@ -61,11 +62,19 @@
     "mac": {
       "category": "public.app-category.developer-tools",
       "icon": "build/icon.png",
-      "identity": null,
+      "hardenedRuntime": true,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "signIgnore": [
+        ".*\\.bin$",
+        ".*\\.dat$",
+        ".*\\.json$",
+        ".*\\.pak$"
+      ],
       "target": ["dmg", "zip"]
     },
     "dmg": {
-      "sign": false
+      "sign": true
     },
     "win": {
       "icon": "build/icon.png",

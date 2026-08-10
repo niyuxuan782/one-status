@@ -111,6 +111,10 @@ export interface PermissionVaultBundle {
     sourceId: string;
     updatedAt: string;
   }>;
+  modelCredentialIgnores?: Array<{
+    sourceId: string;
+    updatedAt: string;
+  }>;
   providers: Array<{
     config: OAuthProviderConfig;
     provider: OAuthProvider;
@@ -250,6 +254,13 @@ export class PermissionVault {
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
+
+      CREATE TABLE IF NOT EXISTS model_credential_ignores (
+        user_id TEXT NOT NULL,
+        source_id TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (user_id, source_id)
+      );
     `);
     ensureConnectionMetadataColumns(this.#database);
   }
@@ -341,8 +352,16 @@ export class PermissionVault {
   ): boolean {
     const sourceId = requiredControlId(sourceIdValue, "Model source ID");
     const apiKey = requiredSecretValue(apiKeyValue, "Model API key", 32_000);
+    const clearedIgnore = this.#database
+      .prepare(
+        "DELETE FROM model_credential_ignores WHERE user_id = ? AND source_id = ?",
+      )
+      .run(userId, sourceId);
     const current = this.getModelCredential(userId, sourceId);
-    if (current && safeSecretEqual(current, apiKey)) return false;
+    if (current && safeSecretEqual(current, apiKey)) {
+      if (Number(clearedIgnore.changes) > 0) this.#touch(userId);
+      return Number(clearedIgnore.changes) > 0;
+    }
     const existing = this.#database
       .prepare(
         "SELECT created_at FROM model_credentials WHERE user_id = ? AND source_id = ?",
@@ -365,6 +384,41 @@ export class PermissionVault {
         existing?.created_at ?? now,
         now,
       );
+    this.#touch(userId);
+    return true;
+  }
+
+  setDiscoveredModelCredential(
+    userId: string,
+    sourceIdValue: string,
+    apiKeyValue: string,
+  ): boolean {
+    if (this.isModelCredentialIgnored(userId, sourceIdValue)) return false;
+    return this.setModelCredential(userId, sourceIdValue, apiKeyValue);
+  }
+
+  isModelCredentialIgnored(userId: string, sourceIdValue: string): boolean {
+    const sourceId = requiredControlId(sourceIdValue, "Model source ID");
+    return Boolean(
+      this.#database
+        .prepare(
+          "SELECT 1 AS ignored FROM model_credential_ignores WHERE user_id = ? AND source_id = ?",
+        )
+        .get(userId, sourceId),
+    );
+  }
+
+  ignoreModelCredential(userId: string, sourceIdValue: string): boolean {
+    const sourceId = requiredControlId(sourceIdValue, "Model source ID");
+    const existing = this.isModelCredentialIgnored(userId, sourceId);
+    const credential = this.deleteModelCredential(userId, sourceId);
+    if (existing) return credential;
+    const now = new Date().toISOString();
+    this.#database
+      .prepare(
+        "INSERT INTO model_credential_ignores (user_id, source_id, updated_at) VALUES (?, ?, ?)",
+      )
+      .run(userId, sourceId, now);
     this.#touch(userId);
     return true;
   }
@@ -878,6 +932,11 @@ export class PermissionVault {
       .get(userId) as
       | { password_verifier: string; salt: string; updated_at: string }
       | undefined;
+    const ignoredModelSources = this.#database
+      .prepare(
+        "SELECT source_id, updated_at FROM model_credential_ignores WHERE user_id = ? ORDER BY source_id",
+      )
+      .all(userId) as Array<{ source_id: string; updated_at: string }>;
 
     return permissionVaultBundleSchema.parse({
       connections: connectionRows.map((row) => ({
@@ -894,6 +953,10 @@ export class PermissionVault {
           `model-source:${userId}:${row.source_id}`,
         ),
         createdAt: row.created_at,
+        sourceId: row.source_id,
+        updatedAt: row.updated_at,
+      })),
+      modelCredentialIgnores: ignoredModelSources.map((row) => ({
         sourceId: row.source_id,
         updatedAt: row.updated_at,
       })),
@@ -944,6 +1007,18 @@ export class PermissionVault {
     if (bundle.grants.some((grant) => !connectionIds.has(grant.connectionId))) {
       throw new Error("Permission Vault bundle contains an orphan Agent grant.");
     }
+    const ignoredSourceIds = new Set(
+      (bundle.modelCredentialIgnores ?? []).map((entry) => entry.sourceId),
+    );
+    if (
+      bundle.modelCredentials.some((entry) =>
+        ignoredSourceIds.has(entry.sourceId),
+      )
+    ) {
+      throw new Error(
+        "Permission Vault bundle cannot store and ignore the same model source.",
+      );
+    }
 
     this.#database.exec("BEGIN IMMEDIATE");
     try {
@@ -959,9 +1034,11 @@ export class PermissionVault {
       this.#database
         .prepare("DELETE FROM model_credentials WHERE user_id = ?")
         .run(userId);
-      this.#database
-        .prepare("DELETE FROM model_wallet_passwords WHERE user_id = ?")
-        .run(userId);
+      if (bundle.modelCredentialIgnores) {
+        this.#database
+          .prepare("DELETE FROM model_credential_ignores WHERE user_id = ?")
+          .run(userId);
+      }
 
       for (const entry of bundle.providers) {
         const clientSecret =
@@ -1059,13 +1136,29 @@ export class PermissionVault {
           );
       }
 
+      for (const ignored of bundle.modelCredentialIgnores ?? []) {
+        this.#database
+          .prepare(
+            "INSERT INTO model_credential_ignores (user_id, source_id, updated_at) VALUES (?, ?, ?)",
+          )
+          .run(
+            userId,
+            requiredControlId(ignored.sourceId, "Model source ID"),
+            ignored.updatedAt,
+          );
+      }
+
       if (bundle.walletPassword) {
         validateModelWalletVerifier(bundle.walletPassword);
         this.#database
           .prepare(
             `INSERT INTO model_wallet_passwords
                (user_id, salt, password_verifier, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?)`,
+             VALUES (?, ?, ?, ?, ?)
+             ON CONFLICT(user_id) DO UPDATE SET
+               salt = excluded.salt,
+               password_verifier = excluded.password_verifier,
+               updated_at = excluded.updated_at`,
           )
           .run(
             userId,
@@ -1176,9 +1269,11 @@ export class PermissionVault {
              SELECT updated_at FROM model_credentials WHERE user_id = ?
              UNION ALL
              SELECT updated_at FROM model_wallet_passwords WHERE user_id = ?
+             UNION ALL
+             SELECT updated_at FROM model_credential_ignores WHERE user_id = ?
            )`,
       )
-      .get(userId, userId, userId, userId, userId, userId) as
+      .get(userId, userId, userId, userId, userId, userId, userId) as
       | { updated_at: string | null }
       | undefined;
     return row?.updated_at ?? "1970-01-01T00:00:00.000Z";
@@ -1291,6 +1386,20 @@ const permissionVaultBundleSchema: z.ZodType<PermissionVaultBundle> = z
           .strict(),
       )
       .default([]),
+    modelCredentialIgnores: z
+      .array(
+        z
+          .object({
+            sourceId: z
+              .string()
+              .min(1)
+              .max(200)
+              .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/),
+            updatedAt: z.iso.datetime({ offset: true }),
+          })
+          .strict(),
+      )
+      .optional(),
     providers: z.array(
       z
         .object({

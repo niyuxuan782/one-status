@@ -431,7 +431,10 @@ const sidecarUsageSchema = z
             cacheCreationInputTokens: tokenCountSchema,
             outputTokens: tokenCountSchema,
             requests: tokenCountSchema,
-            latestAt: z.string().min(1).max(64).optional(),
+            latestAt: z
+              .iso.datetime({ offset: true })
+              .optional()
+              .catch(undefined),
           })
           .strict(),
       )

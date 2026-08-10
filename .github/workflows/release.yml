@@ -98,11 +98,39 @@ jobs:
       - name: Build macOS desktop
         if: matrix.platform == 'mac'
         shell: bash
+        env:
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          CSC_KEY_PASSWORD: ${{ secrets.MACOS_CSC_KEY_PASSWORD }}
+          CSC_LINK: ${{ secrets.MACOS_CSC_LINK }}
+          CSC_NAME: ${{ secrets.MACOS_CSC_NAME }}
         run: |
+          signing_args=()
+          if [[ -z "${CSC_LINK:-}" ]]; then
+            export CSC_NAME="-"
+            signing_args=(--config.mac.identity=-)
+            echo "Developer ID secrets are unavailable; building a structurally signed preview."
+          elif [[ -z "${CSC_NAME:-}" ]]; then
+            echo "MACOS_CSC_NAME is required when MACOS_CSC_LINK is configured." >&2
+            exit 1
+          fi
           pnpm --dir apps/desktop build
           pnpm --dir apps/desktop exec electron-builder \
             --mac --${{ matrix.arch }} --publish never \
-            --config.artifactName='One-Status-${version}-mac-${arch}.${ext}'
+            --config.artifactName='One-Status-${version}-mac-${arch}.${ext}' \
+            "${signing_args[@]}"
+          app_path="$(find apps/desktop/release -maxdepth 2 -type d -name '*.app' -print -quit)"
+          test -n "$app_path"
+          codesign --verify --deep --strict --verbose=2 "$app_path"
+          codesign -dvvv "$app_path" 2>&1
+          for image in apps/desktop/release/One-Status-*.dmg; do
+            hdiutil verify "$image"
+          done
+          if [[ "${CSC_NAME}" != "-" ]]; then
+            spctl --assess --type execute --verbose=4 "$app_path"
+            xcrun stapler validate "$app_path"
+          fi
       - name: Build Windows desktop
         if: matrix.platform == 'windows'
         shell: bash
@@ -220,8 +248,10 @@ jobs:
             support the CLI installer and Homebrew Formula. Release assets and
             the generated Formula are bound to SHA-256 checksums.
 
-            Preview desktop builds are not yet signed. Verify downloads with
-            `SHA256SUMS.txt` before installation.
+            macOS preview builds use ad-hoc code signing because Developer ID
+            and notarization credentials are not configured yet. The one-line
+            installer verifies `SHA256SUMS.txt` and the Bundle ID before it
+            applies a local signature to the staged application.
           files: release-assets/*
       - name: Update Homebrew tap when configured
         if: ${{ env.HOMEBREW_TAP_TOKEN != '' }}

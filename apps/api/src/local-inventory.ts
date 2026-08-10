@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import { execFile } from "node:child_process";
 import {
   access,
@@ -341,6 +341,7 @@ function readCodexProviderModelConfiguration(
   auth: Record<string, unknown>,
   environment: NodeJS.ProcessEnv,
   active: boolean,
+  allowProcessDefaultCredential = true,
 ): LocalAgentModelConfiguration {
   const modelId = active ? stringProperty(config, "model") : undefined;
   const providers = isRecord(config.model_providers)
@@ -357,6 +358,7 @@ function readCodexProviderModelConfiguration(
     auth,
     environment,
     active,
+    allowProcessDefaultCredential,
   );
   const credentialAvailable = Boolean(apiKey);
   const sourceKind = sourceKindForEndpoint(
@@ -397,18 +399,23 @@ function readCodexProviderModelConfiguration(
 function readClaudeModelConfiguration(
   settings: Record<string, unknown>,
   environment: NodeJS.ProcessEnv,
+  allowProcessDefaults = true,
 ): LocalAgentModelConfiguration {
   const settingsEnvironment = isRecord(settings.env) ? settings.env : {};
   const modelId =
     stringProperty(settings, "model") ??
     stringProperty(settingsEnvironment, "ANTHROPIC_MODEL") ??
-    environment.ANTHROPIC_MODEL ??
+    (allowProcessDefaults ? environment.ANTHROPIC_MODEL : undefined) ??
     "default";
   const endpoint = safeModelEndpoint(
     stringProperty(settingsEnvironment, "ANTHROPIC_BASE_URL") ??
-      environment.ANTHROPIC_BASE_URL,
+      (allowProcessDefaults ? environment.ANTHROPIC_BASE_URL : undefined),
   );
-  const apiKey = readClaudeApiKey(settings, environment);
+  const apiKey = readClaudeApiKey(
+    settings,
+    environment,
+    allowProcessDefaults,
+  );
   const credentialAvailable = Boolean(apiKey);
   const sourceKind = sourceKindForEndpoint(
     endpoint,
@@ -462,6 +469,7 @@ function readCodexProviderApiKey(
   auth: Record<string, unknown>,
   environment: NodeJS.ProcessEnv,
   allowDefaultCredential: boolean,
+  allowProcessDefaultCredential = true,
 ): string | undefined {
   const embedded = stringProperty(provider, "experimental_bearer_token");
   if (embedded) return embedded;
@@ -470,7 +478,9 @@ function readCodexProviderApiKey(
   if (!allowDefaultCredential && providerId !== "openai") return undefined;
   return (
     normalizedSecret(stringProperty(auth, "OPENAI_API_KEY")) ??
-    normalizedSecret(environment.OPENAI_API_KEY)
+    (allowProcessDefaultCredential
+      ? normalizedSecret(environment.OPENAI_API_KEY)
+      : undefined)
   );
 }
 
@@ -557,10 +567,10 @@ function readCcSwitchCredentialCandidates(
         continue;
       }
       if (row.app_type === "claude") {
-        const model = readClaudeModelConfiguration(settings, environment);
+        const model = readClaudeModelConfiguration(settings, environment, false);
         model.providerLabel = row.name || model.providerLabel;
         candidates.push({
-          apiKey: readClaudeApiKey(settings, environment),
+          apiKey: readClaudeApiKey(settings, environment, false),
           model,
           toolId: "claude-code",
         });
@@ -587,6 +597,7 @@ function readCcSwitchCredentialCandidates(
         auth,
         environment,
         true,
+        false,
       );
       const model = readCodexProviderModelConfiguration(
         providerId,
@@ -594,6 +605,7 @@ function readCcSwitchCredentialCandidates(
         auth,
         environment,
         true,
+        false,
       );
       model.providerLabel = row.name || model.providerLabel;
       if (apiKey && !model.credentialFingerprint) {
@@ -613,28 +625,63 @@ function readCcSwitchCredentialCandidates(
 function readClaudeApiKey(
   settings: Record<string, unknown>,
   environment: NodeJS.ProcessEnv,
+  allowProcessDefaults = true,
 ): string | undefined {
   const settingsEnvironment = isRecord(settings.env) ? settings.env : {};
   return (
     normalizedSecret(stringProperty(settingsEnvironment, "ANTHROPIC_API_KEY")) ??
-    normalizedSecret(environment.ANTHROPIC_API_KEY) ??
+    (allowProcessDefaults
+      ? normalizedSecret(environment.ANTHROPIC_API_KEY)
+      : undefined) ??
     normalizedSecret(
       stringProperty(settingsEnvironment, "ANTHROPIC_AUTH_TOKEN"),
     ) ??
-    normalizedSecret(environment.ANTHROPIC_AUTH_TOKEN)
+    (allowProcessDefaults
+      ? normalizedSecret(environment.ANTHROPIC_AUTH_TOKEN)
+      : undefined)
   );
 }
 
 export function localModelSourceId(
   model: Pick<
     LocalAgentModelConfiguration,
-    "credentialFingerprint" | "providerId"
+    "credentialFingerprint" | "endpoint" | "protocol" | "providerId"
   >,
+  identityKey?: Uint8Array,
 ): string {
   const base = normalizeControlId(model.providerId);
+  const routeFingerprint = createHash("sha256")
+    .update("one-status/model-route/v1\0", "utf8")
+    .update(model.protocol, "utf8")
+    .update("\0", "utf8")
+    .update(model.endpoint?.replace(/\/+$/, "") ?? "", "utf8")
+    .digest("hex")
+    .slice(0, 12);
+  const credentialIdentity = model.credentialFingerprint && identityKey
+    ? createHmac("sha256", identityKey)
+        .update("one-status/model-credential-identity/v1\0", "utf8")
+        .update(model.credentialFingerprint, "utf8")
+        .digest("hex")
+        .slice(0, 16)
+    : model.credentialFingerprint?.slice(0, 16);
+  return credentialIdentity
+    ? `${base}-${routeFingerprint}-${credentialIdentity}`
+    : `${base}-${routeFingerprint}`;
+}
+
+export function legacyLocalModelSourceId(providerId: string): string {
+  return normalizeControlId(providerId);
+}
+
+export function interimLocalModelSourceId(
+  model: Pick<
+    LocalAgentModelConfiguration,
+    "credentialFingerprint" | "providerId"
+  >,
+): string | undefined {
   return model.credentialFingerprint
-    ? `${base}-${model.credentialFingerprint.slice(0, 16)}`
-    : base;
+    ? `${normalizeControlId(model.providerId)}-${model.credentialFingerprint.slice(0, 16)}`
+    : undefined;
 }
 
 function modelCredentialFingerprint(apiKey: string): string {

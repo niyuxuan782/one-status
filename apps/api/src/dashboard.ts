@@ -58,6 +58,10 @@ import type {
 import type { LocalOnboardingService } from "./onboarding.js";
 import type { DeviceControlService } from "./device-control.js";
 import type { LocalModelUsageSnapshot } from "./device-sidecar.js";
+import {
+  readStoredModelUsage,
+  removeStoredModelUsage,
+} from "./model-usage.js";
 
 const dashboardPaths = new Set([
   "/",
@@ -196,9 +200,15 @@ export function registerDashboardRoutes(
           runtime.modelUsage?.scan().catch(() => null) ?? Promise.resolve(null),
         ]);
         const userId = snapshot.profile.userId;
+        const accountDeviceIds = new Set(
+          snapshot.account.devices.map((device) => device.id),
+        );
         return {
           ...snapshot,
           modelUsage,
+          syncedModelUsage: readStoredModelUsage(snapshot.status).filter(
+            (usage) => accountDeviceIds.has(usage.deviceId),
+          ),
           capabilityPacks: listBuiltInCapabilityPacks().map(
             ({ manifest, digest }) => ({ manifest, digest }),
           ),
@@ -361,7 +371,7 @@ export function registerDashboardRoutes(
               input.apiKey,
             );
           } else if (input.clearCredential) {
-            runtime.permissionVault.deleteModelCredential(
+            runtime.permissionVault.ignoreModelCredential(
               snapshot.profile.userId,
               id,
             );
@@ -492,7 +502,7 @@ export function registerDashboardRoutes(
       return dashboardCall(reply, () =>
         withPermissionVault(runtime, async () => {
           const snapshot = await runtime.backend.getSnapshot();
-          runtime.permissionVault.deleteModelCredential(
+          runtime.permissionVault.ignoreModelCredential(
             snapshot.profile.userId,
             id,
           );
@@ -974,6 +984,17 @@ export function registerDashboardRoutes(
     return dashboardCall(reply, async () => {
       const { id } = deviceParameterSchema.parse(request.params);
       await runtime.backend.revokeDevice(id);
+      await runtime.backend.mutateStatus((status) => {
+        delete status.deviceControl.reports[id];
+        for (const [intentId, intent] of Object.entries(
+          status.deviceControl.intents,
+        )) {
+          if (intent.deviceId === id) {
+            delete status.deviceControl.intents[intentId];
+          }
+        }
+        removeStoredModelUsage(status, id);
+      });
       return { revoked: true };
     });
   });

@@ -100,6 +100,10 @@ export class PermissionSyncService {
     if (remote.updatedAt !== envelope.updatedAt) {
       throw new PermissionVaultSyncError();
     }
+    const recovered = restoreLegacyOmittedExtensions(remote, local);
+    if (bundleFingerprint(recovered) !== bundleFingerprint(remote)) {
+      return this.#push(context, remote, recovered);
+    }
     this.vault.importBundle(context.userId, remote);
     return remote;
   }
@@ -230,6 +234,14 @@ function mergePermissionBundles(
     (entry) => entry.id,
   );
   const connectionIds = new Set(connections.map((entry) => entry.id));
+  const modelCredentialIgnores = mergeModelCredentialIgnores(
+    base.modelCredentialIgnores,
+    local.modelCredentialIgnores,
+    remote.modelCredentialIgnores,
+  );
+  const ignoredModelSourceIds = new Set(
+    modelCredentialIgnores?.map((entry) => entry.sourceId) ?? [],
+  );
   return {
     connections,
     format: "one-status.permission-vault-bundle",
@@ -244,7 +256,10 @@ function mergePermissionBundles(
       local.modelCredentials,
       remote.modelCredentials,
       (entry) => entry.sourceId,
-    ),
+    ).filter((entry) => !ignoredModelSourceIds.has(entry.sourceId)),
+    ...(modelCredentialIgnores === undefined
+      ? {}
+      : { modelCredentialIgnores }),
     providers: mergeRecords(
       base.providers,
       local.providers,
@@ -265,6 +280,23 @@ function mergePermissionBundles(
   };
 }
 
+function mergeModelCredentialIgnores(
+  base: PermissionVaultBundle["modelCredentialIgnores"],
+  local: PermissionVaultBundle["modelCredentialIgnores"],
+  remote: PermissionVaultBundle["modelCredentialIgnores"],
+): NonNullable<PermissionVaultBundle["modelCredentialIgnores"]> | undefined {
+  if (base === undefined && local === undefined && remote === undefined) {
+    return undefined;
+  }
+  const baseline = base ?? [];
+  return mergeRecords(
+    baseline,
+    local ?? baseline,
+    remote ?? baseline,
+    (entry) => entry.sourceId,
+  );
+}
+
 function normalizePermissionBundle(
   value: Partial<PermissionVaultBundle>,
 ): PermissionVaultBundle {
@@ -273,6 +305,9 @@ function normalizePermissionBundle(
     format: "one-status.permission-vault-bundle",
     grants: value.grants ?? [],
     modelCredentials: value.modelCredentials ?? [],
+    ...(value.modelCredentialIgnores
+      ? { modelCredentialIgnores: value.modelCredentialIgnores }
+      : {}),
     providers: value.providers ?? [],
     updatedAt: value.updatedAt ?? EMPTY_UPDATED_AT,
     version: 1,
@@ -295,6 +330,22 @@ function mergeWalletPassword(
       ? local
       : remote;
   return selected ? { walletPassword: selected } : {};
+}
+
+function restoreLegacyOmittedExtensions(
+  remote: PermissionVaultBundle,
+  local: PermissionVaultBundle,
+): PermissionVaultBundle {
+  return {
+    ...remote,
+    ...(remote.modelCredentialIgnores === undefined &&
+    local.modelCredentialIgnores !== undefined
+      ? { modelCredentialIgnores: local.modelCredentialIgnores }
+      : {}),
+    ...(!remote.walletPassword && local.walletPassword
+      ? { walletPassword: local.walletPassword }
+      : {}),
+  };
 }
 
 function mergeRecords<T>(

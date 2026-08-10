@@ -259,15 +259,21 @@ dirty: false</code></pre>
         <div class="install-panels">
           <div id="install-panel-desktop" class="install-panel active" role="tabpanel" aria-labelledby="install-tab-desktop" data-install-panel="desktop">
             <div>
-              <span class="install-label">推荐</span>
+              <span class="install-label">桌面端</span>
               <h3>One Status Desktop</h3>
               <p>安装后从 Applications 或开始菜单启动。页面会自动选择最新已发布版本。</p>
             </div>
-            <div class="download-grid">
-              <a id="download-mac-arm" href="https://github.com/niyuxuan782/one-status/releases/latest"><strong>macOS Apple Silicon</strong><span>.dmg · M1 及更新机型</span></a>
-              <a id="download-mac-intel" href="https://github.com/niyuxuan782/one-status/releases/latest"><strong>macOS Intel</strong><span>.dmg · Intel Mac</span></a>
-              <a id="download-windows" href="https://github.com/niyuxuan782/one-status/releases/latest"><strong>Windows</strong><span>.exe · Windows 10/11 x64</span></a>
-              <a id="download-linux" href="https://github.com/niyuxuan782/one-status/releases/latest"><strong>Linux</strong><span>.AppImage · x64</span></a>
+            <div class="desktop-downloads">
+              <aside class="mac-preview-note" role="note" aria-label="macOS 预览版安装说明">
+                <strong>macOS 未公证预览版</strong>
+                <p>当前版本尚未接入 Apple Developer ID。推荐使用上方“一键安装”：脚本验证 SHA-256 与 Bundle ID 后，仅对暂存的 <code>One Status.app</code> 执行本机签名，默认安装到 <code>~/Applications/One Status.app</code>。直接安装 DMG 可能提示“无法验证开发者”或“App 已损坏”；被拦截时，请前往“系统设置 → 隐私与安全性”点击“仍要打开”。</p>
+              </aside>
+              <div class="download-grid">
+                <a id="download-mac-arm" href="https://github.com/niyuxuan782/one-status/releases/latest"><strong>macOS Apple Silicon</strong><span>.dmg · 未公证预览</span></a>
+                <a id="download-mac-intel" href="https://github.com/niyuxuan782/one-status/releases/latest"><strong>macOS Intel</strong><span>.dmg · 未公证预览</span></a>
+                <a id="download-windows" href="https://github.com/niyuxuan782/one-status/releases/latest"><strong>Windows</strong><span>.exe · Windows 10/11 x64</span></a>
+                <a id="download-linux" href="https://github.com/niyuxuan782/one-status/releases/latest"><strong>Linux</strong><span>.AppImage · x64</span></a>
+              </div>
             </div>
           </div>
 
@@ -276,6 +282,11 @@ dirty: false</code></pre>
               <span class="install-label">SHA-256 校验</span>
               <h3>一条命令安装桌面版</h3>
               <p>脚本从 GitHub Release 下载产物，并使用同一 Release 的 SHA256SUMS 验证。</p>
+              <ul class="install-facts">
+                <li><strong>macOS 默认位置</strong><code>~/Applications/One Status.app</code></li>
+                <li><strong>预览版签名</strong><span>验证 SHA-256 与 Bundle ID 后，仅对安装暂存副本执行本机 ad-hoc 签名，不修改其他 App。</span></li>
+                <li><strong>DMG 直链</strong><span>若 macOS 拦截，请在“系统设置 → 隐私与安全性”中点击“仍要打开”。</span></li>
+              </ul>
             </div>
             <div class="command-stack">
               <div class="command-block">

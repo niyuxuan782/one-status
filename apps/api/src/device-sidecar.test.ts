@@ -207,4 +207,34 @@ describe("SidecarModelUsageReader", () => {
     expect(calls).toBe(1);
     expect(JSON.stringify(first)).not.toContain("message");
   });
+
+  it("drops an invalid session timestamp without blocking usage sync", async () => {
+    const runner: DeviceSidecarRunner = {
+      async run<T>(): Promise<T> {
+        return {
+          scannedAt: "2026-08-10T02:00:00Z",
+          scope: "latest-100-session-files-per-tool",
+          filesScanned: 1,
+          truncated: false,
+          entries: [
+            {
+              tool: "claude-code",
+              modelId: "claude-opus",
+              dataSource: "claude-session",
+              inputTokens: 100,
+              cachedInputTokens: 0,
+              cacheCreationInputTokens: 0,
+              outputTokens: 20,
+              requests: 1,
+              latestAt: "not-a-timestamp",
+            },
+          ],
+          warnings: [],
+        } as T;
+      },
+    };
+
+    const usage = await new SidecarModelUsageReader({ runner }).scan();
+    expect(usage.entries[0]?.latestAt).toBeUndefined();
+  });
 });

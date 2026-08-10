@@ -84,17 +84,23 @@ export function createMcpServer(
         ? snapshot.status.memory
         : snapshot.status.memory.filter((entry) => entry.state === "confirmed");
       const visiblePersona = filterPersonaForAgent(snapshot.status.persona);
+      const visiblePreferences = filterInternalPreferences(
+        snapshot.status.preferences,
+      );
       const data = section === "all"
         ? {
             ...snapshot.status,
             memory: visibleMemory,
             persona: visiblePersona,
+            preferences: visiblePreferences,
           }
         : section === "memory"
           ? visibleMemory
           : section === "persona"
             ? visiblePersona
-            : snapshot.status[section];
+            : section === "preferences"
+              ? visiblePreferences
+              : snapshot.status[section];
       return toolResult({ version: snapshot.version, section, data });
     },
   );
@@ -143,7 +149,7 @@ export function createMcpServer(
       return toolResult({
         version: snapshot.version,
         identity: snapshot.status.identity,
-        preferences: snapshot.status.preferences,
+        preferences: filterInternalPreferences(snapshot.status.preferences),
         personaProfile: filterPersonaProfileForAgent(snapshot.status.persona),
       });
     },
@@ -663,6 +669,16 @@ function filterPersonaProfileForAgent(
   return Object.fromEntries(
     Object.entries(persona.profile).filter(
       ([category]) => !blockedCategories.has(category),
+    ),
+  );
+}
+
+function filterInternalPreferences(
+  preferences: StatusDocument["preferences"],
+): StatusDocument["preferences"] {
+  return Object.fromEntries(
+    Object.entries(preferences).filter(
+      ([key]) => !key.startsWith("__one_status_internal:"),
     ),
   );
 }

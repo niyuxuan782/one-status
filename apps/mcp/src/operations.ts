@@ -8,11 +8,18 @@ const preferenceValueSchema = z.union([
   z.boolean(),
   z.array(z.string()),
 ]);
+const preferenceKeySchema = z
+  .string()
+  .min(1)
+  .max(200)
+  .refine((key) => !key.startsWith("__one_status_internal:"), {
+    message: "One Status internal preferences cannot be changed by an Agent.",
+  });
 
 export const statusMutationSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("set_preference"),
-    key: z.string().min(1),
+    key: preferenceKeySchema,
     value: preferenceValueSchema,
   }),
   z.object({
