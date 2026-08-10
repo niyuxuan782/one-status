@@ -80,6 +80,20 @@ describe("Device Sidecar release artifacts", () => {
     expect(validate).toBeGreaterThan(staple);
   });
 
+  it("clears every macOS extended attribute before code signing", async () => {
+    const afterPack = await readFile(
+      resolve(root, "apps", "desktop", "scripts", "after-pack.mjs"),
+      "utf8",
+    );
+
+    expect(afterPack).toContain('"-dr"');
+    expect(afterPack).toContain('"com.apple.provenance"');
+    expect(afterPack).toContain('["-cr", context.appOutDir]');
+    expect(afterPack).toContain('["-lr", context.appOutDir]');
+    expect(afterPack).toContain("ResourceFork|FinderInfo");
+    expect(afterPack).not.toContain('"-s"');
+  });
+
   it("renders the macOS signing label from each published Release", async () => {
     const pagesWorkflow = await readFile(
       resolve(root, ".github", "workflows", "pages.yml"),
