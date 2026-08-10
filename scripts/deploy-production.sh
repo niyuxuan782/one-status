@@ -131,6 +131,7 @@ COPYFILE_DISABLE=1 tar -C "$ROOT" \
   --exclude='*/dist' \
   --exclude='*/node_modules' \
   --exclude='*/release' \
+  --exclude='*/target' \
   --exclude='*.key' \
   --exclude='*.pem' \
   --exclude='*.sqlite' \

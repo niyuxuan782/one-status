@@ -9,6 +9,7 @@
 dist
 **/dist
 **/release
+**/target
 node_modules
 **/node_modules
 coverage

@@ -108,6 +108,7 @@ jobs:
         run: |
           signing_args=()
           if [[ -z "${CSC_LINK:-}" ]]; then
+            unset CSC_LINK CSC_KEY_PASSWORD
             export CSC_NAME="-"
             signing_args=(--config.mac.identity=-)
             echo "Developer ID secrets are unavailable; building a structurally signed preview."
