@@ -165,6 +165,7 @@ services:
       ONE_STATUS_ACME_EMAIL: "${ONE_STATUS_ACME_EMAIL:?set ONE_STATUS_ACME_EMAIL}"
       ONE_STATUS_DOMAIN: "${ONE_STATUS_DOMAIN:?set ONE_STATUS_DOMAIN}"
       ONE_STATUS_MCP_DOMAIN: "${ONE_STATUS_MCP_DOMAIN:?set ONE_STATUS_MCP_DOMAIN}"
+      ONE_STATUS_OPENAI_APPS_CHALLENGE: "${ONE_STATUS_OPENAI_APPS_CHALLENGE:-}"
     ports:
       - "80:80"
       - "443:443"
@@ -187,10 +188,43 @@ services:
     networks:
       - private
 
+  review-relay:
+    profiles:
+      - review
+    image: "one-status:${ONE_STATUS_IMAGE_TAG:-production}"
+    restart: unless-stopped
+    command:
+      - review-relay
+    environment:
+      ONE_STATUS_REVIEW_DEVICE_TOKEN_FILE: /run/secrets/review-device-token
+      ONE_STATUS_REVIEW_RELAY_URL: "wss://${ONE_STATUS_DOMAIN:?set ONE_STATUS_DOMAIN}/v1/relay"
+    secrets:
+      - source: review_device_token
+        target: review-device-token
+    depends_on:
+      caddy:
+        condition: service_started
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=8m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "5"
+    networks:
+      - private
+
 networks:
   private:
     driver: bridge
 
 secrets:
+  review_device_token:
+    file: "${ONE_STATUS_REVIEW_DEVICE_TOKEN_MOUNT_FILE:-/dev/null}"
   vault_kek:
     file: "${ONE_STATUS_VAULT_KEK_MOUNT_FILE:?run through one-status-compose}"

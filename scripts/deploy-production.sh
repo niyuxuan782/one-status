@@ -8,6 +8,9 @@ REMOTE_ROOT="${ONE_STATUS_REMOTE_ROOT:-/opt/one-status}"
 DOMAIN="${ONE_STATUS_DOMAIN:?set ONE_STATUS_DOMAIN}"
 MCP_DOMAIN="${ONE_STATUS_MCP_DOMAIN:?set ONE_STATUS_MCP_DOMAIN}"
 ACME_EMAIL="${ONE_STATUS_ACME_EMAIL:?set ONE_STATUS_ACME_EMAIL}"
+OPENAI_APPS_CHALLENGE="${ONE_STATUS_OPENAI_APPS_CHALLENGE:-}"
+REVIEW_DEVICE_TOKEN_FILE="${ONE_STATUS_REVIEW_DEVICE_TOKEN_FILE:-}"
+REVIEW_RELAY_ENABLED="${ONE_STATUS_REVIEW_RELAY_ENABLED:-false}"
 OPAQUE_SERVER_SETUP="${ONE_STATUS_OPAQUE_SERVER_SETUP:?set ONE_STATUS_OPAQUE_SERVER_SETUP}"
 VAULT_OPAQUE_SERVER_SETUP="${ONE_STATUS_VAULT_OPAQUE_SERVER_SETUP:?set ONE_STATUS_VAULT_OPAQUE_SERVER_SETUP}"
 POSTGRES_PASSWORD="${ONE_STATUS_POSTGRES_PASSWORD:?set ONE_STATUS_POSTGRES_PASSWORD}"
@@ -28,11 +31,13 @@ RELEASE_ID="${ONE_STATUS_RELEASE_ID:-$(date -u +%Y%m%dT%H%M%SZ)}"
 RELEASE_DIR="$REMOTE_ROOT/releases/$RELEASE_ID"
 RELEASE_ENV="$RELEASE_DIR/production.env"
 REMOTE_KEK_FILE="$REMOTE_ROOT/shared/secrets/vault-kek"
+REMOTE_REVIEW_DEVICE_TOKEN_FILE="$REMOTE_ROOT/shared/secrets/review-device-token"
 REMOTE_BOOTSTRAP_FILE="$REMOTE_ROOT/shared/secrets/bootstrap-identity.env"
 REMOTE_COMPOSE_RUNNER="/usr/local/sbin/one-status-compose"
 TARGET="$SSH_USER@$SSH_HOST"
 CONTROL_PATH="${ONE_STATUS_SSH_CONTROL_PATH:-/tmp/one-status-%C}"
 PREVIOUS_RELEASE=""
+PREVIOUS_COMPOSE_PROFILE_FLAGS=""
 LOCK_ACQUIRED=false
 DEPLOYMENT_STARTED=false
 DEPLOYMENT_FINALIZED=false
@@ -64,6 +69,44 @@ fi
 if [[ ! "$ACME_EMAIL" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+$ ]]; then
   printf 'ONE_STATUS_ACME_EMAIL is invalid.\n' >&2
   exit 1
+fi
+if [[ -n "$OPENAI_APPS_CHALLENGE" ]] && {
+  [[ ! "$OPENAI_APPS_CHALLENGE" =~ ^[A-Za-z0-9._~+/=:-]+$ ]] ||
+    (( ${#OPENAI_APPS_CHALLENGE} > 2048 ));
+}; then
+  printf 'ONE_STATUS_OPENAI_APPS_CHALLENGE must be a single non-empty token without whitespace.\n' >&2
+  exit 1
+fi
+if [[ "$REVIEW_RELAY_ENABLED" != true && "$REVIEW_RELAY_ENABLED" != false ]]; then
+  printf 'ONE_STATUS_REVIEW_RELAY_ENABLED must be true or false.\n' >&2
+  exit 1
+fi
+if [[ -n "$REVIEW_DEVICE_TOKEN_FILE" ]]; then
+  if [[ "$REVIEW_DEVICE_TOKEN_FILE" != /* || -L "$REVIEW_DEVICE_TOKEN_FILE" || ! -f "$REVIEW_DEVICE_TOKEN_FILE" || ! -r "$REVIEW_DEVICE_TOKEN_FILE" ]]; then
+    printf 'ONE_STATUS_REVIEW_DEVICE_TOKEN_FILE must be an absolute, readable regular file without symlinks.\n' >&2
+    exit 1
+  fi
+  review_token_directory="$(cd "$(dirname "$REVIEW_DEVICE_TOKEN_FILE")" && pwd -P)"
+  REVIEW_DEVICE_TOKEN_FILE="$review_token_directory/$(basename "$REVIEW_DEVICE_TOKEN_FILE")"
+  if [[ "$REVIEW_DEVICE_TOKEN_FILE" == "$ROOT/"* ]]; then
+    printf 'ONE_STATUS_REVIEW_DEVICE_TOKEN_FILE must be stored outside the repository.\n' >&2
+    exit 1
+  fi
+  if [[ "$(uname -s)" == Darwin ]]; then
+    review_token_metadata="$(stat -f '%u:%Lp:%z' "$REVIEW_DEVICE_TOKEN_FILE")"
+  else
+    review_token_metadata="$(stat -c '%u:%a:%s' "$REVIEW_DEVICE_TOKEN_FILE")"
+  fi
+  if [[ "$review_token_metadata" != "$(id -u):600:43" ]]; then
+    printf 'ONE_STATUS_REVIEW_DEVICE_TOKEN_FILE must be owned by the current user, mode 0600, and exactly 43 bytes.\n' >&2
+    exit 1
+  fi
+  review_device_token="$(< "$REVIEW_DEVICE_TOKEN_FILE")"
+  if [[ ! "$review_device_token" =~ ^[A-Za-z0-9_-]{43}$ ]]; then
+    printf 'ONE_STATUS_REVIEW_DEVICE_TOKEN_FILE must contain one unpadded Base64URL token.\n' >&2
+    exit 1
+  fi
+  unset review_device_token
 fi
 if [[ ! "$OPAQUE_SERVER_SETUP" =~ ^[A-Za-z0-9_-]{171}$ ]]; then
   printf 'ONE_STATUS_OPAQUE_SERVER_SETUP must be a 171-character Base64URL setup.\n' >&2
@@ -191,7 +234,7 @@ rollback_release() {
     local previous_id
     previous_id="$(basename "$PREVIOUS_RELEASE")"
     printf 'Restoring previous release %s\n' "$previous_id" >&2
-    ssh_run "set -e; previous_env='$PREVIOUS_RELEASE/production.env'; test -f \"\$previous_env\"; ln -sfn \"\$previous_env\" '$REMOTE_ROOT/shared/.production.env.rollback.$RELEASE_ID'; mv -Tf '$REMOTE_ROOT/shared/.production.env.rollback.$RELEASE_ID' '$REMOTE_ROOT/shared/production.env'; ln -sfn '$PREVIOUS_RELEASE' '$REMOTE_ROOT/.current.rollback.$RELEASE_ID'; mv -Tf '$REMOTE_ROOT/.current.rollback.$RELEASE_ID' '$REMOTE_ROOT/current'; sudo env ONE_STATUS_DEPLOY_ROOT='$REMOTE_ROOT' '$REMOTE_COMPOSE_RUNNER' --env-file \"\$previous_env\" -f '$PREVIOUS_RELEASE/deploy/compose.production.yaml' up -d --no-build --pull never --remove-orphans --wait --wait-timeout 120"
+    ssh_run "set -e; previous_env='$PREVIOUS_RELEASE/production.env'; test -f \"\$previous_env\"; ln -sfn \"\$previous_env\" '$REMOTE_ROOT/shared/.production.env.rollback.$RELEASE_ID'; mv -Tf '$REMOTE_ROOT/shared/.production.env.rollback.$RELEASE_ID' '$REMOTE_ROOT/shared/production.env'; ln -sfn '$PREVIOUS_RELEASE' '$REMOTE_ROOT/.current.rollback.$RELEASE_ID'; mv -Tf '$REMOTE_ROOT/.current.rollback.$RELEASE_ID' '$REMOTE_ROOT/current'; sudo env ONE_STATUS_DEPLOY_ROOT='$REMOTE_ROOT' '$REMOTE_COMPOSE_RUNNER' --env-file \"\$previous_env\" -f '$PREVIOUS_RELEASE/deploy/compose.production.yaml' $PREVIOUS_COMPOSE_PROFILE_FLAGS up -d --no-build --pull never --remove-orphans --wait --wait-timeout 120"
   else
     printf 'Stopping incomplete first deployment.\n' >&2
     ssh_run "set -e; sudo env ONE_STATUS_DEPLOY_ROOT='$REMOTE_ROOT' '$REMOTE_COMPOSE_RUNNER' --env-file '$RELEASE_ENV' -f '$RELEASE_DIR/deploy/compose.production.yaml' down --remove-orphans || true; if [[ -L '$REMOTE_ROOT/current' && \"\$(readlink -f '$REMOTE_ROOT/current')\" == '$RELEASE_DIR' ]]; then unlink '$REMOTE_ROOT/current'; fi; if [[ -L '$REMOTE_ROOT/shared/production.env' && \"\$(readlink -f '$REMOTE_ROOT/shared/production.env')\" == '$RELEASE_ENV' ]]; then unlink '$REMOTE_ROOT/shared/production.env'; fi" || true
@@ -227,6 +270,10 @@ if [[ -n "$PREVIOUS_RELEASE" ]]; then
   ssh_run "set -e; if [[ ! -f '$PREVIOUS_RELEASE/production.env' ]]; then cp '$REMOTE_ROOT/shared/production.env' '$PREVIOUS_RELEASE/production.env'; chmod 0600 '$PREVIOUS_RELEASE/production.env'; fi"
   previous_kms_provider="$(ssh_run "sed -n 's/^ONE_STATUS_VAULT_KMS_PROVIDER=//p' '$PREVIOUS_RELEASE/production.env' | tail -n 1")"
   previous_kek_id="$(ssh_run "sed -n 's/^ONE_STATUS_VAULT_KEK_ID=//p' '$PREVIOUS_RELEASE/production.env' | tail -n 1")"
+  previous_review_relay_enabled="$(ssh_run "sed -n 's/^ONE_STATUS_REVIEW_RELAY_ENABLED=//p' '$PREVIOUS_RELEASE/production.env' | tail -n 1")"
+  if [[ "$previous_review_relay_enabled" == true ]]; then
+    PREVIOUS_COMPOSE_PROFILE_FLAGS="--profile review"
+  fi
   if [[ -n "$previous_kms_provider" && "$previous_kms_provider" != "$VAULT_KMS_PROVIDER" ]]; then
     printf 'Vault KMS provider changes require a Wrapped DEK migration before deployment.\n' >&2
     exit 33
@@ -234,6 +281,23 @@ if [[ -n "$PREVIOUS_RELEASE" ]]; then
   if [[ "$VAULT_KMS_PROVIDER" == self-hosted && -n "$previous_kek_id" && "$previous_kek_id" != "$VAULT_KEK_ID" ]]; then
     printf 'Vault KEK ID changes require a Wrapped DEK migration before deployment.\n' >&2
     exit 34
+  fi
+fi
+
+if [[ -n "$REVIEW_DEVICE_TOKEN_FILE" ]]; then
+  if ! ssh "${SSH_OPTIONS[@]}" "$TARGET" "set -e; temporary='$REMOTE_ROOT/shared/secrets/.review-device-token.$RELEASE_ID'; sudo sh -c 'umask 077; cat > \"\$1\"' _ \"\$temporary\"; value=\$(sudo cat \"\$temporary\"); if [[ ! \"\$value\" =~ ^[A-Za-z0-9_-]{43}\$ ]]; then sudo rm -f \"\$temporary\"; printf 'Review device token upload has invalid contents.\\n' >&2; exit 38; fi; unset value; sudo chown 1000:1000 \"\$temporary\"; sudo chmod 0400 \"\$temporary\"; sudo mv \"\$temporary\" '$REMOTE_REVIEW_DEVICE_TOKEN_FILE'" < "$REVIEW_DEVICE_TOKEN_FILE"; then
+    exit 1
+  fi
+fi
+
+review_device_token_mount_file=/dev/null
+if [[ -n "$REVIEW_DEVICE_TOKEN_FILE" || "$REVIEW_RELAY_ENABLED" == true ]]; then
+  if ssh_run "sudo test -f '$REMOTE_REVIEW_DEVICE_TOKEN_FILE'"; then
+    ssh_run "set -e; metadata=\$(sudo stat -c '%u:%g:%a:%s' '$REMOTE_REVIEW_DEVICE_TOKEN_FILE'); [[ \"\$metadata\" == '1000:1000:400:43' ]]; value=\$(sudo cat '$REMOTE_REVIEW_DEVICE_TOKEN_FILE'); [[ \"\$value\" =~ ^[A-Za-z0-9_-]{43}\$ ]]"
+    review_device_token_mount_file="$REMOTE_REVIEW_DEVICE_TOKEN_FILE"
+  else
+    printf 'The review Relay requires a valid review device token on the server.\n' >&2
+    exit 38
   fi
 fi
 
@@ -279,7 +343,10 @@ COPYFILE_DISABLE=1 tar -C "$ROOT" \
   printf 'ONE_STATUS_DOMAIN=%s\n' "$DOMAIN"
   printf 'ONE_STATUS_MCP_DOMAIN=%s\n' "$MCP_DOMAIN"
   printf 'ONE_STATUS_ACME_EMAIL=%s\n' "$ACME_EMAIL"
+  printf 'ONE_STATUS_OPENAI_APPS_CHALLENGE=%s\n' "$OPENAI_APPS_CHALLENGE"
   printf 'ONE_STATUS_IMAGE_TAG=%s\n' "$RELEASE_ID"
+  printf 'ONE_STATUS_REVIEW_DEVICE_TOKEN_MOUNT_FILE=%s\n' "$review_device_token_mount_file"
+  printf 'ONE_STATUS_REVIEW_RELAY_ENABLED=%s\n' "$REVIEW_RELAY_ENABLED"
   printf 'ONE_STATUS_OPAQUE_SERVER_SETUP=%s\n' "$OPAQUE_SERVER_SETUP"
   printf 'ONE_STATUS_VAULT_OPAQUE_SERVER_SETUP=%s\n' "$VAULT_OPAQUE_SERVER_SETUP"
   printf 'ONE_STATUS_DATA_DIR=%s/shared/data\n' "$REMOTE_ROOT"
@@ -324,7 +391,11 @@ else
 fi
 
 DEPLOYMENT_STARTED=true
-if ! ssh_run "sudo env ONE_STATUS_DEPLOY_ROOT='$REMOTE_ROOT' '$REMOTE_COMPOSE_RUNNER' --env-file '$RELEASE_ENV' -f '$RELEASE_DIR/deploy/compose.production.yaml' up -d $compose_build_flags --remove-orphans --wait --wait-timeout 120"; then
+compose_profile_flags=""
+if [[ "$REVIEW_RELAY_ENABLED" == true ]]; then
+  compose_profile_flags="--profile review"
+fi
+if ! ssh_run "sudo env ONE_STATUS_DEPLOY_ROOT='$REMOTE_ROOT' '$REMOTE_COMPOSE_RUNNER' --env-file '$RELEASE_ENV' -f '$RELEASE_DIR/deploy/compose.production.yaml' $compose_profile_flags up -d $compose_build_flags --remove-orphans --wait --wait-timeout 120"; then
   exit 1
 fi
 
@@ -370,9 +441,24 @@ fi
 oauth_metadata="$(curl --noproxy '*' "${CURL_RESOLVE_OPTIONS[@]}" --connect-timeout 5 --max-time 10 -fsS "https://$DOMAIN/.well-known/oauth-authorization-server" 2>/dev/null || true)"
 resource_metadata="$(curl --noproxy '*' "${MCP_CURL_RESOLVE_OPTIONS[@]}" --connect-timeout 5 --max-time 10 -fsS "https://$MCP_DOMAIN/.well-known/oauth-protected-resource/mcp" 2>/dev/null || true)"
 mcp_status="$(curl --noproxy '*' "${MCP_CURL_RESOLVE_OPTIONS[@]}" --connect-timeout 5 --max-time 10 -sS -o /dev/null -w '%{http_code}' "https://$MCP_DOMAIN/mcp" 2>/dev/null || true)"
-if [[ "$oauth_metadata" != *\"authorization_endpoint\":\"https://$DOMAIN/oauth/authorize\"* || "$resource_metadata" != *\"resource\":\"https://$MCP_DOMAIN/mcp\"* || "$mcp_status" != 401 ]]; then
+openai_resource_metadata="$(curl --noproxy '*' "${MCP_CURL_RESOLVE_OPTIONS[@]}" --connect-timeout 5 --max-time 10 -fsS "https://$MCP_DOMAIN/.well-known/oauth-protected-resource/openai/mcp" 2>/dev/null || true)"
+openai_mcp_status="$(curl --noproxy '*' "${MCP_CURL_RESOLVE_OPTIONS[@]}" --connect-timeout 5 --max-time 10 -sS -o /dev/null -w '%{http_code}' "https://$MCP_DOMAIN/openai/mcp" 2>/dev/null || true)"
+if [[ "$oauth_metadata" != *\"authorization_endpoint\":\"https://$DOMAIN/oauth/authorize\"* || "$resource_metadata" != *\"resource\":\"https://$MCP_DOMAIN/mcp\"* || "$mcp_status" != 401 || "$openai_resource_metadata" != *\"resource\":\"https://$MCP_DOMAIN/openai/mcp\"* || "$openai_resource_metadata" != *\"status:profile:read\"* || "$openai_resource_metadata" == *\"vault:read\"* || "$openai_mcp_status" != 401 ]]; then
   printf 'Remote MCP OAuth discovery verification failed.\n' >&2
   exit 1
+fi
+if [[ -n "$OPENAI_APPS_CHALLENGE" ]]; then
+  challenge_response="$(curl --noproxy '*' "${MCP_CURL_RESOLVE_OPTIONS[@]}" --connect-timeout 5 --max-time 10 -fsS "https://$MCP_DOMAIN/.well-known/openai-apps-challenge" 2>/dev/null || true)"
+  if [[ "$challenge_response" != "$OPENAI_APPS_CHALLENGE" ]]; then
+    printf 'OpenAI plugin domain verification endpoint check failed.\n' >&2
+    exit 1
+  fi
+else
+  challenge_status="$(curl --noproxy '*' "${MCP_CURL_RESOLVE_OPTIONS[@]}" --connect-timeout 5 --max-time 10 -sS -o /dev/null -w '%{http_code}' "https://$MCP_DOMAIN/.well-known/openai-apps-challenge" 2>/dev/null || true)"
+  if [[ "$challenge_status" != 404 ]]; then
+    printf 'Unconfigured OpenAI plugin domain verification endpoint must return 404.\n' >&2
+    exit 1
+  fi
 fi
 
 ssh_run "set -e; ln -sfn '$RELEASE_ENV' '$REMOTE_ROOT/shared/.production.env.$RELEASE_ID'; mv -Tf '$REMOTE_ROOT/shared/.production.env.$RELEASE_ID' '$REMOTE_ROOT/shared/production.env'; ln -sfn '$RELEASE_DIR' '$REMOTE_ROOT/.current.$RELEASE_ID'; mv -Tf '$REMOTE_ROOT/.current.$RELEASE_ID' '$REMOTE_ROOT/current'; sudo install -m 0755 '$RELEASE_DIR/deploy/backup.sh' /usr/local/sbin/one-status-backup; printf 'ONE_STATUS_DEPLOY_ROOT=%s\n' '$REMOTE_ROOT' | sudo tee /etc/default/one-status-backup >/dev/null; sudo chmod 0600 /etc/default/one-status-backup; printf '17 3 * * * root . /etc/default/one-status-backup && /usr/local/sbin/one-status-backup >>/var/log/one-status-backup.log 2>&1\n' | sudo tee /etc/cron.d/one-status-backup >/dev/null; sudo chmod 0644 /etc/cron.d/one-status-backup"

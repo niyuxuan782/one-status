@@ -17,6 +17,10 @@
     "@one-status/local-config": "workspace:*",
     "@one-status/mcp": "workspace:*",
     "@one-status/protocol": "workspace:*",
-    "@one-status/vault": "workspace:*"
+    "@one-status/vault": "workspace:*",
+    "ws": "^8.21.3"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.18.1"
   }
 }

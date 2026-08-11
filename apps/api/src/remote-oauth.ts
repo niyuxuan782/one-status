@@ -92,6 +92,11 @@ interface AccessTokenRow {
 }
 
 export interface RemoteOAuthOptions {
+  additionalResources?: readonly {
+    allowProjectScopes?: boolean;
+    resource: string;
+    supportedScopes: readonly string[];
+  }[];
   allowProjectScopes?: boolean;
   consumeAccountProof(proofToken: string): { userId: string } | null;
   dbPath: string;
@@ -111,6 +116,10 @@ export class RemoteOAuthService implements OAuthTokenVerifier {
   readonly #requestLimiter = new RemoteOAuthRequestLimiter(
     PUBLIC_REQUEST_WINDOW_MS,
   );
+  readonly #resourcePolicies = new Map<
+    string,
+    { allowProjectScopes: boolean; supportedScopes: Set<string> }
+  >();
   readonly #supportedScopes: Set<string>;
 
   constructor(options: RemoteOAuthOptions) {
@@ -126,6 +135,38 @@ export class RemoteOAuthService implements OAuthTokenVerifier {
       options.defaultScopes ?? [],
       this.#supportedScopes,
     );
+    this.#resourcePolicies.set(normalizeResource(this.#resource.toString()), {
+      allowProjectScopes: this.#allowProjectScopes,
+      supportedScopes: this.#supportedScopes,
+    });
+    for (const additional of options.additionalResources ?? []) {
+      const resource = securePublicUrl(
+        additional.resource,
+        "Additional OAuth resource",
+      );
+      const normalized = normalizeResource(resource.toString());
+      if (this.#resourcePolicies.has(normalized)) {
+        throw new Error("Remote OAuth resources must be unique.");
+      }
+      const supportedScopes = new Set(additional.supportedScopes);
+      if (
+        supportedScopes.size === 0 ||
+        [...supportedScopes].some((scope) => !this.#supportedScopes.has(scope))
+      ) {
+        throw new Error(
+          "Additional OAuth resource scopes must be a non-empty subset of supported scopes.",
+        );
+      }
+      if (this.#defaultScopes.some((scope) => !supportedScopes.has(scope))) {
+        throw new Error(
+          "Additional OAuth resources must support every default scope.",
+        );
+      }
+      this.#resourcePolicies.set(normalized, {
+        allowProjectScopes: additional.allowProjectScopes === true,
+        supportedScopes,
+      });
+    }
     const persistent = options.dbPath !== ":memory:";
     if (persistent) {
       const directory = dirname(options.dbPath);
@@ -407,6 +448,7 @@ export class RemoteOAuthService implements OAuthTokenVerifier {
         .send(
           renderAuthorizationPage({
             clientName: authorization.client.client_name,
+            policyBaseUrl: this.#issuer.origin,
             redirectOrigin: new URL(authorization.redirectUri).origin,
             requestToken,
             scopes: authorization.scopes,
@@ -449,6 +491,7 @@ export class RemoteOAuthService implements OAuthTokenVerifier {
             renderAuthorizationPage({
               clientName: client?.client_name ?? "Remote Agent",
               error: "Account verification expired. Authenticate again.",
+              policyBaseUrl: this.#issuer.origin,
               redirectOrigin: new URL(stored.redirect_uri).origin,
               requestToken: body.data.request,
               scopes: splitScopes(stored.scope),
@@ -586,10 +629,15 @@ export class RemoteOAuthService implements OAuthTokenVerifier {
     if (!registeredRedirects.includes(redirectUri)) {
       throw new Error("The redirect URI is not registered for this client.");
     }
+    const resource = normalizeResource(query.resource ?? this.resource);
+    const policy = this.#resourcePolicies.get(resource);
+    if (!policy) {
+      throw new Error("The requested OAuth resource is not available.");
+    }
     const scopes = normalizeScopes(
       query.scope ?? this.#defaultScopes.join(" "),
-      this.#supportedScopes,
-      this.#allowProjectScopes,
+      policy.supportedScopes,
+      policy.allowProjectScopes,
     );
     if (
       scopes.some((scope) => SENSITIVE_REMOTE_SCOPES.has(scope)) &&
@@ -598,10 +646,6 @@ export class RemoteOAuthService implements OAuthTokenVerifier {
       throw new Error(
         "Sensitive Agent scopes require a trusted connector redirect origin.",
       );
-    }
-    const resource = normalizeResource(query.resource ?? this.resource);
-    if (resource !== normalizeResource(this.resource)) {
-      throw new Error("The requested OAuth resource is not available.");
     }
     return {
       client,
@@ -1210,6 +1254,7 @@ function escapeHtml(value: string): string {
 function renderAuthorizationPage(input: {
   clientName: string;
   error?: string;
+  policyBaseUrl: string;
   redirectOrigin: string;
   requestToken: string;
   scopes: string[];
@@ -1223,13 +1268,13 @@ function renderAuthorizationPage(input: {
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Connect to One Status</title><style>
-body{margin:0;background:#f5f6f8;color:#17202a;font:15px system-ui,sans-serif}main{width:min(440px,calc(100% - 32px));margin:8vh auto;background:#fff;border:1px solid #d9dee5;border-radius:8px;padding:28px;box-sizing:border-box}h1{font-size:22px;margin:0 0 8px}p{line-height:1.5;color:#53606d}ul{padding-left:20px;line-height:1.7}.field{display:grid;gap:6px;margin:15px 0}.field input{font:inherit;padding:10px 11px;border:1px solid #aeb7c2;border-radius:6px}.actions{display:flex;gap:10px;margin-top:22px}.actions button{font:600 14px system-ui;padding:10px 15px;border:1px solid #aeb7c2;border-radius:6px;background:#fff;cursor:pointer}.actions .primary{background:#16745b;color:#fff;border-color:#16745b}.error{color:#a12622;background:#fff0ef;padding:9px;border-radius:5px}</style></head>
+body{margin:0;background:#f5f6f8;color:#17202a;font:15px system-ui,sans-serif}main{width:min(440px,calc(100% - 32px));margin:8vh auto;background:#fff;border:1px solid #d9dee5;border-radius:8px;padding:28px;box-sizing:border-box}h1{font-size:22px;margin:0 0 8px}p{line-height:1.5;color:#53606d}ul{padding-left:20px;line-height:1.7}.field{display:grid;gap:6px;margin:15px 0}.field input{font:inherit;padding:10px 11px;border:1px solid #aeb7c2;border-radius:6px}.actions{display:flex;gap:10px;margin-top:22px}.actions button{font:600 14px system-ui;padding:10px 15px;border:1px solid #aeb7c2;border-radius:6px;background:#fff;cursor:pointer}.actions .primary{background:#16745b;color:#fff;border-color:#16745b}.error{color:#a12622;background:#fff0ef;padding:9px;border-radius:5px}.policies{display:flex;gap:14px;flex-wrap:wrap;margin-top:20px;padding-top:16px;border-top:1px solid #e1e5e9;font-size:12px}.policies a{color:#315faf}</style></head>
 <body><main><h1>Connect ${escapeHtml(input.clientName)}</h1><p>Verified redirect: <strong>${escapeHtml(input.redirectOrigin)}</strong></p><p>This Agent requests access to your One Status account:</p><ul>${scopeItems}</ul>${error}
 <form method="post" action="/oauth/authorize" autocomplete="on" data-opaque-authorization><input type="hidden" name="request" value="${escapeHtml(input.requestToken)}"><input type="hidden" name="accountProof" value=""><input type="hidden" name="decision" value="deny">
 <label class="field">Email<input id="one-status-email" type="email" required autocomplete="username"></label>
 <label class="field">Password<input id="one-status-password" type="password" required autocomplete="current-password"></label>
 <p class="error" role="alert" data-opaque-error hidden></p>
-<div class="actions"><button type="button" data-decision="deny">Cancel</button><button class="primary" type="button" data-decision="allow">Connect</button></div></form></main><script type="module" src="/v1/auth/opaque-authorize.js"></script></body></html>`;
+<div class="actions"><button type="button" data-decision="deny">Cancel</button><button class="primary" type="button" data-decision="allow">Connect</button></div></form><nav class="policies" aria-label="One Status policies"><a href="${escapeHtml(input.policyBaseUrl)}/privacy/">Privacy</a><a href="${escapeHtml(input.policyBaseUrl)}/terms/">Terms</a><a href="${escapeHtml(input.policyBaseUrl)}/support/">Support</a></nav></main><script type="module" src="/v1/auth/opaque-authorize.js"></script></body></html>`;
 }
 
 function renderErrorPage(message: string): string {

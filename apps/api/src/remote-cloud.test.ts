@@ -39,6 +39,73 @@ describe("Remote Cloud runtime", () => {
     await Promise.allSettled(cleanups.splice(0).reverse().map((cleanup) => cleanup()));
   });
 
+  it("isolates the public OpenAI MCP resource to read-only Status scopes", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "one-status-openai-mcp-"));
+    const app = createApp({
+      authRateLimit: false,
+      dbPath: join(directory, "cloud.sqlite"),
+      remoteCloud: { issuer: oauthIssuer, resource: mcpResource },
+    });
+    await app.ready();
+    cleanups.push(async () => {
+      await app.close();
+      await rm(directory, { recursive: true, force: true });
+    });
+
+    const publicResource = new URL("/openai/mcp", mcpResource).toString();
+    const metadata = await app.inject({
+      method: "GET",
+      url: "/.well-known/oauth-protected-resource/openai/mcp",
+    });
+    expect(metadata.statusCode).toBe(200);
+    expect(metadata.json()).toMatchObject({
+      resource: publicResource,
+      resource_name: "One Status for ChatGPT and Codex",
+      scopes_supported: [
+        "status:profile:read",
+        "status:context:read",
+        "status:memory:read",
+      ],
+    });
+
+    const unauthorized = await app.inject({
+      method: "POST",
+      url: "/openai/mcp",
+      payload: {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: {
+          protocolVersion: "2025-06-18",
+          capabilities: {},
+          clientInfo: { name: "review", version: "1.0.0" },
+        },
+      },
+    });
+    expect(unauthorized.statusCode).toBe(401);
+    expect(unauthorized.headers["www-authenticate"]).toContain(
+      "/.well-known/oauth-protected-resource/openai/mcp",
+    );
+
+    const clientId = await registerOAuthClient(app);
+    const rejected = await app.inject({
+      method: "GET",
+      url:
+        "/oauth/authorize?" +
+        new URLSearchParams({
+          response_type: "code",
+          client_id: clientId,
+          redirect_uri: redirectUri,
+          code_challenge: "a".repeat(43),
+          code_challenge_method: "S256",
+          scope: "status:profile:read vault:read",
+          resource: publicResource,
+        }),
+    });
+    expect(rejected.statusCode).toBe(400);
+    expect(rejected.body).toContain("requested OAuth scope is not supported");
+  });
+
   it("routes an OAuth Remote MCP profile read to the authenticated user's Desktop", async () => {
     const directory = await mkdtemp(join(tmpdir(), "one-status-remote-cloud-"));
     const app = createApp({
@@ -237,6 +304,35 @@ describe("Remote Cloud runtime", () => {
         credential: { secrets: { apiKey: "temporary-test-secret" } },
       },
     });
+
+    const publicOAuthClient = await registerOAuthClient(app);
+    const publicResource = new URL("/openai/mcp", mcpResource).toString();
+    const publicAccessToken = await authorize(app, publicOAuthClient, {
+      resource: publicResource,
+      scope:
+        "status:profile:read status:context:read status:memory:read",
+    });
+    const publicClient = new Client({
+      name: "openai-plugin-review",
+      version: "1.0.0",
+    });
+    const publicTransport = new StreamableHTTPClientTransport(
+      new URL(`http://127.0.0.1:${port}/openai/mcp`),
+      {
+        requestInit: {
+          headers: { authorization: `Bearer ${publicAccessToken}` },
+        },
+      },
+    );
+    await publicClient.connect(publicTransport);
+    cleanups.push(() => publicClient.close());
+    await expect(publicClient.listTools()).resolves.toMatchObject({
+      tools: [
+        { name: "status_get_profile", outputSchema: { type: "object" } },
+        { name: "status_get_context", outputSchema: { type: "object" } },
+        { name: "status_get_memory", outputSchema: { type: "object" } },
+      ],
+    });
   });
 
   it("returns device_offline without exposing internal Relay details", async () => {
@@ -375,6 +471,7 @@ async function registerOAuthClient(
 async function authorize(
   app: ReturnType<typeof createApp>,
   clientId: string,
+  options: { resource?: string; scope?: string } = {},
 ): Promise<string> {
   const accountProof = await createAccountProof(
     app,
@@ -394,8 +491,9 @@ async function authorize(
         code_challenge: challenge,
         code_challenge_method: "S256",
         scope:
+          options.scope ??
           "status:read devices:read tools:read tools:execute vault:read vault:write",
-        resource: mcpResource,
+        resource: options.resource ?? mcpResource,
         state: "remote-test-state",
       }),
   });
@@ -424,7 +522,7 @@ async function authorize(
       client_id: clientId,
       redirect_uri: redirectUri,
       code_verifier: verifier,
-      resource: mcpResource,
+      resource: options.resource ?? mcpResource,
     }).toString(),
   });
   expect(token.statusCode).toBe(200);

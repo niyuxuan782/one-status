@@ -59,14 +59,26 @@
 		max_size 2MB
 	}
 
-	@mcp_sensitive path /mcp
+	@mcp_sensitive path /mcp /openai/mcp /.well-known/openai-apps-challenge
 	log_skip @mcp_sensitive
+
+	@openai_apps_challenge {
+		path /.well-known/openai-apps-challenge
+		expression `{env.ONE_STATUS_OPENAI_APPS_CHALLENGE} != ""`
+	}
+	handle @openai_apps_challenge {
+		header {
+			Cache-Control "no-store"
+			Content-Type "text/plain; charset=utf-8"
+		}
+		respond "{env.ONE_STATUS_OPENAI_APPS_CHALLENGE}" 200
+	}
 
 	handle /health {
 		import api_proxy
 	}
 
-	@remote_mcp path /mcp /.well-known/oauth-protected-resource /.well-known/oauth-protected-resource/*
+	@remote_mcp path /mcp /openai/mcp /.well-known/oauth-protected-resource /.well-known/oauth-protected-resource/*
 	handle @remote_mcp {
 		import api_proxy
 	}

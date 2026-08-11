@@ -200,6 +200,15 @@ one-status app
 https://mcp.os.furesta.top/mcp
 ```
 
+公开 ChatGPT / Codex 插件使用独立的只读资源：
+
+```text
+https://mcp.os.furesta.top/openai/mcp
+```
+
+该端点只允许 `status:profile:read`、`status:context:read` 和
+`status:memory:read`，不会授予钱包、设备、第三方 action 或写入 scope。
+
 Remote MCP 读取 Profile、Context、Memory 和云端密钥钱包；Calendar、Slack、GitHub 等设备连接通过出站 WSS 路由到在线 Desktop。设备离线时，状态和本机连接调用返回明确的 `device_offline`，Cloud Vault 仍可按授权独立工作。
 
 Codex：

@@ -43,11 +43,40 @@ describe("One Status Remote MCP tools", () => {
     vault.status.preferences = {
       language: "zh-CN",
       "__one_status_internal:local": "hidden",
+      apiToken: "must-not-leak",
     };
     vault.status.memory = [
       memory("confirmed", "Confirmed memory"),
       memory("candidate", "Candidate memory"),
+      {
+        ...memory("confirmed", "Session handoff memory"),
+        id: "session-memory",
+        scope: "session",
+      },
     ];
+    vault.status.workspace = {
+      activeProjectId: "one-status",
+      currentContext: "Prepare the public plugin",
+      lastAgentId: "codex",
+    };
+    vault.status.projects["one-status"] = {
+      id: "one-status",
+      name: "One Status",
+      summary: "Portable Agent state",
+      techStack: ["TypeScript"],
+      currentGoal: "Publish the plugin",
+      decisions: ["Expose a narrow read-only surface"],
+      updatedAt: "2026-08-11T00:00:00.000Z",
+    };
+    vault.status.tasks["review"] = {
+      id: "review",
+      projectId: "one-status",
+      title: "Prepare app review",
+      status: "in_progress",
+      completed: [],
+      next: ["Scan tools"],
+      updatedAt: "2026-08-11T00:00:00.000Z",
+    };
     vault.status.persona.policy.blockedCategories = ["personal_info"];
     vault.status.persona.profile = {
       language_style: personaProfile(
@@ -56,14 +85,22 @@ describe("One Status Remote MCP tools", () => {
       ),
       personal_info: personaProfile("personal_info", "Private profile detail"),
     };
-    const client = await connect(vault, {
-      agentId: "chatgpt",
-      clientId: "chatgpt-client",
-      scopes: [...remoteMcpDefaultScopes],
-      subject: "user-1",
-    });
+    const client = await connect(
+      vault,
+      {
+        agentId: "chatgpt",
+        clientId: "chatgpt-client",
+        scopes: [...remoteMcpDefaultScopes],
+        subject: "user-1",
+      },
+      undefined,
+      { publicStatusProjection: true },
+    );
 
     try {
+      expect(client.getInstructions()).toContain("read-only portable profile");
+      expect(client.getInstructions()).not.toContain("tools_list");
+      expect(client.getInstructions()).not.toContain("Credential access");
       const tools = await client.listTools();
       expect(tools.tools.map((tool) => tool.name)).toEqual([
         "status_get_profile",
@@ -73,6 +110,32 @@ describe("One Status Remote MCP tools", () => {
       expect(tools.tools.every((tool) => tool.annotations?.readOnlyHint)).toBe(
         true,
       );
+      expect(
+        tools.tools.every(
+          (tool) =>
+            tool.annotations?.destructiveHint === false &&
+            tool.annotations?.openWorldHint === false &&
+            tool.outputSchema?.type === "object",
+        ),
+      ).toBe(true);
+      expect(
+        Object.fromEntries(
+          tools.tools.map((tool) => [
+            tool.name,
+            tool._meta?.securitySchemes,
+          ]),
+        ),
+      ).toEqual({
+        status_get_profile: [
+          { type: "oauth2", scopes: [remoteMcpScopes.profile] },
+        ],
+        status_get_context: [
+          { type: "oauth2", scopes: [remoteMcpScopes.context] },
+        ],
+        status_get_memory: [
+          { type: "oauth2", scopes: [remoteMcpScopes.memory] },
+        ],
+      });
       expect(tools.tools.map((tool) => tool.name)).not.toContain("write_status");
       expect(tools.tools.map((tool) => tool.name)).not.toContain(
         "credentials_get",
@@ -90,6 +153,47 @@ describe("One Status Remote MCP tools", () => {
       expect(JSON.stringify(profile.structuredContent)).not.toContain(
         "Private profile detail",
       );
+      expect(JSON.stringify(profile.structuredContent)).not.toContain(
+        "must-not-leak",
+      );
+      expect(JSON.stringify(profile.structuredContent)).not.toContain(
+        "sourceEventIds",
+      );
+      expect(JSON.stringify(profile.structuredContent)).not.toContain(
+        "lastObservedAt",
+      );
+
+      const context = await client.callTool({
+        name: "status_get_context",
+        arguments: {},
+      });
+      expect(context.structuredContent).toEqual({
+        workspace: {
+          currentContext: "Prepare the public plugin",
+        },
+        project: {
+          name: "One Status",
+          summary: "Portable Agent state",
+          techStack: ["TypeScript"],
+          currentGoal: "Publish the plugin",
+          decisions: ["Expose a narrow read-only surface"],
+        },
+        openTasks: [
+          {
+            title: "Prepare app review",
+            status: "in_progress",
+            completed: [],
+            next: ["Scan tools"],
+          },
+        ],
+        sessionMemory: [
+          {
+            scope: "session",
+            content: "Session handoff memory",
+            tags: [],
+          },
+        ],
+      });
 
       const memories = await client.callTool({
         name: "status_get_memory",
@@ -100,6 +204,22 @@ describe("One Status Remote MCP tools", () => {
       );
       expect(JSON.stringify(memories.structuredContent)).not.toContain(
         "Candidate memory",
+      );
+      expect(memories.structuredContent).toEqual({
+        memory: [
+          { scope: "user", content: "Confirmed memory", tags: [] },
+          {
+            scope: "session",
+            content: "Session handoff memory",
+            tags: [],
+          },
+        ],
+      });
+      expect(JSON.stringify(memories.structuredContent)).not.toContain(
+        "confirmed-memory",
+      );
+      expect(JSON.stringify(memories.structuredContent)).not.toContain(
+        "createdAt",
       );
     } finally {
       await client.close();
@@ -115,6 +235,8 @@ describe("One Status Remote MCP tools", () => {
     });
 
     try {
+      expect(client.getInstructions()).not.toContain("tools_list");
+      expect(client.getInstructions()).not.toContain("Credential access");
       const tools = await client.listTools();
       expect(tools.tools.map((tool) => tool.name)).toEqual([
         "status_get_memory",
@@ -122,6 +244,63 @@ describe("One Status Remote MCP tools", () => {
     } finally {
       await client.close();
     }
+  });
+
+  it("advertises top-level and compatibility OAuth security schemes", async () => {
+    const server = createRemoteMcpServer(
+      new MemoryVault(),
+      {
+        agentId: "chatgpt",
+        clientId: "chatgpt-client",
+        scopes: [...remoteMcpDefaultScopes],
+        subject: "user-1",
+      },
+      undefined,
+      { publicStatusProjection: true },
+    );
+    const handlers = (
+      server.server as unknown as {
+        _requestHandlers: Map<
+          string,
+          (request: unknown, extra: unknown) => Promise<unknown>
+        >;
+      }
+    )._requestHandlers;
+    const listTools = handlers.get("tools/list");
+    expect(listTools).toBeDefined();
+    const result = (await listTools?.(
+      { method: "tools/list", params: {} },
+      {},
+    )) as {
+      tools: Array<{
+        name: string;
+        securitySchemes?: unknown;
+        _meta?: Record<string, unknown>;
+      }>;
+    };
+
+    expect(
+      Object.fromEntries(
+        result.tools.map((tool) => [tool.name, tool.securitySchemes]),
+      ),
+    ).toEqual({
+      status_get_profile: [
+        { type: "oauth2", scopes: [remoteMcpScopes.profile] },
+      ],
+      status_get_context: [
+        { type: "oauth2", scopes: [remoteMcpScopes.context] },
+      ],
+      status_get_memory: [
+        { type: "oauth2", scopes: [remoteMcpScopes.memory] },
+      ],
+    });
+    expect(
+      result.tools.every(
+        (tool) =>
+          JSON.stringify(tool.securitySchemes) ===
+          JSON.stringify(tool._meta?.securitySchemes),
+      ),
+    ).toBe(true);
   });
 
   it("routes scoped device and connected-service tools through the bound Gateway", async () => {
@@ -168,6 +347,8 @@ describe("One Status Remote MCP tools", () => {
     const connectionId = "22222222-2222-4222-8222-222222222222";
 
     try {
+      expect(client.getInstructions()).toContain("tools_list");
+      expect(client.getInstructions()).toContain("Credential access");
       const tools = await client.listTools();
       expect(tools.tools.map((tool) => tool.name)).toEqual([
         "status_get_profile",
@@ -270,6 +451,7 @@ async function connect(
   vault: Vault,
   session: RemoteMcpAgentSession,
   gateway?: RemoteMcpGateway,
+  options: { publicStatusProjection?: boolean } = {},
 ) {
   const server = createRemoteMcpServer(
     {
@@ -326,6 +508,7 @@ async function connect(
     },
     session,
     gateway,
+    options,
   );
   const client = new Client({ name: session.agentId, version: "1.0.0" });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();

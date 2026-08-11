@@ -26,9 +26,11 @@ const DEFAULT_MAX_SESSIONS_PER_PRINCIPAL = 5;
 export interface FastifyRemoteMcpOptions {
   authorizationServers: string[];
   endpoint?: string;
+  includeRootResourceMetadata?: boolean;
   idleTimeoutMs?: number;
   maxSessions?: number;
   maxSessionsPerPrincipal?: number;
+  publicStatusProjection?: boolean;
   resolveAgentSession(authInfo: AuthInfo):
     | { agentId: string; subject: string }
     | Promise<{ agentId: string; subject: string }>;
@@ -39,6 +41,8 @@ export interface FastifyRemoteMcpOptions {
     session: RemoteMcpAgentSession,
   ): RemoteMcpStatusReader | Promise<RemoteMcpStatusReader>;
   resource: string;
+  resourceName?: string;
+  supportedScopes?: readonly string[];
   verifier: OAuthTokenVerifier;
 }
 
@@ -89,6 +93,8 @@ interface NormalizedOptions {
   resource: URL;
   resourceMetadataPath: string;
   resourceMetadataUrl: string;
+  publicStatusProjection: boolean;
+  supportedScopes: Set<string>;
   verifier: OAuthTokenVerifier;
 }
 
@@ -132,10 +138,10 @@ export function registerRemoteMcpRoutes(
 
   app.addHook("onClose", () => controller.close());
 
-  const metadataPaths = new Set([
-    options.resourceMetadataPath,
-    "/.well-known/oauth-protected-resource",
-  ]);
+  const metadataPaths = new Set([options.resourceMetadataPath]);
+  if (optionsValue.includeRootResourceMetadata !== false) {
+    metadataPaths.add("/.well-known/oauth-protected-resource");
+  }
   for (const path of metadataPaths) {
     app.route({
       method: ["GET", "OPTIONS"],
@@ -268,6 +274,7 @@ async function createSession(
     statusReader,
     authorization.session,
     gateway,
+    { publicStatusProjection: options.publicStatusProjection },
   );
   let entry: SessionEntry;
   const transport = new StreamableHTTPServerTransport({
@@ -313,7 +320,9 @@ async function authorizeRequest(
     const identity = await options.resolveAgentSession(authInfo);
     const agentId = requiredIdentity(identity.agentId);
     const subject = requiredIdentity(identity.subject);
-    const scopes = effectiveRemoteMcpScopes(authInfo.scopes);
+    const scopes = effectiveRemoteMcpScopes(authInfo.scopes).filter((scope) =>
+      options.supportedScopes.has(scope),
+    );
     if (scopes.length === 0) {
       return { error: "insufficient_scope", ok: false, status: 403 };
     }
@@ -411,6 +420,21 @@ function normalizeOptions(value: FastifyRemoteMcpOptions): NormalizedOptions {
     return url.toString().replace(/\/$/u, "");
   });
   const resourceMetadataUrl = protectedResourceMetadataUrl(resource);
+  const supportedScopes = new Set(
+    value.supportedScopes ?? remoteMcpSupportedScopes,
+  );
+  if (
+    supportedScopes.size === 0 ||
+    [...supportedScopes].some(
+      (scope) => !remoteMcpSupportedScopes.includes(
+        scope as (typeof remoteMcpSupportedScopes)[number],
+      ),
+    )
+  ) {
+    throw new Error(
+      "Remote MCP supported scopes must be a non-empty subset of known scopes.",
+    );
+  }
   const maxSessions = value.maxSessions ?? DEFAULT_MAX_SESSIONS;
   const maxSessionsPerPrincipal =
     value.maxSessionsPerPrincipal ?? DEFAULT_MAX_SESSIONS_PER_PRINCIPAL;
@@ -439,8 +463,8 @@ function normalizeOptions(value: FastifyRemoteMcpOptions): NormalizedOptions {
       authorization_servers: authorizationServers,
       bearer_methods_supported: ["header"],
       resource: resource.toString(),
-      resource_name: "One Status Remote MCP",
-      scopes_supported: [...remoteMcpSupportedScopes],
+      resource_name: value.resourceName ?? "One Status Remote MCP",
+      scopes_supported: [...supportedScopes],
     },
     resolveAgentSession: value.resolveAgentSession,
     resolveGateway: value.resolveGateway,
@@ -448,6 +472,8 @@ function normalizeOptions(value: FastifyRemoteMcpOptions): NormalizedOptions {
     resource,
     resourceMetadataPath: new URL(resourceMetadataUrl).pathname,
     resourceMetadataUrl,
+    publicStatusProjection: value.publicStatusProjection === true,
+    supportedScopes,
     verifier: value.verifier,
   };
 }

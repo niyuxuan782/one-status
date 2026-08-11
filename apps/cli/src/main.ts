@@ -29,6 +29,7 @@ import {
 } from "@one-status/protocol";
 import { booleanFlag, parseArguments } from "./arguments.js";
 import { runHandoffCommand } from "./handoff-command.js";
+import { runReviewRelay } from "./review-relay.js";
 
 async function main(): Promise<void> {
   const arguments_ = parseArguments(process.argv.slice(2));
@@ -82,6 +83,11 @@ async function main(): Promise<void> {
     case "vault-server":
       await runVaultServer(arguments_.flags);
       break;
+    case "review-relay": {
+      const relay = await runReviewRelay(arguments_.flags.get("relay-url"));
+      installGracefulShutdown(async () => relay.close());
+      break;
+    }
     case "app":
       await openDesktopApp();
       break;
@@ -902,6 +908,7 @@ Usage:
   one-status mcp --transport http [--agent <agent-id>] [--host <host>] [--port <port>] [--endpoint </mcp>] [--max-sessions-per-principal <count>]
   one-status server [--host <host>] [--port <port>] [--db <path>] [--workspace-db <path>] [--public-url <url>] [--trust-proxy true] [--device-relay true] [--remote-mcp true] [--oauth-issuer <url>] [--mcp-resource <url>]
   one-status vault-server [--host <host>] [--port <port>] [--migrate true|false]
+  one-status review-relay [--relay-url <wss-url>]
   one-status app
   one-status handoff --project <id> --agent claude-code|codex [--publish]
   one-status capability list
@@ -931,6 +938,9 @@ Environment:
   ONE_STATUS_REMOTE_MCP  Enable OAuth, Remote MCP, and Device Relay (true/false)
   ONE_STATUS_OAUTH_ISSUER  Public OAuth Authorization Server URL
   ONE_STATUS_REMOTE_MCP_RESOURCE  Public Remote MCP resource URL
+  ONE_STATUS_REVIEW_DEVICE_TOKEN  Dedicated review-fixture device token
+  ONE_STATUS_REVIEW_DEVICE_TOKEN_FILE  File containing the review device token
+  ONE_STATUS_REVIEW_RELAY_URL  Public WSS Device Relay URL
   ONE_STATUS_OAUTH_DB  OAuth state database path (defaults to ONE_STATUS_DB)
   ONE_STATUS_VAULT_DATABASE_URL  PostgreSQL URL for the internal Vault Service
   ONE_STATUS_VAULT_DATABASE_SSL  disable, require, or verify-full (default: verify-full)

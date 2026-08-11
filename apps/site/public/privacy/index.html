@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#111315" />
+    <meta name="description" content="How One Status handles account, OAuth, Profile, Context, and Memory data for its public ChatGPT and Codex plugin." />
+    <link rel="canonical" href="https://niyuxuan782.github.io/one-status/privacy/" />
+    <link rel="icon" href="../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../styles.css" />
+    <title>Privacy Policy - One Status</title>
+  </head>
+  <body class="legal-page">
+    <header class="site-header">
+      <a class="brand" href="../" aria-label="One Status home">
+        <span class="brand-mark">OS</span>
+        <span>One Status</span>
+      </a>
+      <nav aria-label="Policy navigation">
+        <a href="../privacy/" aria-current="page">Privacy</a>
+        <a href="../terms/">Terms</a>
+        <a href="../support/">Support</a>
+      </nav>
+      <a class="header-github" href="https://github.com/niyuxuan782/one-status" target="_blank" rel="noreferrer">GitHub</a>
+    </header>
+
+    <main>
+      <section class="legal-hero">
+        <p class="eyebrow"><span></span> TRUST · DATA CONTROL</p>
+        <h1>Privacy Policy</h1>
+        <p>This policy explains the data handled by One Status, with a specific boundary for the first public One Status plugin available through ChatGPT and Codex.</p>
+      </section>
+
+      <div class="legal-shell">
+        <aside class="legal-toc" aria-label="On this page">
+          <strong>On this page</strong>
+          <a href="#scope">Scope</a>
+          <a href="#plugin-boundary">Public plugin boundary</a>
+          <a href="#data">Data categories</a>
+          <a href="#flow">How data flows</a>
+          <a href="#use">Purposes</a>
+          <a href="#sharing">Recipients</a>
+          <a href="#retention">Retention</a>
+          <a href="#controls">Your controls</a>
+          <a href="#security">Security</a>
+          <a href="#contact">Contact</a>
+        </aside>
+
+        <article class="legal-content">
+          <p class="legal-meta">Effective: August 12, 2026 · Last updated: August 12, 2026</p>
+
+          <section id="scope">
+            <h2>1. Scope</h2>
+            <p>One Status is operated by the verified developer identified in its public plugin listing. This policy covers the One Status website, account and synchronization services, Remote MCP authentication, and the first public One Status plugin for ChatGPT and Codex.</p>
+            <p>The One Status Desktop application also manages local device state and optional encrypted services. Where a Desktop feature has an additional notice or approval screen, that notice applies together with this policy.</p>
+          </section>
+
+          <section id="plugin-boundary">
+            <h2>2. First public plugin boundary</h2>
+            <div class="legal-callout">
+              <strong>The public directory version is read-only.</strong>
+              <p>It exposes only <code>status_get_profile</code>, <code>status_get_context</code>, and <code>status_get_memory</code>.</p>
+            </div>
+            <p>The public plugin can return a user-authorized view of portable Profile, active Context, and confirmed Memory. It cannot create, update, or delete data and cannot act on external services.</p>
+            <p>The public plugin does not request, read, collect, or return credential-wallet entries, passwords, API keys, private keys, MFA or OTP codes, access tokens, refresh tokens, session cookies, card data, or government identifiers. It also excludes raw conversations and unconfirmed memory candidates.</p>
+            <p>Credential tools, third-party action tools, device control, model configuration, and write operations are outside this first public plugin release and outside its OAuth grants.</p>
+          </section>
+
+          <section id="data">
+            <h2>3. Data categories</h2>
+            <table class="legal-table">
+              <thead><tr><th>Category</th><th>Examples</th><th>When handled</th></tr></thead>
+              <tbody>
+                <tr><td>Account and authentication</td><td>Email address, account record, OAuth client and grant identifiers, approved scopes, token status, and login outcome. One Status stores the password protocol record required for PAKE authentication; the user's plaintext password is not sent to the server.</td><td>When an account is created, signed in, connected, refreshed, or revoked.</td></tr>
+                <tr><td>Profile</td><td>User-provided display name, locale, timezone, durable preference values, and permitted Persona content and confidence.</td><td>Only after the user grants <code>status:profile:read</code> and asks for relevant information.</td></tr>
+                <tr><td>Context</td><td>Current context, project name and summary, technology stack, goal, decisions, optional GitHub Handoff repository, branch and commit, open task content and status, and confirmed session memory.</td><td>Only after the user grants <code>status:context:read</code> and requests current work context.</td></tr>
+                <tr><td>Memory</td><td>Confirmed user, project, or session memory content, scope, and tags. Raw conversation records and candidate observations are excluded.</td><td>Only after the user grants <code>status:memory:read</code> and requests memory.</td></tr>
+                <tr><td>Tool parameters</td><td>An optional memory scope, project reference, and result limit. Profile and Context reads require no user-entered arguments.</td><td>When ChatGPT or Codex calls a public plugin tool for the user's request.</td></tr>
+                <tr><td>Service metadata</td><td>Authorized OAuth Agent and client identifiers, action name, outcome, and event time for access audits. Status schema versions, OAuth client, project, task, device, Agent, audit, and trace identifiers are not returned in public tool results. MCP request bodies, Status results, and authentication secrets are excluded from ordinary application logs.</td><td>When validating a result schema, protecting the service, enforcing grants, and recording access outcomes.</td></tr>
+                <tr><td>Support communications</td><td>Email address, issue description, and files the user chooses to send.</td><td>When a user contacts support.</td></tr>
+              </tbody>
+            </table>
+            <p>Standard network infrastructure may process IP addresses, TLS connection details, and HTTP metadata transiently to route traffic, prevent abuse, and maintain service availability.</p>
+          </section>
+
+          <section id="flow">
+            <h2>4. How plugin data flows</h2>
+            <ol>
+              <li>The user connects One Status through OAuth 2.1 with PKCE and approves the three read-only Status scopes.</li>
+              <li>ChatGPT or Codex calls one of the three public tools after a relevant user request.</li>
+              <li>An authorized One Status device decrypts only the selected Status view when a trusted device is required and available.</li>
+              <li>The selected result passes through the Remote MCP service to OpenAI for display in the user's conversation.</li>
+            </ol>
+            <p>Encrypted Status synchronization stores ciphertext in persistent cloud storage. During an authorized tool call, the One Status runtime and the connected client process the selected plaintext result transiently. When no eligible device is online, the service returns a clear unavailable status and does not return Status content.</p>
+          </section>
+
+          <section id="use">
+            <h2>5. Purposes of use</h2>
+            <ul>
+              <li>Authenticate the user and enforce the scopes they approved.</li>
+              <li>Return the minimum Profile, Context, or confirmed Memory needed for the user's request.</li>
+              <li>Maintain continuity across the user's devices and AI tools.</li>
+              <li>Prevent abuse, diagnose availability failures, and maintain security audit records.</li>
+              <li>Answer support, deletion, and privacy requests.</li>
+            </ul>
+            <p>One Status does not sell personal data, use plugin data for targeted advertising, or use returned Status content to train a One Status model.</p>
+          </section>
+
+          <section id="sharing">
+            <h2>6. Categories of recipients</h2>
+            <ul>
+              <li><strong>OpenAI:</strong> receives a tool result when the user asks ChatGPT or Codex to use One Status. OpenAI handles that data under the user's OpenAI relationship and settings.</li>
+              <li><strong>Infrastructure providers:</strong> process encrypted storage, database, networking, and service traffic on behalf of One Status. Current production infrastructure uses Tencent Cloud for the dynamic service.</li>
+              <li><strong>GitHub:</strong> serves the public website, documentation, source repository, and release downloads.</li>
+              <li><strong>Authorities or professional advisers:</strong> receive limited data only when legally required or necessary to protect users, the service, or legal rights.</li>
+            </ul>
+            <p>The first public plugin does not send Status results to GitHub, connected SaaS providers, data brokers, or advertising networks.</p>
+          </section>
+
+          <section id="retention">
+            <h2>7. Retention timelines</h2>
+            <ul>
+              <li><strong>Profile, Context, and Memory:</strong> retained until the user edits or deletes the item, closes the account, or requests deletion through support.</li>
+              <li><strong>OAuth access tokens:</strong> expire after one hour. OAuth refresh tokens expire after 30 days unless refreshed or revoked. Expired or revoked token records are purged after a seven-day security window.</li>
+              <li><strong>OAuth audit metadata:</strong> retained for 90 days, then purged, unless a longer period is required for an active security investigation or legal obligation.</li>
+              <li><strong>Support communications:</strong> retained while the request is open and for up to 90 days after closure, unless the user asks for earlier deletion or a legal obligation requires longer retention.</li>
+              <li><strong>Account closure:</strong> active service records are scheduled for deletion within 30 days after a verified request. Residual encrypted backups may remain until their normal overwrite cycle completes.</li>
+            </ul>
+          </section>
+
+          <section id="controls">
+            <h2>8. Your controls</h2>
+            <ul>
+              <li>Choose whether to connect One Status to ChatGPT or Codex.</li>
+              <li>Review the requested read-only scopes before approving OAuth access.</li>
+              <li>Revoke the plugin's OAuth grant from One Status or the connected OpenAI product.</li>
+              <li>View, edit, confirm, or delete Profile and Memory in One Status Desktop.</li>
+              <li>Keep a device offline, which prevents device-routed Status reads.</li>
+              <li>Request access, correction, export, account closure, or deletion by contacting support.</li>
+            </ul>
+            <p>Some rights vary by location. One Status will verify the request before changing or disclosing account data.</p>
+          </section>
+
+          <section id="security">
+            <h2>9. Security</h2>
+            <p>One Status uses encrypted transport, scoped OAuth grants, PKCE, separated Agent and device identities, encrypted Status storage, and metadata-only audit records. The public plugin exposes no credential tools. No system can guarantee absolute security; users should revoke access and contact support if they suspect unauthorized activity.</p>
+          </section>
+
+          <section id="changes">
+            <h2>10. Changes</h2>
+            <p>Material changes will be posted on this page with a new effective date. A future public plugin version that adds data categories or write capabilities will require an updated notice and the applicable OpenAI review process before publication.</p>
+          </section>
+
+          <section id="contact">
+            <h2>11. Contact</h2>
+            <p>For privacy questions, account deletion, or data requests, email <a href="mailto:niyuxuan782@gmail.com">niyuxuan782@gmail.com</a>. Include the One Status account email and the type of request, but do not send passwords, API keys, private keys, recovery material, or OAuth tokens.</p>
+          </section>
+        </article>
+      </div>
+    </main>
+
+    <footer class="site-footer">
+      <div class="brand"><span class="brand-mark">OS</span><span>One Status</span></div>
+      <p>One user. One status. Every AI. Private by design.</p>
+      <div><a href="../">Home</a><a href="../privacy/">Privacy</a><a href="../terms/">Terms</a><a href="../support/">Support</a></div>
+    </footer>
+  </body>
+</html>

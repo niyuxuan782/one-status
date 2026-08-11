@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#111315" />
+    <meta name="description" content="Support for One Status accounts, OAuth connections, Remote MCP, ChatGPT, Codex, and privacy requests." />
+    <link rel="canonical" href="https://niyuxuan782.github.io/one-status/support/" />
+    <link rel="icon" href="../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../styles.css" />
+    <title>Support - One Status</title>
+  </head>
+  <body class="legal-page">
+    <header class="site-header">
+      <a class="brand" href="../" aria-label="One Status home"><span class="brand-mark">OS</span><span>One Status</span></a>
+      <nav aria-label="Policy navigation"><a href="../privacy/">Privacy</a><a href="../terms/">Terms</a><a href="../support/" aria-current="page">Support</a></nav>
+      <a class="header-github" href="https://github.com/niyuxuan782/one-status" target="_blank" rel="noreferrer">GitHub</a>
+    </header>
+
+    <main>
+      <section class="legal-hero">
+        <p class="eyebrow"><span></span> HELP · ACCOUNT CONTROL</p>
+        <h1>One Status Support</h1>
+        <p>Get help with account access, OAuth, the public plugin, device availability, Status results, privacy controls, and open-source installation.</p>
+      </section>
+
+      <div class="legal-shell">
+        <aside class="legal-toc" aria-label="On this page">
+          <strong>On this page</strong>
+          <a href="#contact">Contact</a>
+          <a href="#before">Before contacting us</a>
+          <a href="#plugin">Public plugin</a>
+          <a href="#oauth">OAuth and access</a>
+          <a href="#privacy">Privacy requests</a>
+          <a href="#security">Security reports</a>
+          <a href="#open-source">Open-source support</a>
+        </aside>
+
+        <article class="legal-content">
+          <p class="legal-meta">Last updated: August 12, 2026</p>
+
+          <section id="contact">
+            <h2>Contact support</h2>
+            <p>Email <a href="mailto:niyuxuan782@gmail.com">niyuxuan782@gmail.com</a> for account, OAuth, plugin, privacy, and security support. For reproducible public bugs, use GitHub Issues.</p>
+            <div class="support-actions">
+              <a class="button button-ink" href="mailto:niyuxuan782@gmail.com?subject=One%20Status%20Support">Email support</a>
+              <a class="button button-outline" href="https://github.com/niyuxuan782/one-status/issues" target="_blank" rel="noreferrer">GitHub Issues</a>
+              <a class="button button-outline" href="https://github.com/niyuxuan782/one-status" target="_blank" rel="noreferrer">Documentation</a>
+            </div>
+          </section>
+
+          <section id="before">
+            <h2>Before contacting us</h2>
+            <p>Include enough non-sensitive detail to reproduce the problem:</p>
+            <ul>
+              <li>The One Status, ChatGPT, Codex, or Desktop version involved.</li>
+              <li>The approximate time and timezone.</li>
+              <li>The tool name, visible error code, and expected result.</li>
+              <li>Whether an authorized One Status Desktop device was online.</li>
+            </ul>
+            <div class="legal-callout"><strong>Keep secrets out of support messages.</strong><p>Do not send passwords, API keys, private keys, recovery material, OAuth tokens, cookies, MFA or OTP codes, or unredacted configuration files.</p></div>
+          </section>
+
+          <section id="plugin">
+            <h2>Public ChatGPT and Codex plugin</h2>
+            <p>The first public plugin provides three read-only tools for Profile, Context, and confirmed Memory. It has no credential, external-service, device-control, or write tools.</p>
+            <h3><code>device_offline</code></h3>
+            <p>The requested Status view needs an authorized device that can decrypt it. Open One Status Desktop on a trusted device, confirm its background service is online, and retry.</p>
+            <h3>Missing or old data</h3>
+            <p>Open One Status Desktop and confirm the relevant Profile, active project, task, or Memory entry. Only confirmed memory is available to the public plugin; candidate observations and raw conversations stay excluded.</p>
+            <h3>Unexpected tool request</h3>
+            <p>Do not approve a scope or action you did not request. Disconnect One Status from the OpenAI product and contact support with the visible tool name and time.</p>
+          </section>
+
+          <section id="oauth">
+            <h2>OAuth, sign-in, and revocation</h2>
+            <ul>
+              <li>Confirm the authorization page is hosted under <code>os.furesta.top</code>.</li>
+              <li>For the first public plugin, approve only <code>status:profile:read</code>, <code>status:context:read</code>, and <code>status:memory:read</code>.</li>
+              <li>Complete the OAuth window in the same browser session that initiated the connection.</li>
+              <li>To disconnect, revoke One Status in the connected OpenAI product or One Status account controls.</li>
+            </ul>
+            <p>Revocation blocks future access. A user can reconnect later and approve a fresh grant.</p>
+          </section>
+
+          <section id="privacy">
+            <h2>Privacy and account requests</h2>
+            <p>Email support from the address associated with the account for access, correction, export, OAuth revocation, account closure, or deletion. State the request type and account email. One Status will verify control of the account before acting.</p>
+            <p>See the <a href="../privacy/">Privacy Policy</a> for data categories, recipients, retention, and available controls.</p>
+          </section>
+
+          <section id="security">
+            <h2>Security reports</h2>
+            <p>Send suspected vulnerabilities privately by email with "One Status Security" in the subject. Include affected URLs, impact, and safe reproduction steps. Avoid accessing other users' data or causing service disruption. Public disclosure should wait until a fix is available.</p>
+          </section>
+
+          <section id="open-source">
+            <h2>Open-source installation</h2>
+            <p>Use GitHub Issues for installation failures, documentation gaps, and reproducible code defects that contain no private account data. Include the operating system, architecture, One Status version, installation method, and redacted logs.</p>
+          </section>
+        </article>
+      </div>
+    </main>
+
+    <footer class="site-footer">
+      <div class="brand"><span class="brand-mark">OS</span><span>One Status</span></div>
+      <p>One user. One status. Every AI. Private by design.</p>
+      <div><a href="../">Home</a><a href="../privacy/">Privacy</a><a href="../terms/">Terms</a><a href="../support/">Support</a></div>
+    </footer>
+  </body>
+</html>

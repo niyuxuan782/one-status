@@ -64,6 +64,69 @@ export ONE_STATUS_SSH_IDENTITY="$HOME/.config/one-status/deploy/lhins-8owupwdq-e
 ./scripts/deploy-production.sh
 ```
 
+`ONE_STATUS_OPENAI_APPS_CHALLENGE` is optional until the OpenAI submission
+portal issues a domain challenge. When configured, Caddy returns that exact
+single token as `text/plain` from
+`https://mcp.os.furesta.top/.well-known/openai-apps-challenge`. The endpoint
+returns `404` while the variable is empty. The deployment script rejects
+whitespace and unsafe characters, transfers the value through SSH stdin into
+the release environment file, verifies the public response without printing
+the token, and keeps the challenge path out of access logs. Replace the value
+only when the portal requires a new challenge for this MCP host.
+
+The public OpenAI directory plugin uses the isolated Universal MCP resource
+`https://mcp.os.furesta.top/openai/mcp`. Its protected-resource metadata is
+served from
+`https://mcp.os.furesta.top/.well-known/oauth-protected-resource/openai/mcp`
+and grants only Profile, Context, and Memory read scopes. The existing `/mcp`
+resource remains available for separately authorized Remote Agents.
+
+After the portal displays the token, enter it without placing it in shell
+history, then deploy again:
+
+```bash
+read -rsp 'OpenAI domain verification token: ' ONE_STATUS_OPENAI_APPS_CHALLENGE
+export ONE_STATUS_OPENAI_APPS_CHALLENGE
+printf '\n'
+./scripts/deploy-production.sh
+```
+
+## OpenAI review fixture Relay
+
+The sanitized OpenAI reviewer fixture runs as the optional Compose `review`
+profile. Normal production deployments leave it stopped. Create a dedicated
+review account and device token, write only the 43-character device token to a
+local file, and protect that file before enabling the profile:
+
+```bash
+install -d -m 0700 "$HOME/.config/one-status/deploy"
+read -rsp 'Dedicated review device token: ' REVIEW_DEVICE_TOKEN
+printf '\n'
+printf '%s' "$REVIEW_DEVICE_TOKEN" \
+  > "$HOME/.config/one-status/deploy/review-device-token"
+chmod 0600 "$HOME/.config/one-status/deploy/review-device-token"
+unset REVIEW_DEVICE_TOKEN
+
+export ONE_STATUS_REVIEW_DEVICE_TOKEN_FILE="$HOME/.config/one-status/deploy/review-device-token"
+export ONE_STATUS_REVIEW_RELAY_ENABLED=true
+./scripts/deploy-production.sh
+```
+
+The deployment script accepts only an absolute, non-symlink file owned by the
+current user with mode `0600` and exactly one 43-character Base64URL token. The
+file must stay outside the repository so release packaging cannot include it.
+The script uploads the token over SSH stdin into the server's root-only secrets
+directory.
+Compose mounts it at `/run/secrets/review-device-token`; the value does not
+enter release environment files, Docker environment metadata, command
+arguments, or application logs. The profile connects only to
+`wss://os.furesta.top/v1/relay` and publishes the fixed sanitized review data.
+
+Later deployments keep the uploaded file. Set
+`ONE_STATUS_REVIEW_RELAY_ENABLED=true` to keep the profile running, or set it to
+`false` to stop the fixture during the next deployment. Rotate the dedicated
+token by supplying a new protected file and deploying with the profile enabled.
+
 On the first self-hosted deployment, the script creates a random 256-bit KEK at
 `/opt/one-status/shared/secrets/vault-kek`. The host file is owned by
 `root:root` with mode `0600`. The root-owned Compose launcher prepares a
@@ -150,6 +213,14 @@ curl -fsS "https://$ONE_STATUS_DOMAIN/.well-known/oauth-authorization-server"
 curl -fsS "https://$ONE_STATUS_MCP_DOMAIN/.well-known/oauth-protected-resource/mcp"
 curl -sS -o /dev/null -w '%{http_code}\n' "https://$ONE_STATUS_MCP_DOMAIN/mcp"
 curl -fsSI "https://$ONE_STATUS_DOMAIN/" | grep -i '^location:'
+
+if [[ -n "${ONE_STATUS_OPENAI_APPS_CHALLENGE:-}" ]]; then
+  test "$(curl -fsS "https://$ONE_STATUS_MCP_DOMAIN/.well-known/openai-apps-challenge")" = \
+    "$ONE_STATUS_OPENAI_APPS_CHALLENGE"
+else
+  test "$(curl -sS -o /dev/null -w '%{http_code}' \
+    "https://$ONE_STATUS_MCP_DOMAIN/.well-known/openai-apps-challenge")" = 404
+fi
 ```
 
 After the copied database is healthy, switch a local installation only after it

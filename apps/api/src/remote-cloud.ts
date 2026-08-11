@@ -31,6 +31,7 @@ export interface RemoteCloudOptions {
 export interface RemoteCloudRuntime {
   close(): Promise<void>;
   mcp: FastifyRemoteMcpRoutes;
+  openAiMcp: FastifyRemoteMcpRoutes;
   oauth: RemoteOAuthService;
 }
 
@@ -38,7 +39,14 @@ export function registerRemoteCloudServices(
   app: FastifyInstance,
   options: RemoteCloudOptions,
 ): RemoteCloudRuntime {
+  const openAiResource = new URL("/openai/mcp", options.resource).toString();
   const oauth = new RemoteOAuthService({
+    additionalResources: [
+      {
+        resource: openAiResource,
+        supportedScopes: remoteMcpDefaultScopes,
+      },
+    ],
     allowProjectScopes: true,
     consumeAccountProof: (proofToken) =>
       options.opaqueAuth.consumeProof(proofToken, "oauth-authorize"),
@@ -74,14 +82,36 @@ export function registerRemoteCloudServices(
       return relayStatusReader(options.deviceRelay, oauth, session);
     },
   });
+  const openAiMcp = registerRemoteMcpRoutes(app, {
+    authorizationServers: [oauth.issuer],
+    endpoint: new URL(openAiResource).pathname,
+    includeRootResourceMetadata: false,
+    publicStatusProjection: true,
+    resource: openAiResource,
+    resourceName: "One Status for ChatGPT and Codex",
+    supportedScopes: remoteMcpDefaultScopes,
+    verifier: oauth,
+    resolveAgentSession(authInfo) {
+      const subject = authInfo.extra?.subject;
+      const agentId = authInfo.extra?.agentId;
+      if (typeof subject !== "string" || typeof agentId !== "string") {
+        throw new Error("OAuth Agent claims are incomplete.");
+      }
+      return { agentId, subject };
+    },
+    resolveStatusReader(session) {
+      return relayStatusReader(options.deviceRelay, oauth, session);
+    },
+  });
   let closed = false;
   const runtime: RemoteCloudRuntime = {
     mcp,
+    openAiMcp,
     oauth,
     async close() {
       if (closed) return;
       closed = true;
-      await mcp.close();
+      await Promise.all([mcp.close(), openAiMcp.close()]);
       oauth.close();
     },
   };

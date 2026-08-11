@@ -122,16 +122,12 @@ export function createRemoteMcpServer(
   vault: RemoteMcpStatusReader,
   session: RemoteMcpAgentSession,
   gateway?: RemoteMcpGateway,
+  options: { publicStatusProjection?: boolean } = {},
 ): McpServer {
   const server = new McpServer(
     { name: "one-status-remote", version: ONE_STATUS_VERSION },
     {
-      instructions:
-        "One Status Remote MCP provides the current user's read-only portable profile, context, and confirmed memory. " +
-        "Use status_get_context when the user asks to continue work, status_get_profile for durable identity and preferences, and status_get_memory for confirmed user, project, or session memory. " +
-        "For calendar, email, files, collaboration, and other connected services, call tools_list and use tools_execute through an online One Status Desktop. " +
-        "When a task needs a stored credential, call credentials_resolve and then credentials_get for immediate use. If a credential requires approval, or before every credential register, update, or delete, call credentials_request_approval with the exact planned input; wait for the user to approve it in One Status, then retry with the returned approvalToken. Register or update reusable credentials when the user provides or rotates them. " +
-        "Never echo, log, persist, or copy a returned secret into Status, Memory, Persona, tool arguments unrelated to its purpose, or error text. Connected-service provider credentials remain in the One Status Vault. Write actions can require approval in the Desktop App. Remote MCP cannot change local Agent configuration.",
+      instructions: remoteMcpInstructions(session.scopes),
     },
   );
 
@@ -143,9 +139,20 @@ export function createRemoteMcpServer(
         description:
           "Read the user's portable identity, durable preferences, and permitted Persona profile.",
         inputSchema: {},
+        ...(options.publicStatusProjection
+          ? { outputSchema: statusProfileOutputSchema }
+          : {}),
         annotations: readOnlyAnnotations,
+        ...oauthToolMetadata(remoteMcpScopes.profile),
       },
-      async () => toolResult(await vault.read({ view: "profile" })),
+      async () =>
+        toolResult(
+          projectStatusResult(
+            await vault.read({ view: "profile" }),
+            "profile",
+            options.publicStatusProjection,
+          ),
+        ),
     );
   }
 
@@ -157,9 +164,20 @@ export function createRemoteMcpServer(
         description:
           "Read the active workspace, project, open tasks, and confirmed session memory needed to continue work.",
         inputSchema: {},
+        ...(options.publicStatusProjection
+          ? { outputSchema: statusContextOutputSchema }
+          : {}),
         annotations: readOnlyAnnotations,
+        ...oauthToolMetadata(remoteMcpScopes.context),
       },
-      async () => toolResult(await vault.read({ view: "context" })),
+      async () =>
+        toolResult(
+          projectStatusResult(
+            await vault.read({ view: "context" }),
+            "context",
+            options.publicStatusProjection,
+          ),
+        ),
     );
   }
 
@@ -175,16 +193,24 @@ export function createRemoteMcpServer(
           projectId: z.string().min(1).max(500).optional(),
           limit: z.number().int().min(1).max(200).default(100),
         },
+        ...(options.publicStatusProjection
+          ? { outputSchema: statusMemoryOutputSchema }
+          : {}),
         annotations: readOnlyAnnotations,
+        ...oauthToolMetadata(remoteMcpScopes.memory),
       },
       async ({ scope, projectId, limit }) =>
         toolResult(
-          await vault.read({
-            view: "memory",
-            ...(scope ? { scope } : {}),
-            ...(projectId ? { projectId } : {}),
-            limit,
-          }),
+          projectStatusResult(
+            await vault.read({
+              view: "memory",
+              ...(scope ? { scope } : {}),
+              ...(projectId ? { projectId } : {}),
+              limit,
+            }),
+            "memory",
+            options.publicStatusProjection,
+          ),
         ),
     );
   }
@@ -444,6 +470,7 @@ export function createRemoteMcpServer(
     );
   }
 
+  advertiseOpenAiToolSecuritySchemes(server);
   return server;
 }
 
@@ -549,6 +576,312 @@ const readOnlyAnnotations = {
   idempotentHint: true,
   openWorldHint: false,
 } as const;
+
+function remoteMcpInstructions(scopes: string[]): string {
+  const parts = [
+    "One Status provides the user's read-only portable profile, active project context, open tasks, and confirmed memory.",
+    "Use status_get_context to continue current work, status_get_profile for durable preferences, and status_get_memory for confirmed user, project, or session memory.",
+    "Candidate observations, raw conversations, credential-wallet data, and authentication secrets are excluded from Status tool results.",
+  ];
+  if (
+    hasRemoteScope(scopes, remoteMcpScopes.toolsRead) ||
+    hasRemoteScope(scopes, remoteMcpScopes.toolsExecute)
+  ) {
+    parts.push(
+      "For connected services, inspect tools_list before requesting approval or calling tools_execute through an online One Status Desktop.",
+    );
+  }
+  if (
+    hasRemoteScope(scopes, remoteMcpScopes.vaultRead) ||
+    hasRemoteScope(scopes, remoteMcpScopes.vaultWrite)
+  ) {
+    parts.push(
+      "Credential access is purpose-bound and audited. Never echo, log, persist, or copy returned secrets into Status, Memory, Persona, unrelated tool arguments, or error text.",
+    );
+  }
+  return parts.join(" ");
+}
+
+const statusIdentityOutputSchema = z
+  .object({
+    displayName: z.string().optional(),
+    locale: z.string().optional(),
+    timezone: z.string().optional(),
+  })
+  .strip();
+const statusPreferenceValueOutputSchema = z.union([
+  z.string(),
+  z.number(),
+  z.boolean(),
+  z.array(z.string()),
+]);
+const statusPersonaProfileEntryOutputSchema = z
+  .object({
+    content: z.string(),
+    confidence: z.enum(["explicit", "observed", "inferred"]),
+  })
+  .strip();
+const statusMemoryEntryOutputSchema = z
+  .object({
+    scope: z.enum(["user", "project", "session"]),
+    content: z.string(),
+    tags: z.array(z.string()),
+  })
+  .strip();
+const statusProjectHandoffOutputSchema = z
+  .object({
+    provider: z.literal("github"),
+    repositoryUrl: z.string(),
+    branch: z.string(),
+    commit: z.string(),
+  })
+  .strip();
+const statusProjectOutputSchema = z
+  .object({
+    name: z.string(),
+    summary: z.string(),
+    techStack: z.array(z.string()),
+    currentGoal: z.string(),
+    decisions: z.array(z.string()),
+    handoff: statusProjectHandoffOutputSchema.optional(),
+  })
+  .strip();
+const statusTaskOutputSchema = z
+  .object({
+    title: z.string(),
+    status: z.enum(["todo", "in_progress", "blocked", "done"]),
+    completed: z.array(z.string()),
+    next: z.array(z.string()),
+  })
+  .strip();
+const statusWorkspaceOutputSchema = z
+  .object({
+    currentContext: z.string().optional(),
+  })
+  .strip();
+const statusProfileOutputSchema = z
+  .object({
+    identity: statusIdentityOutputSchema,
+    preferences: z.record(z.string(), statusPreferenceValueOutputSchema),
+    personaProfile: z.record(
+      z.string(),
+      statusPersonaProfileEntryOutputSchema,
+    ),
+  })
+  .strict();
+const statusContextOutputSchema = z
+  .object({
+    workspace: statusWorkspaceOutputSchema,
+    project: statusProjectOutputSchema.nullable(),
+    openTasks: z.array(statusTaskOutputSchema),
+    sessionMemory: z.array(statusMemoryEntryOutputSchema),
+  })
+  .strict();
+const statusMemoryOutputSchema = z
+  .object({
+    memory: z.array(statusMemoryEntryOutputSchema),
+  })
+  .strict();
+
+function projectStatusResult(
+  value: Record<string, unknown>,
+  view: "profile" | "context" | "memory",
+  publicStatusProjection = false,
+): Record<string, unknown> {
+  if (!publicStatusProjection) return value;
+  if (view === "profile") return reviewSafeStatusProfile(value);
+  if (view === "context") return reviewSafeStatusContext(value);
+  return reviewSafeStatusMemory(value);
+}
+
+function oauthToolMetadata(scope: string) {
+  const securitySchemes = [{ type: "oauth2", scopes: [scope] }] as const;
+  return {
+    securitySchemes,
+    _meta: { securitySchemes },
+  };
+}
+
+function advertiseOpenAiToolSecuritySchemes(server: McpServer): void {
+  type RequestHandler = (
+    request: unknown,
+    extra: unknown,
+  ) => unknown | Promise<unknown>;
+  const protocol = server.server as unknown as {
+    _requestHandlers: Map<string, RequestHandler>;
+  };
+  const listTools = protocol._requestHandlers.get("tools/list");
+  if (!listTools) return;
+  // SDK 1.30 serializes extension auth metadata only through _meta. OpenAI's
+  // descriptor contract also requires the same array at the tool's top level.
+  protocol._requestHandlers.set("tools/list", async (request, extra) => {
+    const result = recordValue(await listTools(request, extra));
+    return {
+      ...result,
+      tools: arrayValue(result.tools).map((value) => {
+        const tool = recordValue(value);
+        const securitySchemes = recordValue(tool._meta).securitySchemes;
+        return Array.isArray(securitySchemes)
+          ? { ...tool, securitySchemes }
+          : tool;
+      }),
+    };
+  });
+}
+
+function reviewSafeStatusProfile(value: Record<string, unknown>) {
+  const { status } = statusPayload(value);
+  const identity = recordValue(status.identity);
+  const preferences = recordValue(status.preferences);
+  const persona = recordValue(status.persona);
+  const directPersonaProfile = recordValue(status.personaProfile);
+  const personaProfile =
+    Object.keys(directPersonaProfile).length > 0
+      ? directPersonaProfile
+      : recordValue(persona.profile);
+  const blockedCategories = new Set(
+    stringArray(recordValue(persona.policy).blockedCategories),
+  );
+  const safeIdentity = statusIdentityOutputSchema.safeParse(identity);
+  return {
+    identity: safeIdentity.success ? safeIdentity.data : {},
+    preferences: reviewSafePreferences(preferences),
+    personaProfile: Object.fromEntries(
+      Object.entries(personaProfile).flatMap(([key, entry]) => {
+        if (blockedCategories.has(key)) return [];
+        const profile = statusPersonaProfileEntryOutputSchema.safeParse(entry);
+        return profile.success ? [[key, profile.data]] : [];
+      }),
+    ),
+  };
+}
+
+function reviewSafeStatusContext(value: Record<string, unknown>) {
+  const { status } = statusPayload(value);
+  const workspace = recordValue(status.workspace);
+  const activeProjectId = stringValue(workspace.activeProjectId);
+  const projects = recordValue(status.projects);
+  const tasks = Object.hasOwn(status, "openTasks")
+    ? arrayValue(status.openTasks)
+    : Object.values(recordValue(status.tasks)).filter(
+        (task) => recordValue(task).status !== "done",
+      );
+  const memory = Object.hasOwn(status, "sessionMemory")
+    ? arrayValue(status.sessionMemory)
+    : arrayValue(status.memory).filter((entry) => {
+        const candidate = recordValue(entry);
+        return candidate.state === "confirmed" && candidate.scope === "session";
+      });
+  const project = Object.hasOwn(status, "project")
+    ? status.project
+    : activeProjectId
+      ? projects[activeProjectId]
+      : null;
+  const safeWorkspace = statusWorkspaceOutputSchema.safeParse(workspace);
+  return {
+    workspace: safeWorkspace.success ? safeWorkspace.data : {},
+    project: reviewSafeProject(project),
+    openTasks: tasks.flatMap((task) => {
+      const safeTask = reviewSafeTask(task);
+      return safeTask ? [safeTask] : [];
+    }),
+    sessionMemory: memory.flatMap((entry) => {
+      const safeMemory = reviewSafeMemoryEntry(entry);
+      return safeMemory ? [safeMemory] : [];
+    }),
+  };
+}
+
+function reviewSafeStatusMemory(value: Record<string, unknown>) {
+  const { status } = statusPayload(value);
+  return {
+    memory: arrayValue(status.memory).flatMap((entry) => {
+      const safeEntry = reviewSafeMemoryEntry(entry);
+      return safeEntry ? [safeEntry] : [];
+    }),
+  };
+}
+
+function reviewSafeProject(value: unknown) {
+  if (value === null || value === undefined) return null;
+  const project = statusProjectOutputSchema.safeParse(value);
+  return project.success ? project.data : null;
+}
+
+function reviewSafeTask(value: unknown) {
+  const task = statusTaskOutputSchema.safeParse(value);
+  return task.success ? task.data : undefined;
+}
+
+function reviewSafeMemoryEntry(value: unknown) {
+  const memory = recordValue(value);
+  if (memory.state !== undefined && memory.state !== "confirmed") {
+    return undefined;
+  }
+  const safeMemory = statusMemoryEntryOutputSchema.safeParse(value);
+  return safeMemory.success ? safeMemory.data : undefined;
+}
+
+function recordValue(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function statusPayload(value: Record<string, unknown>) {
+  const root = recordValue(value);
+  const snapshotStatus = recordValue(root.status);
+  return {
+    root,
+    status: Object.keys(snapshotStatus).length > 0 ? snapshotStatus : root,
+  };
+}
+
+function arrayValue(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
+}
+
+function reviewSafePreferences(value: Record<string, unknown>) {
+  const result: Record<string, string | number | boolean | string[]> = {};
+  for (const [key, preference] of Object.entries(value)) {
+    if (!isReviewSafeStatusKey(key)) continue;
+    if (
+      typeof preference === "string" ||
+      typeof preference === "boolean" ||
+      (typeof preference === "number" && Number.isFinite(preference))
+    ) {
+      result[key] = preference;
+      continue;
+    }
+    if (
+      Array.isArray(preference) &&
+      preference.every((item) => typeof item === "string")
+    ) {
+      result[key] = [...preference];
+    }
+  }
+  return result;
+}
+
+function isReviewSafeStatusKey(key: string): boolean {
+  if (key.startsWith("__one_status_internal:")) return false;
+  const normalized = key
+    .replace(/([a-z0-9])([A-Z])/gu, "$1_$2")
+    .toLocaleLowerCase();
+  return !/(?:^|[._:-])(password|passphrase|secret|token|api_?key|private_?key|credential)(?:$|[._:-])/u.test(
+    normalized,
+  );
+}
 
 function toolResult(value: unknown) {
   const payload =

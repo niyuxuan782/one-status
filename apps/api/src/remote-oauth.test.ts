@@ -390,6 +390,9 @@ describe("RemoteOAuthService", () => {
     expect(response.body).toContain("Read your current project and task context");
     expect(response.body).toContain("Read your confirmed One Status memory");
     expect(response.body).not.toContain("Resolve and read credentials");
+    expect(response.body).toContain('href="https://os.example.test/privacy/"');
+    expect(response.body).toContain('href="https://os.example.test/terms/"');
+    expect(response.body).toContain('href="https://os.example.test/support/"');
 
     const request = response.body.match(/name="request" value="([^"]+)"/u)?.[1];
     const approval = await app.inject({
