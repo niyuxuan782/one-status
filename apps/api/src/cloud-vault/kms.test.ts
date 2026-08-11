@@ -6,6 +6,7 @@ import {
 } from "./crypto.js";
 import {
   FakeCloudVaultKmsProvider,
+  SelfHostedCloudVaultKekProvider,
   TencentCloudKmsHttpProvider,
   TencentCloudKmsSdkProvider,
   tencentCloudAuthorization,
@@ -96,6 +97,197 @@ describe("Cloud Vault KMS providers", () => {
       }),
     ).rejects.toBeInstanceOf(CloudVaultDecryptionError);
     expect(JSON.stringify(envelope)).not.toContain("private-value");
+  });
+
+  it("wraps each DEK with the self-hosted KEK and a versioned provider envelope", async () => {
+    const kms = new SelfHostedCloudVaultKekProvider({
+      kek: new Uint8Array(32).fill(29),
+      keyId: "one-status-production-v1",
+    });
+    const context = {
+      credentialId: "credential-self-hosted",
+      purpose: "one-status-cloud-vault-dek-v1",
+      revision: "1",
+      userId: "user-1",
+    };
+
+    const first = await kms.generateDataKey(context);
+    const second = await kms.generateDataKey(context);
+
+    expect(first.keyId).toBe("one-status-production-v1");
+    expect(first.wrappedKey).toMatch(/^oswk1\.self-hosted-kek\./);
+    expect(first.wrappedKey).not.toBe(second.wrappedKey);
+    expect(first.plaintextKey).not.toEqual(second.plaintextKey);
+    const encodedEnvelope = first.wrappedKey.split(".").at(-1) ?? "";
+    expect(
+      JSON.parse(Buffer.from(encodedEnvelope, "base64url").toString("utf8")),
+    ).toMatchObject({
+      algorithm: "A256GCM",
+      keyId: "one-status-production-v1",
+      provider: "self-hosted-kek",
+      version: 1,
+    });
+    await expect(
+      kms.unwrapDataKey({
+        context,
+        keyId: first.keyId,
+        wrappedKey: first.wrappedKey,
+      }),
+    ).resolves.toEqual(new Uint8Array(first.plaintextKey));
+  });
+
+  it("rejects self-hosted wrapped DEKs with changed context, key ID, or bytes", async () => {
+    const kms = new SelfHostedCloudVaultKekProvider({
+      kek: new Uint8Array(32).fill(13),
+      keyId: "one-status-production-v1",
+    });
+    const generated = await kms.generateDataKey({ purpose: "credential" });
+
+    await expect(
+      kms.unwrapDataKey({
+        context: { purpose: "another-credential" },
+        keyId: generated.keyId,
+        wrappedKey: generated.wrappedKey,
+      }),
+    ).rejects.toMatchObject({ code: "self_hosted_unwrap_failed" });
+    await expect(
+      kms.unwrapDataKey({
+        context: { purpose: "credential" },
+        keyId: "rotated-key",
+        wrappedKey: generated.wrappedKey,
+      }),
+    ).rejects.toMatchObject({ code: "self_hosted_key_id_mismatch" });
+    await expect(
+      kms.unwrapDataKey({
+        context: { purpose: "credential" },
+        keyId: generated.keyId,
+        wrappedKey: `${generated.wrappedKey.slice(0, -1)}A`,
+      }),
+    ).rejects.toMatchObject({ code: "self_hosted_unwrap_failed" });
+  });
+
+  it("rejects oversized or malformed self-hosted wrapped DEK fields", async () => {
+    const kms = new SelfHostedCloudVaultKekProvider({
+      kek: new Uint8Array(32).fill(23),
+      keyId: "one-status-production-v1",
+    });
+    const context = { purpose: "credential" };
+    const generated = await kms.generateDataKey(context);
+    try {
+      await expect(
+        kms.unwrapDataKey({
+          context,
+          keyId: generated.keyId,
+          wrappedKey: `oswk1.self-hosted-kek.${"A".repeat(2_048)}`,
+        }),
+      ).rejects.toMatchObject({ code: "self_hosted_unwrap_failed" });
+      await expect(
+        kms.unwrapDataKey({
+          context,
+          keyId: generated.keyId,
+          wrappedKey: rewriteSelfHostedEnvelope(generated.wrappedKey, {
+            authTag: "A".repeat(21),
+          }),
+        }),
+      ).rejects.toMatchObject({ code: "self_hosted_unwrap_failed" });
+      await expect(
+        kms.unwrapDataKey({
+          context,
+          keyId: generated.keyId,
+          wrappedKey: rewriteSelfHostedEnvelope(generated.wrappedKey, {
+            keyId: "invalid/key-id",
+          }),
+        }),
+      ).rejects.toMatchObject({ code: "self_hosted_unwrap_failed" });
+    } finally {
+      generated.plaintextKey.fill(0);
+      kms.destroy();
+    }
+  });
+
+  it("limits self-hosted KEK IDs and rejects operations after destruction", async () => {
+    const kek = new Uint8Array(32).fill(31);
+    expect(
+      () =>
+        new SelfHostedCloudVaultKekProvider({
+          kek,
+          keyId: "x".repeat(257),
+        }),
+    ).toThrow("Self-hosted Vault KEK ID is invalid");
+    expect(
+      () =>
+        new SelfHostedCloudVaultKekProvider({
+          kek,
+          keyId: "invalid/key-id",
+        }),
+    ).toThrow("Self-hosted Vault KEK ID is invalid");
+
+    const kms = new SelfHostedCloudVaultKekProvider({
+      kek,
+      keyId: "one-status-production-v1",
+    });
+    const generated = await kms.generateDataKey({ purpose: "credential" });
+    generated.plaintextKey.fill(0);
+    kms.destroy();
+    kms.destroy();
+    await expect(
+      kms.generateDataKey({ purpose: "credential" }),
+    ).rejects.toMatchObject({ code: "self_hosted_provider_destroyed" });
+    await expect(
+      kms.unwrapDataKey({
+        context: { purpose: "credential" },
+        keyId: generated.keyId,
+        wrappedKey: generated.wrappedKey,
+      }),
+    ).rejects.toMatchObject({ code: "self_hosted_provider_destroyed" });
+  });
+
+  it("cleans up a failed self-hosted generation and remains usable", async () => {
+    const kms = new SelfHostedCloudVaultKekProvider({
+      kek: new Uint8Array(32).fill(5),
+      keyId: "one-status-production-v1",
+    });
+    const invalidContext = Object.defineProperty({}, "purpose", {
+      enumerable: true,
+      get() {
+        throw new Error("context getter failed");
+      },
+    }) as Record<string, string>;
+
+    await expect(kms.generateDataKey(invalidContext)).rejects.toMatchObject({
+      code: "self_hosted_generate_failed",
+    });
+    const generated = await kms.generateDataKey({ purpose: "credential" });
+    expect(generated.plaintextKey).toHaveLength(32);
+    generated.plaintextKey.fill(0);
+    kms.destroy();
+  });
+
+  it("uses the self-hosted provider for the full credential envelope", async () => {
+    const kms = new SelfHostedCloudVaultKekProvider({
+      kek: new Uint8Array(32).fill(7),
+      keyId: "one-status-production-v1",
+    });
+    const envelope = await encryptCloudVaultSecrets({
+      credentialId: "credential-1",
+      kms,
+      revision: 1,
+      secrets: { token: "private-value" },
+      userId: "user-1",
+    });
+
+    expect(envelope.kmsProvider).toBe("self-hosted-kek");
+    expect(envelope.kmsKeyId).toBe("one-status-production-v1");
+    expect(envelope.wrappedDek).toMatch(/^oswk1\.self-hosted-kek\./);
+    await expect(
+      decryptCloudVaultSecrets({
+        credentialId: "credential-1",
+        envelope,
+        kms,
+        revision: 1,
+        userId: "user-1",
+      }),
+    ).resolves.toEqual({ token: "private-value" });
   });
 
   it("adapts the official Tencent Cloud KMS SDK client", async () => {
@@ -234,3 +426,20 @@ describe("Cloud Vault KMS providers", () => {
     expect(authorization).toMatch(/Signature=[a-f0-9]{64}$/);
   });
 });
+
+function rewriteSelfHostedEnvelope(
+  wrappedKey: string,
+  patch: Record<string, unknown>,
+): string {
+  const prefix = "oswk1.self-hosted-kek.";
+  const encoded = wrappedKey.slice(prefix.length);
+  const envelope = JSON.parse(
+    Buffer.from(encoded, "base64url").toString("utf8"),
+  ) as Record<string, unknown>;
+  return (
+    prefix +
+    Buffer.from(JSON.stringify({ ...envelope, ...patch }), "utf8").toString(
+      "base64url",
+    )
+  );
+}

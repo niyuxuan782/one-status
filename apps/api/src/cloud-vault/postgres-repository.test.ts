@@ -8,6 +8,7 @@ import {
 import {
   createCloudVaultPostgresRuntime,
   runCloudVaultPostgresMigration,
+  verifyCloudVaultKmsBinding,
 } from "./postgres-runtime.js";
 import type { CloudVaultCredentialRecord } from "./types.js";
 
@@ -99,8 +100,80 @@ describe("PostgresCloudVaultRepository", () => {
     expect(calls[1]).toContain("cloud_vault_agent_sessions");
     expect(calls[1]).toContain("cloud_vault_audit_events");
     expect(calls[1]).toContain("cloud_vault_migrations");
+    expect(calls[1]).toContain("cloud_vault_kms_binding");
     expect(calls.at(-1)).toContain("pg_advisory_unlock");
     expect(release).toHaveBeenCalledOnce();
+  });
+
+  it("binds startup to the persisted KEK and rejects a replacement", async () => {
+    let binding: Record<string, unknown> | null = null;
+    const database: PostgresQueryExecutor = {
+      async query<Row extends Record<string, unknown>>(
+        sql: string,
+        values: unknown[] = [],
+      ): Promise<PostgresQueryResult<Row>> {
+        if (sql.includes("INSERT INTO cloud_vault_kms_binding") && !binding) {
+          binding = {
+            kms_key_id: values[2],
+            kms_provider: values[1],
+            verification_hash: values[4],
+            wrapped_dek: values[3],
+          };
+          return { rowCount: 1, rows: [] };
+        }
+        if (sql.includes("FROM cloud_vault_kms_binding")) {
+          return {
+            rowCount: binding ? 1 : 0,
+            rows: binding ? ([binding] as unknown as Row[]) : [],
+          };
+        }
+        return { rowCount: 0, rows: [] };
+      },
+    };
+    const active = new FakeCloudVaultKmsProvider(
+      new Uint8Array(32).fill(41),
+      "production-v1",
+    );
+    await expect(
+      verifyCloudVaultKmsBinding(database, active),
+    ).resolves.toBeUndefined();
+    await expect(
+      verifyCloudVaultKmsBinding(database, active),
+    ).resolves.toBeUndefined();
+
+    const replacement = new FakeCloudVaultKmsProvider(
+      new Uint8Array(32).fill(42),
+      "production-v1",
+    );
+    await expect(
+      verifyCloudVaultKmsBinding(database, replacement),
+    ).rejects.toMatchObject({ code: "fake_unwrap_failed" });
+  });
+
+  it("rejects a Provider change before attempting to unwrap the binding", async () => {
+    const database: PostgresQueryExecutor = {
+      async query<Row extends Record<string, unknown>>(): Promise<
+        PostgresQueryResult<Row>
+      > {
+        return {
+          rowCount: 1,
+          rows: [
+            {
+              kms_key_id: "legacy-key",
+              kms_provider: "legacy-provider",
+              verification_hash: "A".repeat(43),
+              wrapped_dek: "legacy-envelope",
+            } as unknown as Row,
+          ],
+        };
+      },
+    };
+    await expect(
+      verifyCloudVaultKmsBinding(
+        database,
+        new FakeCloudVaultKmsProvider(new Uint8Array(32).fill(43)),
+      ),
+    ).rejects.toMatchObject({ code: "binding_provider_mismatch" });
   });
 
   it("constructs a PostgreSQL runtime only with an explicitly supplied KMS", () => {

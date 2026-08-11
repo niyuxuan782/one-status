@@ -6,7 +6,7 @@ Desktop Relay, and Remote MCP behind Caddy. `os.furesta.top` owns `/v1/*`,
 resource discovery. Other website paths redirect to GitHub Pages.
 Images, JavaScript, CSS, installation scripts, and release downloads are served
 by GitHub. The cloud API does not receive the Status Key, local paths, or raw
-Agent sessions. Cloud Vault stores one ciphertext and one KMS-wrapped DEK per
+Agent sessions. Cloud Vault stores one ciphertext and one KEK-wrapped DEK per
 credential. Vault Runtime can decrypt one authorized credential in memory for
 the lifetime of a request; request bodies and results are excluded from logs.
 Remote credential writes require a one-time approval bound to the Agent
@@ -22,8 +22,8 @@ Cloudflare proxy, tunnel, DNS, or certificate dependency.
 - SSH key access for the deployment user
 - Deployment user UID `1000` for the non-root API container
 - Two hostnames resolving to the server
-- A Tencent Cloud KMS symmetric key and a least-privilege CAM identity allowed
-  to call `GenerateDataKey` and `Decrypt` for that key
+- Root access for the deployment script to create and inject the self-hosted
+  Vault KEK; Tencent Cloud KMS remains an optional provider
 - Two independently generated OPAQUE server setups stored in a secret manager
 
 The production hostnames are `os.furesta.top` and `mcp.os.furesta.top`, both
@@ -57,15 +57,46 @@ export ONE_STATUS_OPAQUE_SERVER_SETUP="$(tr -d '\r\n' < "$HOME/.config/one-statu
 export ONE_STATUS_VAULT_OPAQUE_SERVER_SETUP="$(tr -d '\r\n' < "$HOME/.config/one-status/deploy/vault-opaque.setup")"
 export ONE_STATUS_POSTGRES_PASSWORD="$(openssl rand -base64 48 | tr -dc 'A-Za-z0-9_-')"
 export ONE_STATUS_VAULT_SERVICE_TOKEN="$(openssl rand -base64 48 | tr -dc 'A-Za-z0-9_-')"
+export ONE_STATUS_VAULT_KMS_PROVIDER=self-hosted
+export ONE_STATUS_VAULT_KEK_ID=one-status-production-v1
+export ONE_STATUS_SEED_DB=/path/to/one-status.sqlite
+export ONE_STATUS_SSH_IDENTITY="$HOME/.config/one-status/deploy/lhins-8owupwdq-ed25519"
+./scripts/deploy-production.sh
+```
+
+On the first self-hosted deployment, the script creates a random 256-bit KEK at
+`/opt/one-status/shared/secrets/vault-kek`. The host file is owned by
+`root:root` with mode `0600`. Compose mounts it into the isolated Vault container
+as a `node`-owned `0400` Secret file; it is omitted from the container environment
+and every release environment file. To seed
+the server from an existing private key file, set
+`ONE_STATUS_VAULT_KEK_FILE=/absolute/path/to/vault-kek`. Supplying a different
+key after the server has one is rejected because existing Wrapped DEKs require
+an explicit rewrap migration.
+
+The Vault Runtime also accepts `ONE_STATUS_VAULT_KEK_FILE` directly when run
+outside the production Compose stack. That path must be absolute and reference
+a file with no group or other permission bits. Direct
+`ONE_STATUS_VAULT_KEK` environment input is available for orchestrators and is
+converted to a file-backed Compose Secret by the production stack.
+Both inputs use an unpadded Base64URL representation of exactly 32 bytes.
+
+The deploy script installs `/usr/local/sbin/one-status-compose` as a root-owned
+launcher. It reads the host KEK inside the privileged process and supplies it to
+Compose's file-backed Secret source, so the KEK never appears in command-line
+arguments. `bootstrap-identity.env` stores the two OPAQUE setups, PostgreSQL
+password, provider, and key ID under `root:root 0600`; interrupted first
+deployments must reuse this identity set. Release env files are transferred over
+SSH stdin and atomically renamed, keeping Secret values out of SSH arguments.
+
+Tencent Cloud KMS remains available with explicit provider configuration:
+
+```bash
+export ONE_STATUS_VAULT_KMS_PROVIDER=tencent-kms
 export ONE_STATUS_VAULT_KMS_KEY_ID=your-kms-key-id
 export ONE_STATUS_VAULT_KMS_REGION=ap-guangzhou
 export TENCENTCLOUD_SECRET_ID=your-least-privilege-secret-id
 export TENCENTCLOUD_SECRET_KEY=your-least-privilege-secret-key
-# Optional when the CAM credential is temporary:
-export TENCENTCLOUD_SESSION_TOKEN=your-session-token
-export ONE_STATUS_SEED_DB=/path/to/one-status.sqlite
-export ONE_STATUS_SSH_IDENTITY="$HOME/.config/one-status/deploy/lhins-8owupwdq-ed25519"
-./scripts/deploy-production.sh
 ```
 
 `ONE_STATUS_SEED_DB` is imported only when the remote database does not exist.
@@ -87,8 +118,9 @@ Tencent Cloud Lighthouse must allow inbound `TCP 80`, `TCP 443`, and `UDP 443`.
 `UDP 443` enables HTTP/3. DNS A records must resolve before deployment.
 All containers use Docker's rotating local log driver with a 10 MB file limit
 and five retained files, preventing access logs from filling the instance disk.
-Vault startup performs one `GenerateDataKey` and `Decrypt` round trip before its
-health endpoint reports `kms: ready`. PostgreSQL runs directly as UID/GID 999;
+Vault startup verifies a persisted KEK binding sentinel and performs one DEK
+generate, wrap, and unwrap round trip before its health endpoint reports
+`kms: ready` with the selected provider. PostgreSQL runs directly as UID/GID 999;
 the deploy script prepares the persistent data directory with that ownership.
 
 For a host that cannot reach Docker Hub, preload `linux/amd64` images named
@@ -142,8 +174,11 @@ API, and removes archives older than 14 days. Copy backups to a second machine
 or object store.
 
 Retained PostgreSQL dumps contain historical ciphertext and wrapped DEKs. They
-remain decryptable while the referenced Tencent KMS key is available, so backup
-retention and KMS key lifecycle must be managed together.
+remain decryptable while the referenced KEK is available, so backup retention
+and KEK lifecycle must be managed together. The backup archive deliberately
+omits `/opt/one-status/shared/secrets/vault-kek`; keep an encrypted offline copy
+under separate access control. Losing this file makes self-hosted Cloud Vault
+records unrecoverable.
 The backup archive does not contain either OPAQUE server setup. Restore both
 original values from the secret manager before starting API or Vault services.
 
@@ -151,17 +186,20 @@ original values from the secret manager before starting API or Vault services.
 
 ```bash
 cd /opt/one-status
-docker compose --env-file shared/production.env \
+sudo ONE_STATUS_DEPLOY_ROOT=/opt/one-status one-status-compose \
+  --env-file shared/production.env \
   -f current/deploy/compose.production.yaml stop api
 mkdir -p /tmp/one-status-restore
 tar -xzf shared/backups/one-status-YYYYMMDDTHHMMSSZ.tar.gz \
   -C /tmp/one-status-restore
 cp /tmp/one-status-restore/one-status.sqlite shared/data/one-status.sqlite
-docker compose --env-file shared/production.env \
+sudo ONE_STATUS_DEPLOY_ROOT=/opt/one-status one-status-compose \
+  --env-file shared/production.env \
   -f current/deploy/compose.production.yaml exec -T postgres \
   pg_restore -U one_status -d one_status_vault --clean --if-exists \
   < /tmp/one-status-restore/cloud-vault.dump
-docker compose --env-file shared/production.env \
+sudo ONE_STATUS_DEPLOY_ROOT=/opt/one-status one-status-compose \
+  --env-file shared/production.env \
   -f current/deploy/compose.production.yaml start api
 ```
 
@@ -178,3 +216,6 @@ credential after OAuth scope, Agent Grant, credential policy, purpose, project,
 expiry, and revocation checks pass. The API and Vault do not persist Remote MCP
 request or result bodies. For Status and device-local service calls, the online
 Desktop returns only the requested projection or approved tool result over WSS.
+With the self-hosted provider, host root and Docker administrators can obtain the
+KEK and inspect Vault Runtime memory. PostgreSQL access by itself remains
+insufficient to decrypt a credential.

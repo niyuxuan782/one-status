@@ -16,7 +16,7 @@
 - 用户控制的本地设备
 - 本地 One Status CLI 与 MCP 进程
 - 操作系统提供的文件权限
-- 隔离的 Vault Runtime 与腾讯云 KMS
+- 隔离的 Vault Runtime 与服务器 root 管理的自托管 KEK
 
 低信任组件：
 
@@ -24,7 +24,7 @@
 - 网络链路
 - 接入的 Agent
 
-服务端可以观察账号、设备、请求时间、密文大小和版本。Status 密文无法在缺少 Status Key 时解密。Cloud Vault 的 PostgreSQL 持久层缺少 KMS 权限时无法解密凭据；Vault Runtime 在授权请求期间具备临时解密能力。
+服务端可以观察账号、设备、请求时间、密文大小和版本。Status 密文无法在缺少 Status Key 时解密。Cloud Vault 的 PostgreSQL 持久层缺少 KEK 时无法解密凭据；Vault Runtime 在授权请求期间具备临时解密能力。
 
 ## 已覆盖风险
 
@@ -53,6 +53,12 @@
 | OAuth 凭据落盘 | 独立 Permission Vault、AES-256-GCM、独立 256 位本地 key、文件权限 `0600` |
 | OAuth 凭据跨设备 | HKDF 派生同步密钥、独立 AES-256-GCM envelope、目标设备本地重新加密 |
 | 通用钥匙串落盘 | 每条凭据使用独立 DEK 和 AES-256-GCM；PostgreSQL 只保存密文、IV、Auth Tag 与 KMS Wrapped DEK |
+| 自托管 KEK 泄露到发布配置 | KEK 保存在服务器 root:root `0600` Secret 文件，并作为容器内 node:node `0400` Compose Secret 挂载；容器环境、release env、数据库与普通备份不保存 KEK |
+| 自托管 KEK 泄露到进程参数 | root-owned Compose 启动器在特权进程内读取 KEK；部署、回滚、备份和恢复命令只传文件路径与 Compose 参数 |
+| 部署 Secret 泄露到 SSH 参数 | release env 与长期 bootstrap identity 均通过 SSH stdin 写入受限临时文件，再原子改名 |
+| Wrapped DEK 混用 | `oswk1.self-hosted-kek` 前缀和 envelope provider/version；AAD 绑定 provider、version、KEK ID 与完整凭据上下文 |
+| 错误 KEK 启动 | PostgreSQL 保存 KEK 绑定哨兵；Vault 就绪前验证历史 Wrapped DEK，并执行随机 DEK 的 generate、wrap、unwrap round trip；失败时服务不监听端口 |
+| 部署误覆盖 KEK | 部署脚本比较现有 Secret，值不一致时拒绝覆盖并要求先执行 rewrap migration |
 | 通用钥匙串迁移 | Desktop 经 TLS Backfill；Vault Runtime 立即重新加密，并用一次性 HMAC 摘要校验数量和内容 |
 | 本机旧钱包覆盖云端新密钥 | Backfill 只接受相同记录重放或补齐缺失 ID；内容差异或云端额外条目返回 `migration_conflict`；钱包 OPAQUE record 独立迁移 |
 | Agent 凭据登记与读取 | Remote OAuth Token、最长一小时的 Vault Session、Agent Grant 与凭据策略共同约束 user、agent、project 和 purpose |
@@ -88,9 +94,10 @@
 - Tool API 使用哈希落库、可撤销且最长 24 小时的 Agent credential；凭据签发仍由设备会话授权，持有设备 Token 的本地进程可以请求其他 `agentId`，设备签名和 Agent 加密身份仍待实现。
 - 写 action 已使用 Dashboard 审批和参数绑定；审批记录暂存于单进程内存，服务重启后失效，多实例共享与持久化尚未实现。
 - Google、GitHub 与 Slack 已完成真实账号验收；新增 Provider 需要各自 OAuth App、scope 审核和真实账号验收，未建立连接与 Agent grant 时不会出现在 `tools_list`。
-- Vault Runtime 的 KMS 权限和进程内存属于高信任边界；部署平台管理员可以在授权窗口观察运行时内存。
+- Vault Runtime、服务器 root、Docker 管理权限和进程内存属于高信任边界；管理员可以读取 KEK，并在授权窗口观察运行时内存。
 - Node.js 会主动清零 DEK、明文 Buffer 等可变内存；返回给调用方的 JavaScript 字符串及序列化副本由运行时 GC 管理，无法承诺字节级即时清除。
-- PostgreSQL 备份在保留期内包含旧 ciphertext 与 Wrapped DEK；只要同一 KMS KEK 仍可用，备份内的历史密文仍具备可恢复性。删除凭据不会追溯改写已有备份。
+- PostgreSQL 备份在保留期内包含旧 ciphertext 与 Wrapped DEK；只要同一 KEK 仍可用，备份内的历史密文仍具备可恢复性。删除凭据不会追溯改写已有备份。KEK 丢失会使所有自托管 Vault 记录永久无法恢复。
+- 自托管 KEK 降低了服务成本，同时把主机 root 纳入高信任边界；主机完全失陷时，攻击者可能组合 KEK 与数据库备份进行离线解密。
 - HTTP MCP bearer 提供 endpoint 访问控制，公网机密性依赖外部 TLS reverse proxy。
 - 开发服务器使用 Node.js 内置 SQLite，当前 Node 版本仍标记该 API 为 experimental。
 - SQLite 为同步驱动，写锁等待期间仍会短暂阻塞单进程 API；当前锁等待上限为 500ms，繁忙错误返回可重试的 503。

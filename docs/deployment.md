@@ -2,7 +2,7 @@
 
 ## 推荐部署形态：Sync + Remote MCP + Cloud Vault
 
-生产云运行 Sync API、OAuth 2.1 Authorization Server、Streamable HTTP Remote MCP、出站 WSS Device Relay、Vault Runtime 和 PostgreSQL。Status Key、原始会话和本机路径留在用户设备。Status、Memory 与 Persona 保持 E2EE；Cloud Vault 持久层保存逐条凭据密文和腾讯云 KMS Wrapped DEK。
+生产云运行 Sync API、OAuth 2.1 Authorization Server、Streamable HTTP Remote MCP、出站 WSS Device Relay、Vault Runtime 和 PostgreSQL。Status Key、原始会话和本机路径留在用户设备。Status、Memory 与 Persona 保持 E2EE；Cloud Vault 持久层保存逐条凭据密文和 KEK Wrapped DEK。生产默认使用服务器 root 管理的自托管 KEK，腾讯云 KMS 保留为可选 provider。
 
 仓库中的生产栈位于：
 
@@ -10,6 +10,7 @@
 deploy/compose.production.yaml
 deploy/Caddyfile
 deploy/backup.sh
+deploy/compose-with-vault-kek.sh
 scripts/deploy-production.sh
 ```
 
@@ -38,7 +39,7 @@ export ONE_STATUS_OPAQUE_SERVER_SETUP="$(tr -d '\r\n' < "$HOME/.config/one-statu
 export ONE_STATUS_VAULT_OPAQUE_SERVER_SETUP="$(tr -d '\r\n' < "$HOME/.config/one-status/deploy/vault-opaque.setup")"
 ```
 
-生产 Compose 将两项变量设为必填；部署脚本校验其 Base64URL 格式、长度和相互独立性，并原样写入权限为 `0600` 的 release `production.env`。
+生产 Compose 将两项变量设为必填；部署脚本校验其 Base64URL 格式、长度和相互独立性，并经 SSH stdin 写入权限为 `0600` 的 release `production.env`。首次部署还会把长期 setup、PostgreSQL 密码、Provider 与 Key ID 保存到服务器 root 专用的 `bootstrap-identity.env`，后续部署发生不一致时会拒绝继续。
 
 ## Remote MCP 信任边界
 
@@ -48,6 +49,10 @@ export ONE_STATUS_VAULT_OPAQUE_SERVER_SETUP="$(tr -d '\r\n' < "$HOME/.config/one
 
 Vault Runtime 独占 KMS 权限。每次凭据读取都经过 OAuth scope、短期 Agent Session、Vault Grant、Agent ID、服务端绑定的 Project ID、purpose、凭据策略、过期时间和撤销检查。远程写入还需要密钥钱包签发的 10 分钟一次性精确审批。明文和 DEK 只在请求内存中存在，请求与结果不写普通日志。
 
+自托管 provider 对每条凭据生成独立 256-bit DEK，凭据和 DEK 分别使用 AES-256-GCM。Wrapped DEK 使用 `oswk1.self-hosted-kek.*` 封装，可识别 provider 与 version；AAD 绑定 KEK ID、provider、version 和凭据上下文。KEK 保存在服务器 `/opt/one-status/shared/secrets/vault-kek`，属主为 `root:root`，权限为 `0600`。root-owned 启动器在特权进程内读取 KEK，Compose 再将其转换成 Vault 容器内 `node` 用户专用的 `0400` Secret 文件；KEK 不进入命令参数、容器环境、release env 或数据库备份。首次启动会在 PostgreSQL 写入 KEK 绑定哨兵，后续启动必须用当前 KEK 验证该历史哨兵；健康检查还会完成一次 DEK 生成、封装和解封 round trip。
+
+KEK 需要独立离线备份。直接替换会导致历史 Wrapped DEK 无法解封，部署脚本会拒绝覆盖不同值；轮换前需要完成逐条 rewrap。服务器 root 或 Docker 管理权限属于高信任边界，主机完全失陷时攻击者可能同时获取 KEK、数据库密文与运行时明文。
+
 首次钱包 Backfill 会验证完整凭据集合，并由 Vault Runtime 逐条重新加密。后续请求发现云端内容更新或云端额外条目时返回 `migration_conflict`。钱包密码通过独立 OPAQUE registration record 管理。生产稳定并完成 Desktop 全部云端 CRUD 切换前，本机 Permission Vault 继续保留副本。
 
 ## 拓扑
@@ -55,13 +60,13 @@ Vault Runtime 独占 KMS 权限。每次凭据读取都经过 OAuth scope、短�
 ```text
 Remote Agent -> OAuth 2.1 + PKCE -> Remote MCP
 Remote MCP -> WSS Relay -> Online Desktop
-Remote MCP -> Vault Service -> Tencent KMS + PostgreSQL ciphertext
+Remote MCP -> Vault Service -> Self-hosted KEK + PostgreSQL ciphertext
 Desktop Agent -> stdio MCP -> Local Background Service
 ```
 
 ## 独立本机 HTTP MCP 环境变量
 
-以下变量用于单用户本机或私有 HTTP MCP。生产 Remote MCP 与 Cloud Vault 使用 `deploy/production.env.example` 中的 `ONE_STATUS_VAULT_*`、`TENCENTCLOUD_*` 和 PostgreSQL 配置。
+以下变量用于单用户本机或私有 HTTP MCP。生产 Remote MCP 与 Cloud Vault 使用 `deploy/production.env.example` 中的 `ONE_STATUS_VAULT_*` 和 PostgreSQL 配置。选择 `tencent-kms` provider 时还需要 `TENCENTCLOUD_*`。
 
 | 变量 | 必填 | 说明 |
 | --- | --- | --- |

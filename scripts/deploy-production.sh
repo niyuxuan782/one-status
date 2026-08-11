@@ -12,10 +12,14 @@ OPAQUE_SERVER_SETUP="${ONE_STATUS_OPAQUE_SERVER_SETUP:?set ONE_STATUS_OPAQUE_SER
 VAULT_OPAQUE_SERVER_SETUP="${ONE_STATUS_VAULT_OPAQUE_SERVER_SETUP:?set ONE_STATUS_VAULT_OPAQUE_SERVER_SETUP}"
 POSTGRES_PASSWORD="${ONE_STATUS_POSTGRES_PASSWORD:?set ONE_STATUS_POSTGRES_PASSWORD}"
 VAULT_SERVICE_TOKEN="${ONE_STATUS_VAULT_SERVICE_TOKEN:?set ONE_STATUS_VAULT_SERVICE_TOKEN}"
-VAULT_KMS_KEY_ID="${ONE_STATUS_VAULT_KMS_KEY_ID:?set ONE_STATUS_VAULT_KMS_KEY_ID}"
-VAULT_KMS_REGION="${ONE_STATUS_VAULT_KMS_REGION:?set ONE_STATUS_VAULT_KMS_REGION}"
-TENCENT_SECRET_ID="${TENCENTCLOUD_SECRET_ID:?set TENCENTCLOUD_SECRET_ID}"
-TENCENT_SECRET_KEY="${TENCENTCLOUD_SECRET_KEY:?set TENCENTCLOUD_SECRET_KEY}"
+VAULT_KMS_PROVIDER="${ONE_STATUS_VAULT_KMS_PROVIDER:-self-hosted}"
+VAULT_KEK="${ONE_STATUS_VAULT_KEK:-}"
+VAULT_KEK_FILE="${ONE_STATUS_VAULT_KEK_FILE:-}"
+VAULT_KEK_ID="${ONE_STATUS_VAULT_KEK_ID:-one-status-production-v1}"
+VAULT_KMS_KEY_ID="${ONE_STATUS_VAULT_KMS_KEY_ID:-}"
+VAULT_KMS_REGION="${ONE_STATUS_VAULT_KMS_REGION:-}"
+TENCENT_SECRET_ID="${TENCENTCLOUD_SECRET_ID:-}"
+TENCENT_SECRET_KEY="${TENCENTCLOUD_SECRET_KEY:-}"
 TENCENT_SESSION_TOKEN="${TENCENTCLOUD_SESSION_TOKEN:-}"
 SEED_DB="${ONE_STATUS_SEED_DB:-}"
 PREBUILT_IMAGES="${ONE_STATUS_PREBUILT_IMAGES:-false}"
@@ -23,6 +27,9 @@ PUBLIC_HEALTH_REQUIRED="${ONE_STATUS_PUBLIC_HEALTH_REQUIRED:-true}"
 RELEASE_ID="${ONE_STATUS_RELEASE_ID:-$(date -u +%Y%m%dT%H%M%SZ)}"
 RELEASE_DIR="$REMOTE_ROOT/releases/$RELEASE_ID"
 RELEASE_ENV="$RELEASE_DIR/production.env"
+REMOTE_KEK_FILE="$REMOTE_ROOT/shared/secrets/vault-kek"
+REMOTE_BOOTSTRAP_FILE="$REMOTE_ROOT/shared/secrets/bootstrap-identity.env"
+REMOTE_COMPOSE_RUNNER="/usr/local/sbin/one-status-compose"
 TARGET="$SSH_USER@$SSH_HOST"
 CONTROL_PATH="${ONE_STATUS_SSH_CONTROL_PATH:-/tmp/one-status-%C}"
 PREVIOUS_RELEASE=""
@@ -54,7 +61,7 @@ if [[ ! "$MCP_DOMAIN" =~ ^[A-Za-z0-9.-]+$ ]]; then
   printf 'ONE_STATUS_MCP_DOMAIN contains unsupported characters.\n' >&2
   exit 1
 fi
-if [[ ! "$ACME_EMAIL" =~ ^[^[:space:]@]+@[^[:space:]@]+$ ]]; then
+if [[ ! "$ACME_EMAIL" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+$ ]]; then
   printf 'ONE_STATUS_ACME_EMAIL is invalid.\n' >&2
   exit 1
 fi
@@ -78,21 +85,56 @@ if [[ ! "$VAULT_SERVICE_TOKEN" =~ ^[A-Za-z0-9_-]{32,512}$ ]]; then
   printf 'ONE_STATUS_VAULT_SERVICE_TOKEN must be 32-512 URL-safe characters.\n' >&2
   exit 1
 fi
-if [[ ! "$VAULT_KMS_KEY_ID" =~ ^[A-Za-z0-9._:-]{1,256}$ ]]; then
-  printf 'ONE_STATUS_VAULT_KMS_KEY_ID is invalid.\n' >&2
+if [[ "$VAULT_KMS_PROVIDER" != self-hosted && "$VAULT_KMS_PROVIDER" != tencent-kms ]]; then
+  printf 'ONE_STATUS_VAULT_KMS_PROVIDER must be self-hosted or tencent-kms.\n' >&2
   exit 1
 fi
-if [[ ! "$VAULT_KMS_REGION" =~ ^[A-Za-z0-9-]{1,64}$ ]]; then
-  printf 'ONE_STATUS_VAULT_KMS_REGION is invalid.\n' >&2
-  exit 1
-fi
-if [[ ! "$TENCENT_SECRET_ID" =~ ^[A-Za-z0-9_-]{8,256}$ || ! "$TENCENT_SECRET_KEY" =~ ^[A-Za-z0-9_-]{8,256}$ ]]; then
-  printf 'Tencent Cloud KMS credentials contain unsupported characters.\n' >&2
-  exit 1
-fi
-if [[ -n "$TENCENT_SESSION_TOKEN" && ! "$TENCENT_SESSION_TOKEN" =~ ^[A-Za-z0-9._~+/=-]{8,4096}$ ]]; then
-  printf 'Tencent Cloud KMS session token contains unsupported characters.\n' >&2
-  exit 1
+if [[ "$VAULT_KMS_PROVIDER" == self-hosted ]]; then
+  if [[ ! "$VAULT_KEK_ID" =~ ^[A-Za-z0-9._:-]{1,256}$ ]]; then
+    printf 'ONE_STATUS_VAULT_KEK_ID is invalid.\n' >&2
+    exit 1
+  fi
+  if [[ -n "$VAULT_KEK" && -n "$VAULT_KEK_FILE" ]]; then
+    printf 'ONE_STATUS_VAULT_KEK and ONE_STATUS_VAULT_KEK_FILE cannot both be set.\n' >&2
+    exit 1
+  fi
+  if [[ -n "$VAULT_KEK_FILE" ]]; then
+    if [[ "$VAULT_KEK_FILE" != /* || -L "$VAULT_KEK_FILE" || ! -f "$VAULT_KEK_FILE" || ! -r "$VAULT_KEK_FILE" ]]; then
+      printf 'ONE_STATUS_VAULT_KEK_FILE must be an absolute, readable regular file without symlinks.\n' >&2
+      exit 1
+    fi
+    if [[ "$(uname -s)" == Darwin ]]; then
+      kek_file_metadata="$(stat -f '%u:%Lp:%z' "$VAULT_KEK_FILE")"
+    else
+      kek_file_metadata="$(stat -c '%u:%a:%s' "$VAULT_KEK_FILE")"
+    fi
+    if [[ "$kek_file_metadata" != "$(id -u):600:43" ]]; then
+      printf 'ONE_STATUS_VAULT_KEK_FILE must be owned by the current user, mode 0600, and exactly 43 bytes.\n' >&2
+      exit 1
+    fi
+    VAULT_KEK="$(< "$VAULT_KEK_FILE")"
+  fi
+  if [[ -n "$VAULT_KEK" && ! "$VAULT_KEK" =~ ^[A-Za-z0-9_-]{43}$ ]]; then
+    printf 'ONE_STATUS_VAULT_KEK must be an unpadded Base64URL 256-bit key.\n' >&2
+    exit 1
+  fi
+else
+  if [[ ! "$VAULT_KMS_KEY_ID" =~ ^[A-Za-z0-9._:-]{1,256}$ ]]; then
+    printf 'ONE_STATUS_VAULT_KMS_KEY_ID is invalid.\n' >&2
+    exit 1
+  fi
+  if [[ ! "$VAULT_KMS_REGION" =~ ^[A-Za-z0-9-]{1,64}$ ]]; then
+    printf 'ONE_STATUS_VAULT_KMS_REGION is invalid.\n' >&2
+    exit 1
+  fi
+  if [[ ! "$TENCENT_SECRET_ID" =~ ^[A-Za-z0-9_-]{8,256}$ || ! "$TENCENT_SECRET_KEY" =~ ^[A-Za-z0-9_-]{8,256}$ ]]; then
+    printf 'Tencent Cloud KMS credentials contain unsupported characters.\n' >&2
+    exit 1
+  fi
+  if [[ -n "$TENCENT_SESSION_TOKEN" && ! "$TENCENT_SESSION_TOKEN" =~ ^[A-Za-z0-9._~+/=-]{8,4096}$ ]]; then
+    printf 'Tencent Cloud KMS session token contains unsupported characters.\n' >&2
+    exit 1
+  fi
 fi
 if [[ ! "$RELEASE_ID" =~ ^[0-9]{8}T[0-9]{6}Z$ ]]; then
   printf 'ONE_STATUS_RELEASE_ID must use YYYYMMDDTHHMMSSZ.\n' >&2
@@ -139,10 +181,10 @@ rollback_release() {
     local previous_id
     previous_id="$(basename "$PREVIOUS_RELEASE")"
     printf 'Restoring previous release %s\n' "$previous_id" >&2
-    ssh_run "set -e; previous_env='$PREVIOUS_RELEASE/production.env'; test -f \"\$previous_env\"; ln -sfn \"\$previous_env\" '$REMOTE_ROOT/shared/.production.env.rollback.$RELEASE_ID'; mv -Tf '$REMOTE_ROOT/shared/.production.env.rollback.$RELEASE_ID' '$REMOTE_ROOT/shared/production.env'; ln -sfn '$PREVIOUS_RELEASE' '$REMOTE_ROOT/.current.rollback.$RELEASE_ID'; mv -Tf '$REMOTE_ROOT/.current.rollback.$RELEASE_ID' '$REMOTE_ROOT/current'; sudo docker compose --env-file \"\$previous_env\" -f '$PREVIOUS_RELEASE/deploy/compose.production.yaml' up -d --no-build --pull never --remove-orphans --wait --wait-timeout 120"
+    ssh_run "set -e; previous_env='$PREVIOUS_RELEASE/production.env'; test -f \"\$previous_env\"; ln -sfn \"\$previous_env\" '$REMOTE_ROOT/shared/.production.env.rollback.$RELEASE_ID'; mv -Tf '$REMOTE_ROOT/shared/.production.env.rollback.$RELEASE_ID' '$REMOTE_ROOT/shared/production.env'; ln -sfn '$PREVIOUS_RELEASE' '$REMOTE_ROOT/.current.rollback.$RELEASE_ID'; mv -Tf '$REMOTE_ROOT/.current.rollback.$RELEASE_ID' '$REMOTE_ROOT/current'; sudo env ONE_STATUS_DEPLOY_ROOT='$REMOTE_ROOT' '$REMOTE_COMPOSE_RUNNER' --env-file \"\$previous_env\" -f '$PREVIOUS_RELEASE/deploy/compose.production.yaml' up -d --no-build --pull never --remove-orphans --wait --wait-timeout 120"
   else
     printf 'Stopping incomplete first deployment.\n' >&2
-    ssh_run "set -e; sudo docker compose --env-file '$RELEASE_ENV' -f '$RELEASE_DIR/deploy/compose.production.yaml' down --remove-orphans || true; if [[ -L '$REMOTE_ROOT/current' && \"\$(readlink -f '$REMOTE_ROOT/current')\" == '$RELEASE_DIR' ]]; then unlink '$REMOTE_ROOT/current'; fi; if [[ -L '$REMOTE_ROOT/shared/production.env' && \"\$(readlink -f '$REMOTE_ROOT/shared/production.env')\" == '$RELEASE_ENV' ]]; then unlink '$REMOTE_ROOT/shared/production.env'; fi" || true
+    ssh_run "set -e; sudo env ONE_STATUS_DEPLOY_ROOT='$REMOTE_ROOT' '$REMOTE_COMPOSE_RUNNER' --env-file '$RELEASE_ENV' -f '$RELEASE_DIR/deploy/compose.production.yaml' down --remove-orphans || true; if [[ -L '$REMOTE_ROOT/current' && \"\$(readlink -f '$REMOTE_ROOT/current')\" == '$RELEASE_DIR' ]]; then unlink '$REMOTE_ROOT/current'; fi; if [[ -L '$REMOTE_ROOT/shared/production.env' && \"\$(readlink -f '$REMOTE_ROOT/shared/production.env')\" == '$RELEASE_ENV' ]]; then unlink '$REMOTE_ROOT/shared/production.env'; fi" || true
   fi
 }
 
@@ -168,11 +210,41 @@ fi
 
 ssh_run "set -e; missing=(); command -v docker >/dev/null 2>&1 || missing+=(docker.io); sudo docker compose version >/dev/null 2>&1 || missing+=(docker-compose-v2); command -v sqlite3 >/dev/null 2>&1 || missing+=(sqlite3); if (( \${#missing[@]} )); then sudo apt-get update; sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \"\${missing[@]}\"; fi; sudo systemctl enable --now docker; sudo docker compose version >/dev/null"
 
-ssh_run "set -e; sudo install -d -m 0755 '$REMOTE_ROOT' '$REMOTE_ROOT/releases' '$RELEASE_DIR' '$REMOTE_ROOT/shared'; sudo install -d -m 0700 '$REMOTE_ROOT/shared/data' '$REMOTE_ROOT/shared/backups'; sudo install -d -m 0700 -o root -g root '$REMOTE_ROOT/shared/caddy-data' '$REMOTE_ROOT/shared/caddy-config' '$REMOTE_ROOT/shared/postgres-data'; sudo chown '$SSH_USER' '$REMOTE_ROOT' '$REMOTE_ROOT/releases' '$RELEASE_DIR' '$REMOTE_ROOT/shared' '$REMOTE_ROOT/shared/data' '$REMOTE_ROOT/shared/backups'; sudo chown 999:999 '$REMOTE_ROOT/shared/postgres-data'"
+ssh_run "set -e; sudo install -d -m 0755 '$REMOTE_ROOT' '$REMOTE_ROOT/releases' '$RELEASE_DIR' '$REMOTE_ROOT/shared'; sudo install -d -m 0700 '$REMOTE_ROOT/shared/data' '$REMOTE_ROOT/shared/backups'; sudo install -d -m 0700 -o root -g root '$REMOTE_ROOT/shared/caddy-data' '$REMOTE_ROOT/shared/caddy-config' '$REMOTE_ROOT/shared/postgres-data' '$REMOTE_ROOT/shared/secrets'; sudo chown '$SSH_USER' '$REMOTE_ROOT' '$REMOTE_ROOT/releases' '$RELEASE_DIR' '$REMOTE_ROOT/shared' '$REMOTE_ROOT/shared/data' '$REMOTE_ROOT/shared/backups'; sudo chown 999:999 '$REMOTE_ROOT/shared/postgres-data'"
 PREVIOUS_RELEASE="$(ssh_run "if [[ -L '$REMOTE_ROOT/current' ]]; then readlink -f '$REMOTE_ROOT/current'; fi")"
 
 if [[ -n "$PREVIOUS_RELEASE" ]]; then
   ssh_run "set -e; if [[ ! -f '$PREVIOUS_RELEASE/production.env' ]]; then cp '$REMOTE_ROOT/shared/production.env' '$PREVIOUS_RELEASE/production.env'; chmod 0600 '$PREVIOUS_RELEASE/production.env'; fi"
+  previous_kms_provider="$(ssh_run "sed -n 's/^ONE_STATUS_VAULT_KMS_PROVIDER=//p' '$PREVIOUS_RELEASE/production.env' | tail -n 1")"
+  previous_kek_id="$(ssh_run "sed -n 's/^ONE_STATUS_VAULT_KEK_ID=//p' '$PREVIOUS_RELEASE/production.env' | tail -n 1")"
+  if [[ -n "$previous_kms_provider" && "$previous_kms_provider" != "$VAULT_KMS_PROVIDER" ]]; then
+    printf 'Vault KMS provider changes require a Wrapped DEK migration before deployment.\n' >&2
+    exit 33
+  fi
+  if [[ "$VAULT_KMS_PROVIDER" == self-hosted && -n "$previous_kek_id" && "$previous_kek_id" != "$VAULT_KEK_ID" ]]; then
+    printf 'Vault KEK ID changes require a Wrapped DEK migration before deployment.\n' >&2
+    exit 34
+  fi
+fi
+
+{
+  printf 'ONE_STATUS_OPAQUE_SERVER_SETUP=%s\n' "$OPAQUE_SERVER_SETUP"
+  printf 'ONE_STATUS_VAULT_OPAQUE_SERVER_SETUP=%s\n' "$VAULT_OPAQUE_SERVER_SETUP"
+  printf 'ONE_STATUS_POSTGRES_PASSWORD=%s\n' "$POSTGRES_PASSWORD"
+  printf 'ONE_STATUS_VAULT_KMS_PROVIDER=%s\n' "$VAULT_KMS_PROVIDER"
+  printf 'ONE_STATUS_VAULT_KEK_ID=%s\n' "$VAULT_KEK_ID"
+  printf 'ONE_STATUS_VAULT_KMS_KEY_ID=%s\n' "$VAULT_KMS_KEY_ID"
+} | ssh "${SSH_OPTIONS[@]}" "$TARGET" "set -e; temporary='$REMOTE_ROOT/shared/secrets/.bootstrap-identity.$RELEASE_ID'; sudo sh -c 'umask 077; cat > \"\$1\"' _ \"\$temporary\"; if sudo test -f '$REMOTE_BOOTSTRAP_FILE'; then if ! sudo cmp -s \"\$temporary\" '$REMOTE_BOOTSTRAP_FILE'; then sudo rm -f \"\$temporary\"; printf 'The deployment bootstrap identity differs from the active server identity. An explicit migration is required.\\n' >&2; exit 35; fi; sudo rm -f \"\$temporary\"; else if sudo test -f '$REMOTE_ROOT/shared/postgres-data/PG_VERSION'; then sudo rm -f \"\$temporary\"; printf 'PostgreSQL is initialized without a saved deployment identity. Refusing implicit provider or password migration.\\n' >&2; exit 36; fi; sudo mv \"\$temporary\" '$REMOTE_BOOTSTRAP_FILE'; fi; sudo chown root:root '$REMOTE_BOOTSTRAP_FILE'; sudo chmod 0600 '$REMOTE_BOOTSTRAP_FILE'"
+
+if [[ "$VAULT_KMS_PROVIDER" == self-hosted ]]; then
+  if [[ -n "$VAULT_KEK" ]]; then
+    if ! printf '%s' "$VAULT_KEK" | ssh "${SSH_OPTIONS[@]}" "$TARGET" "set -e; temporary='$REMOTE_ROOT/shared/secrets/.vault-kek.$RELEASE_ID'; sudo sh -c 'umask 077; cat > \"\$1\"' _ \"\$temporary\"; if sudo test -f '$REMOTE_KEK_FILE'; then if ! sudo cmp -s \"\$temporary\" '$REMOTE_KEK_FILE'; then sudo rm -f \"\$temporary\"; printf 'The supplied Vault KEK differs from the active server KEK. A rewrap migration is required before rotation.\\n' >&2; exit 32; fi; sudo rm -f \"\$temporary\"; else if sudo test -f '$REMOTE_ROOT/shared/postgres-data/PG_VERSION'; then sudo rm -f \"\$temporary\"; printf 'PostgreSQL is initialized but the Vault KEK is missing. Restore the original KEK before deployment.\\n' >&2; exit 37; fi; sudo mv \"\$temporary\" '$REMOTE_KEK_FILE'; fi; sudo chown root:root '$REMOTE_KEK_FILE'; sudo chmod 0600 '$REMOTE_KEK_FILE'"; then
+      exit 1
+    fi
+  else
+    ssh_run "set -e; if ! sudo test -f '$REMOTE_KEK_FILE'; then if sudo test -f '$REMOTE_ROOT/shared/postgres-data/PG_VERSION'; then printf 'PostgreSQL is initialized but the Vault KEK is missing. Restore the original KEK before deployment.\\n' >&2; exit 37; fi; temporary='$REMOTE_ROOT/shared/secrets/.vault-kek.$RELEASE_ID'; head -c 32 /dev/urandom | base64 | tr '+/' '-_' | tr -d '=\\n' | sudo tee \"\$temporary\" >/dev/null; sudo chown root:root \"\$temporary\"; sudo chmod 0600 \"\$temporary\"; sudo mv \"\$temporary\" '$REMOTE_KEK_FILE'; fi"
+  fi
+  ssh_run "set -e; metadata=\$(sudo stat -c '%u:%g:%a' '$REMOTE_KEK_FILE'); [[ \"\$metadata\" == '0:0:600' ]]; value=\$(sudo cat '$REMOTE_KEK_FILE'); [[ \"\$value\" =~ ^[A-Za-z0-9_-]{43}\$ ]]"
 fi
 
 COPYFILE_DISABLE=1 tar -C "$ROOT" \
@@ -193,27 +265,29 @@ COPYFILE_DISABLE=1 tar -C "$ROOT" \
   pnpm-workspace.yaml tsconfig.json tsconfig.build.json vitest.config.ts \
   apps packages scripts deploy | ssh_run "set -e; tar -xzf - -C '$RELEASE_DIR'"
 
-ssh_run "set -e
-cat > '$RELEASE_ENV' <<EOF
-ONE_STATUS_DOMAIN=$DOMAIN
-ONE_STATUS_MCP_DOMAIN=$MCP_DOMAIN
-ONE_STATUS_ACME_EMAIL=$ACME_EMAIL
-ONE_STATUS_IMAGE_TAG=$RELEASE_ID
-ONE_STATUS_OPAQUE_SERVER_SETUP=$OPAQUE_SERVER_SETUP
-ONE_STATUS_VAULT_OPAQUE_SERVER_SETUP=$VAULT_OPAQUE_SERVER_SETUP
-ONE_STATUS_DATA_DIR=$REMOTE_ROOT/shared/data
-ONE_STATUS_CADDY_DATA_DIR=$REMOTE_ROOT/shared/caddy-data
-ONE_STATUS_CADDY_CONFIG_DIR=$REMOTE_ROOT/shared/caddy-config
-ONE_STATUS_POSTGRES_DATA_DIR=$REMOTE_ROOT/shared/postgres-data
-ONE_STATUS_POSTGRES_PASSWORD=$POSTGRES_PASSWORD
-ONE_STATUS_VAULT_SERVICE_TOKEN=$VAULT_SERVICE_TOKEN
-ONE_STATUS_VAULT_KMS_KEY_ID=$VAULT_KMS_KEY_ID
-ONE_STATUS_VAULT_KMS_REGION=$VAULT_KMS_REGION
-TENCENTCLOUD_SECRET_ID=$TENCENT_SECRET_ID
-TENCENTCLOUD_SECRET_KEY=$TENCENT_SECRET_KEY
-TENCENTCLOUD_SESSION_TOKEN=$TENCENT_SESSION_TOKEN
-EOF
-chmod 0600 '$RELEASE_ENV'"
+{
+  printf 'ONE_STATUS_DOMAIN=%s\n' "$DOMAIN"
+  printf 'ONE_STATUS_MCP_DOMAIN=%s\n' "$MCP_DOMAIN"
+  printf 'ONE_STATUS_ACME_EMAIL=%s\n' "$ACME_EMAIL"
+  printf 'ONE_STATUS_IMAGE_TAG=%s\n' "$RELEASE_ID"
+  printf 'ONE_STATUS_OPAQUE_SERVER_SETUP=%s\n' "$OPAQUE_SERVER_SETUP"
+  printf 'ONE_STATUS_VAULT_OPAQUE_SERVER_SETUP=%s\n' "$VAULT_OPAQUE_SERVER_SETUP"
+  printf 'ONE_STATUS_DATA_DIR=%s/shared/data\n' "$REMOTE_ROOT"
+  printf 'ONE_STATUS_CADDY_DATA_DIR=%s/shared/caddy-data\n' "$REMOTE_ROOT"
+  printf 'ONE_STATUS_CADDY_CONFIG_DIR=%s/shared/caddy-config\n' "$REMOTE_ROOT"
+  printf 'ONE_STATUS_POSTGRES_DATA_DIR=%s/shared/postgres-data\n' "$REMOTE_ROOT"
+  printf 'ONE_STATUS_POSTGRES_PASSWORD=%s\n' "$POSTGRES_PASSWORD"
+  printf 'ONE_STATUS_VAULT_SERVICE_TOKEN=%s\n' "$VAULT_SERVICE_TOKEN"
+  printf 'ONE_STATUS_VAULT_KMS_PROVIDER=%s\n' "$VAULT_KMS_PROVIDER"
+  printf 'ONE_STATUS_VAULT_KEK_ID=%s\n' "$VAULT_KEK_ID"
+  printf 'ONE_STATUS_VAULT_KMS_KEY_ID=%s\n' "$VAULT_KMS_KEY_ID"
+  printf 'ONE_STATUS_VAULT_KMS_REGION=%s\n' "$VAULT_KMS_REGION"
+  printf 'TENCENTCLOUD_SECRET_ID=%s\n' "$TENCENT_SECRET_ID"
+  printf 'TENCENTCLOUD_SECRET_KEY=%s\n' "$TENCENT_SECRET_KEY"
+  printf 'TENCENTCLOUD_SESSION_TOKEN=%s\n' "$TENCENT_SESSION_TOKEN"
+} | ssh "${SSH_OPTIONS[@]}" "$TARGET" "set -e; temporary='$RELEASE_ENV.tmp'; umask 077; cat > \"\$temporary\"; mv \"\$temporary\" '$RELEASE_ENV'"
+
+ssh_run "sudo install -o root -g root -m 0755 '$RELEASE_DIR/deploy/compose-with-vault-kek.sh' '$REMOTE_COMPOSE_RUNNER'"
 
 if [[ -n "$SEED_DB" ]]; then
   if [[ ! -f "$SEED_DB" ]]; then
@@ -240,7 +314,7 @@ else
 fi
 
 DEPLOYMENT_STARTED=true
-if ! ssh_run "sudo docker compose --env-file '$RELEASE_ENV' -f '$RELEASE_DIR/deploy/compose.production.yaml' up -d $compose_build_flags --remove-orphans --wait --wait-timeout 120"; then
+if ! ssh_run "sudo env ONE_STATUS_DEPLOY_ROOT='$REMOTE_ROOT' '$REMOTE_COMPOSE_RUNNER' --env-file '$RELEASE_ENV' -f '$RELEASE_DIR/deploy/compose.production.yaml' up -d $compose_build_flags --remove-orphans --wait --wait-timeout 120"; then
   exit 1
 fi
 

@@ -28,6 +28,7 @@ const agentTokenHeader = "x-one-status-agent-token";
 
 export interface VaultServiceAppOptions {
   bodyLimit?: number;
+  kmsProvider: "self-hosted" | "tencent-kms" | "test";
   kmsVerifiedAt: string;
   logger?: boolean;
   service: CloudVaultService;
@@ -88,6 +89,7 @@ export function createVaultServiceApp(
 
   app.get("/health", async () => ({
     kms: "ready",
+    kmsProvider: options.kmsProvider,
     kmsVerifiedAt: options.kmsVerifiedAt,
     service: "one-status-vault",
     status: "ok",

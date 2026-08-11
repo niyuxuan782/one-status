@@ -37,6 +37,7 @@ describe("Vault Service internal HTTP API", () => {
     expect(healthy.statusCode).toBe(200);
     expect(healthy.json()).toEqual({
       kms: "ready",
+      kmsProvider: "test",
       kmsVerifiedAt: "2026-08-11T00:00:00.000Z",
       service: "one-status-vault",
       status: "ok",
@@ -528,6 +529,7 @@ function fixture() {
     repository: new MemoryCloudVaultRepository(),
   });
   const app = createVaultServiceApp({
+    kmsProvider: "test",
     kmsVerifiedAt: "2026-08-11T00:00:00.000Z",
     logger: false,
     service,

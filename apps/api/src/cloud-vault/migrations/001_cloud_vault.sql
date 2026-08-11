@@ -222,4 +222,23 @@ CREATE TABLE IF NOT EXISTS cloud_vault_migrations (
   )
 );
 
+CREATE TABLE IF NOT EXISTS cloud_vault_kms_binding (
+  id TEXT PRIMARY KEY,
+  kms_provider TEXT NOT NULL,
+  kms_key_id TEXT NOT NULL,
+  wrapped_dek TEXT NOT NULL,
+  verification_hash TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL,
+  CONSTRAINT cloud_vault_kms_binding_singleton
+    CHECK (id = 'primary'),
+  CONSTRAINT cloud_vault_kms_binding_provider_length
+    CHECK (char_length(kms_provider) BETWEEN 1 AND 128),
+  CONSTRAINT cloud_vault_kms_binding_key_id_length
+    CHECK (char_length(kms_key_id) BETWEEN 1 AND 256),
+  CONSTRAINT cloud_vault_kms_binding_wrapped_dek_length
+    CHECK (char_length(wrapped_dek) BETWEEN 1 AND 16384),
+  CONSTRAINT cloud_vault_kms_binding_hash_length
+    CHECK (char_length(verification_hash) = 43)
+);
+
 COMMIT;

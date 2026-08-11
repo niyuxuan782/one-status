@@ -9,6 +9,14 @@ import {
 
 const DATA_KEY_BYTES = 32;
 const GCM_IV_BYTES = 12;
+const GCM_AUTH_TAG_BYTES = 16;
+const SELF_HOSTED_KEK_PROVIDER_ID = "self-hosted-kek";
+const SELF_HOSTED_WRAPPED_KEY_PREFIX = "oswk1.self-hosted-kek.";
+const SELF_HOSTED_WRAPPED_KEY_MAX_LENGTH = 2_048;
+const SELF_HOSTED_KEY_ID_PATTERN = /^[A-Za-z0-9._:-]{1,256}$/u;
+const BASE64URL_12_BYTES_PATTERN = /^[A-Za-z0-9_-]{16}$/u;
+const BASE64URL_16_BYTES_PATTERN = /^[A-Za-z0-9_-]{22}$/u;
+const BASE64URL_32_BYTES_PATTERN = /^[A-Za-z0-9_-]{43}$/u;
 
 export type CloudVaultKmsContext = Record<string, string>;
 
@@ -20,6 +28,7 @@ export interface CloudVaultGeneratedDataKey {
 
 export interface CloudVaultKmsProvider {
   readonly providerId: string;
+  destroy?(): void;
   generateDataKey(
     context: CloudVaultKmsContext,
   ): Promise<CloudVaultGeneratedDataKey>;
@@ -145,6 +154,150 @@ export class FakeCloudVaultKmsProvider implements CloudVaultKmsProvider {
       return validDataKey(plaintext);
     } catch {
       throw new CloudVaultKmsError("fake_unwrap_failed");
+    }
+  }
+}
+
+export interface SelfHostedCloudVaultKekProviderOptions {
+  kek: Uint8Array;
+  keyId: string;
+}
+
+/**
+ * Wraps per-credential DEKs with a server-managed KEK. The KEK must be supplied
+ * through a protected deployment secret and must never be persisted in the
+ * credential database.
+ */
+export class SelfHostedCloudVaultKekProvider
+  implements CloudVaultKmsProvider
+{
+  readonly providerId = SELF_HOSTED_KEK_PROVIDER_ID;
+  #destroyed = false;
+  readonly #kek: Buffer;
+  readonly #keyId: string;
+
+  constructor(options: SelfHostedCloudVaultKekProviderOptions) {
+    if (options.kek.byteLength !== DATA_KEY_BYTES) {
+      throw new Error("Self-hosted Vault KEK must be 32 bytes.");
+    }
+    this.#kek = Buffer.from(options.kek);
+    try {
+      this.#keyId = validSelfHostedKeyId(options.keyId);
+    } catch (error) {
+      this.#kek.fill(0);
+      throw error;
+    }
+  }
+
+  destroy(): void {
+    if (this.#destroyed) return;
+    this.#destroyed = true;
+    this.#kek.fill(0);
+  }
+
+  async generateDataKey(
+    context: CloudVaultKmsContext,
+  ): Promise<CloudVaultGeneratedDataKey> {
+    this.#assertActive();
+    let aad: Buffer | undefined;
+    let authTag: Buffer | undefined;
+    let ciphertext: Buffer | undefined;
+    let iv: Buffer | undefined;
+    let plaintextKey: Buffer | undefined;
+    try {
+      plaintextKey = randomBytes(DATA_KEY_BYTES);
+      iv = randomBytes(GCM_IV_BYTES);
+      const cipher = createCipheriv("aes-256-gcm", this.#kek, iv);
+      aad = selfHostedKekAad(context, this.#keyId);
+      cipher.setAAD(aad);
+      ciphertext = Buffer.concat([
+        cipher.update(plaintextKey),
+        cipher.final(),
+      ]);
+      authTag = cipher.getAuthTag();
+      const wrappedKey = encodeSelfHostedWrappedKey({
+        authTag,
+        ciphertext,
+        iv,
+        keyId: this.#keyId,
+      });
+      return {
+        keyId: this.#keyId,
+        plaintextKey,
+        wrappedKey,
+      };
+    } catch (error) {
+      plaintextKey?.fill(0);
+      if (error instanceof CloudVaultKmsError) throw error;
+      throw new CloudVaultKmsError("self_hosted_generate_failed");
+    } finally {
+      aad?.fill(0);
+      authTag?.fill(0);
+      ciphertext?.fill(0);
+      iv?.fill(0);
+    }
+  }
+
+  async unwrapDataKey(input: {
+    context: CloudVaultKmsContext;
+    keyId: string;
+    wrappedKey: string;
+  }): Promise<Uint8Array> {
+    this.#assertActive();
+    if (input.keyId !== this.#keyId) {
+      throw new CloudVaultKmsError("self_hosted_key_id_mismatch");
+    }
+    let aad: Buffer | undefined;
+    let ciphertext: Buffer | undefined;
+    let iv: Buffer | undefined;
+    let authTag: Buffer | undefined;
+    try {
+      const envelope = decodeSelfHostedWrappedKey(input.wrappedKey);
+      if (envelope.keyId !== input.keyId) {
+        throw new CloudVaultKmsError("self_hosted_envelope_key_id_mismatch");
+      }
+      ciphertext = Buffer.from(envelope.ciphertext, "base64url");
+      iv = Buffer.from(envelope.iv, "base64url");
+      authTag = Buffer.from(envelope.authTag, "base64url");
+      if (
+        ciphertext.byteLength !== DATA_KEY_BYTES ||
+        iv.byteLength !== GCM_IV_BYTES ||
+        authTag.byteLength !== GCM_AUTH_TAG_BYTES
+      ) {
+        throw new CloudVaultKmsError("self_hosted_envelope_invalid");
+      }
+      const decipher = createDecipheriv("aes-256-gcm", this.#kek, iv);
+      aad = selfHostedKekAad(input.context, input.keyId);
+      decipher.setAAD(aad);
+      decipher.setAuthTag(authTag);
+      const plaintext = Buffer.concat([
+        decipher.update(ciphertext),
+        decipher.final(),
+      ]);
+      try {
+        return validDataKey(plaintext);
+      } finally {
+        plaintext.fill(0);
+      }
+    } catch (error) {
+      if (
+        error instanceof CloudVaultKmsError &&
+        error.code === "self_hosted_key_id_mismatch"
+      ) {
+        throw error;
+      }
+      throw new CloudVaultKmsError("self_hosted_unwrap_failed");
+    } finally {
+      aad?.fill(0);
+      ciphertext?.fill(0);
+      iv?.fill(0);
+      authTag?.fill(0);
+    }
+  }
+
+  #assertActive(): void {
+    if (this.#destroyed) {
+      throw new CloudVaultKmsError("self_hosted_provider_destroyed");
     }
   }
 }
@@ -419,6 +572,122 @@ function validDataKey(value: Uint8Array): Uint8Array {
   return new Uint8Array(value);
 }
 
+interface SelfHostedWrappedKeyEnvelope {
+  algorithm: "A256GCM";
+  authTag: string;
+  ciphertext: string;
+  iv: string;
+  keyId: string;
+  provider: typeof SELF_HOSTED_KEK_PROVIDER_ID;
+  version: 1;
+}
+
+function encodeSelfHostedWrappedKey(input: {
+  authTag: Uint8Array;
+  ciphertext: Uint8Array;
+  iv: Uint8Array;
+  keyId: string;
+}): string {
+  const envelope: SelfHostedWrappedKeyEnvelope = {
+    algorithm: "A256GCM",
+    authTag: Buffer.from(input.authTag).toString("base64url"),
+    ciphertext: Buffer.from(input.ciphertext).toString("base64url"),
+    iv: Buffer.from(input.iv).toString("base64url"),
+    keyId: input.keyId,
+    provider: SELF_HOSTED_KEK_PROVIDER_ID,
+    version: 1,
+  };
+  const wrappedKey =
+    SELF_HOSTED_WRAPPED_KEY_PREFIX +
+    Buffer.from(stableObjectJson(envelope), "utf8").toString("base64url");
+  if (wrappedKey.length > SELF_HOSTED_WRAPPED_KEY_MAX_LENGTH) {
+    throw new CloudVaultKmsError("self_hosted_envelope_too_large");
+  }
+  return wrappedKey;
+}
+
+function decodeSelfHostedWrappedKey(
+  wrappedKey: string,
+): SelfHostedWrappedKeyEnvelope {
+  if (
+    typeof wrappedKey !== "string" ||
+    wrappedKey.length > SELF_HOSTED_WRAPPED_KEY_MAX_LENGTH
+  ) {
+    throw new CloudVaultKmsError("self_hosted_envelope_size_invalid");
+  }
+  if (!wrappedKey.startsWith(SELF_HOSTED_WRAPPED_KEY_PREFIX)) {
+    throw new CloudVaultKmsError("self_hosted_envelope_prefix_invalid");
+  }
+  const encoded = wrappedKey.slice(SELF_HOSTED_WRAPPED_KEY_PREFIX.length);
+  if (!encoded || !/^[A-Za-z0-9_-]+$/.test(encoded)) {
+    throw new CloudVaultKmsError("self_hosted_envelope_encoding_invalid");
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8"));
+  } catch {
+    throw new CloudVaultKmsError("self_hosted_envelope_json_invalid");
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new CloudVaultKmsError("self_hosted_envelope_invalid");
+  }
+  const envelope = parsed as Partial<SelfHostedWrappedKeyEnvelope>;
+  if (
+    envelope.algorithm !== "A256GCM" ||
+    envelope.provider !== SELF_HOSTED_KEK_PROVIDER_ID ||
+    envelope.version !== 1 ||
+    !canonicalBase64Url(envelope.authTag, BASE64URL_16_BYTES_PATTERN) ||
+    !canonicalBase64Url(envelope.ciphertext, BASE64URL_32_BYTES_PATTERN) ||
+    !canonicalBase64Url(envelope.iv, BASE64URL_12_BYTES_PATTERN) ||
+    !validSelfHostedKeyIdValue(envelope.keyId) ||
+    Object.keys(envelope).sort().join(",") !==
+      "algorithm,authTag,ciphertext,iv,keyId,provider,version"
+  ) {
+    throw new CloudVaultKmsError("self_hosted_envelope_invalid");
+  }
+  return envelope as SelfHostedWrappedKeyEnvelope;
+}
+
+function canonicalBase64Url(
+  value: unknown,
+  pattern: RegExp,
+): value is string {
+  return (
+    typeof value === "string" &&
+    pattern.test(value) &&
+    Buffer.from(value, "base64url").toString("base64url") === value
+  );
+}
+
+function validSelfHostedKeyId(value: string): string {
+  const normalized = value.trim();
+  if (!validSelfHostedKeyIdValue(normalized)) {
+    throw new Error("Self-hosted Vault KEK ID is invalid.");
+  }
+  return normalized;
+}
+
+function validSelfHostedKeyIdValue(value: unknown): value is string {
+  return typeof value === "string" && SELF_HOSTED_KEY_ID_PATTERN.test(value);
+}
+
+function selfHostedKekAad(
+  context: CloudVaultKmsContext,
+  keyId: string,
+): Buffer {
+  return Buffer.from(
+    stableObjectJson({
+      algorithm: "A256GCM",
+      context,
+      keyId,
+      protocol: "one-status/cloud-vault/wrapped-dek/v1",
+      provider: SELF_HOSTED_KEK_PROVIDER_ID,
+      version: 1,
+    }),
+    "utf8",
+  );
+}
+
 function validTencentEndpoint(value: string): URL {
   const endpoint = new URL(value);
   if (
@@ -446,6 +715,22 @@ function stableJson(value: Record<string, string>): string {
         .sort(([left], [right]) => left.localeCompare(right)),
     ),
   );
+}
+
+function stableObjectJson(value: unknown): string {
+  return JSON.stringify(stableObjectValue(value));
+}
+
+function stableObjectValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stableObjectValue);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, item]) => [key, stableObjectValue(item)]),
+    );
+  }
+  return value;
 }
 
 function responseObject(value: unknown): Record<string, unknown> {

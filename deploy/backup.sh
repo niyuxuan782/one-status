@@ -16,7 +16,8 @@ chmod 0700 "$BACKUP_DIR"
 exec 9>"$BACKUP_DIR/.backup.lock"
 flock -n 9 || exit 0
 
-compose=(docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE")
+COMPOSE_RUNNER="${ONE_STATUS_COMPOSE_RUNNER:-/usr/local/sbin/one-status-compose}"
+compose=("$COMPOSE_RUNNER" --env-file "$ENV_FILE" -f "$COMPOSE_FILE")
 restart_api=true
 cleanup() {
   rm -rf "$STAGE"

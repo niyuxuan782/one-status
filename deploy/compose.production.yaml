@@ -79,15 +79,24 @@ services:
     environment:
       ONE_STATUS_VAULT_DATABASE_SSL: disable
       ONE_STATUS_VAULT_DATABASE_URL: "postgresql://one_status:${ONE_STATUS_POSTGRES_PASSWORD:?set ONE_STATUS_POSTGRES_PASSWORD}@postgres:5432/one_status_vault"
-      ONE_STATUS_VAULT_KMS_KEY_ID: "${ONE_STATUS_VAULT_KMS_KEY_ID:?set ONE_STATUS_VAULT_KMS_KEY_ID}"
-      ONE_STATUS_VAULT_KMS_REGION: "${ONE_STATUS_VAULT_KMS_REGION:?set ONE_STATUS_VAULT_KMS_REGION}"
+      ONE_STATUS_VAULT_KEK_FILE: "/run/secrets/vault-kek"
+      ONE_STATUS_VAULT_KEK_ID: "${ONE_STATUS_VAULT_KEK_ID:-}"
+      ONE_STATUS_VAULT_KMS_KEY_ID: "${ONE_STATUS_VAULT_KMS_KEY_ID:-}"
+      ONE_STATUS_VAULT_KMS_PROVIDER: "${ONE_STATUS_VAULT_KMS_PROVIDER:?set ONE_STATUS_VAULT_KMS_PROVIDER}"
+      ONE_STATUS_VAULT_KMS_REGION: "${ONE_STATUS_VAULT_KMS_REGION:-}"
       ONE_STATUS_VAULT_OPAQUE_SERVER_SETUP: "${ONE_STATUS_VAULT_OPAQUE_SERVER_SETUP:?set ONE_STATUS_VAULT_OPAQUE_SERVER_SETUP}"
       ONE_STATUS_VAULT_SERVICE_TOKEN: "${ONE_STATUS_VAULT_SERVICE_TOKEN:?set ONE_STATUS_VAULT_SERVICE_TOKEN}"
-      TENCENTCLOUD_SECRET_ID: "${TENCENTCLOUD_SECRET_ID:?set TENCENTCLOUD_SECRET_ID}"
-      TENCENTCLOUD_SECRET_KEY: "${TENCENTCLOUD_SECRET_KEY:?set TENCENTCLOUD_SECRET_KEY}"
+      TENCENTCLOUD_SECRET_ID: "${TENCENTCLOUD_SECRET_ID:-}"
+      TENCENTCLOUD_SECRET_KEY: "${TENCENTCLOUD_SECRET_KEY:-}"
       TENCENTCLOUD_SESSION_TOKEN: "${TENCENTCLOUD_SESSION_TOKEN:-}"
     expose:
       - "8791"
+    secrets:
+      - source: vault_kek
+        target: vault-kek
+        uid: "1000"
+        gid: "1000"
+        mode: 0400
     depends_on:
       postgres:
         condition: service_healthy
@@ -103,7 +112,7 @@ services:
         - CMD
         - node
         - -e
-        - "fetch('http://127.0.0.1:8791/health',{headers:{authorization:'Bearer '+process.env.ONE_STATUS_VAULT_SERVICE_TOKEN}}).then(async r=>{const j=await r.json();if(!r.ok||j.kms!=='ready')process.exit(1)}).catch(()=>process.exit(1))"
+        - "fetch('http://127.0.0.1:8791/health',{headers:{authorization:'Bearer '+process.env.ONE_STATUS_VAULT_SERVICE_TOKEN}}).then(async r=>{const j=await r.json();if(!r.ok||j.kms!=='ready'||j.kmsProvider!==process.env.ONE_STATUS_VAULT_KMS_PROVIDER)process.exit(1)}).catch(()=>process.exit(1))"
       interval: 20s
       timeout: 5s
       start_period: 15s
@@ -184,3 +193,7 @@ services:
 networks:
   private:
     driver: bridge
+
+secrets:
+  vault_kek:
+    environment: ONE_STATUS_VAULT_KEK
