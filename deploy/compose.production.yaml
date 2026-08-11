@@ -204,6 +204,8 @@ services:
     depends_on:
       caddy:
         condition: service_started
+    healthcheck:
+      disable: true
     read_only: true
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=8m
