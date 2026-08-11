@@ -49,7 +49,7 @@ export ONE_STATUS_VAULT_OPAQUE_SERVER_SETUP="$(tr -d '\r\n' < "$HOME/.config/one
 
 Vault Runtime 独占 KMS 权限。每次凭据读取都经过 OAuth scope、短期 Agent Session、Vault Grant、Agent ID、服务端绑定的 Project ID、purpose、凭据策略、过期时间和撤销检查。远程写入还需要密钥钱包签发的 10 分钟一次性精确审批。明文和 DEK 只在请求内存中存在，请求与结果不写普通日志。
 
-自托管 provider 对每条凭据生成独立 256-bit DEK，凭据和 DEK 分别使用 AES-256-GCM。Wrapped DEK 使用 `oswk1.self-hosted-kek.*` 封装，可识别 provider 与 version；AAD 绑定 KEK ID、provider、version 和凭据上下文。KEK 保存在服务器 `/opt/one-status/shared/secrets/vault-kek`，属主为 `root:root`，权限为 `0600`。root-owned 启动器在特权进程内读取 KEK，Compose 再将其转换成 Vault 容器内 `node` 用户专用的 `0400` Secret 文件；KEK 不进入命令参数、容器环境、release env 或数据库备份。首次启动会在 PostgreSQL 写入 KEK 绑定哨兵，后续启动必须用当前 KEK 验证该历史哨兵；健康检查还会完成一次 DEK 生成、封装和解封 round trip。
+自托管 provider 对每条凭据生成独立 256-bit DEK，凭据和 DEK 分别使用 AES-256-GCM。Wrapped DEK 使用 `oswk1.self-hosted-kek.*` 封装，可识别 provider 与 version；AAD 绑定 KEK ID、provider、version 和凭据上下文。Canonical KEK 保存在服务器 `/opt/one-status/shared/secrets/vault-kek`，属主为 `root:root`，权限为 `0600`。root-owned 启动器在 `root:root 0700` 目录内原子刷新 `uid 1000 / mode 0400` 的挂载副本，Compose 将该文件作为 Vault 容器 Secret 挂载；普通部署用户无法遍历宿主目录，KEK 不进入命令参数、容器环境、release env 或数据库备份。首次启动会在 PostgreSQL 写入 KEK 绑定哨兵，后续启动必须用当前 KEK 验证该历史哨兵；健康检查还会完成一次 DEK 生成、封装和解封 round trip。
 
 KEK 需要独立离线备份。直接替换会导致历史 Wrapped DEK 无法解封，部署脚本会拒绝覆盖不同值；轮换前需要完成逐条 rewrap。服务器 root 或 Docker 管理权限属于高信任边界，主机完全失陷时攻击者可能同时获取 KEK、数据库密文与运行时明文。
 

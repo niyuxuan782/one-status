@@ -53,8 +53,8 @@
 | OAuth 凭据落盘 | 独立 Permission Vault、AES-256-GCM、独立 256 位本地 key、文件权限 `0600` |
 | OAuth 凭据跨设备 | HKDF 派生同步密钥、独立 AES-256-GCM envelope、目标设备本地重新加密 |
 | 通用钥匙串落盘 | 每条凭据使用独立 DEK 和 AES-256-GCM；PostgreSQL 只保存密文、IV、Auth Tag 与 KMS Wrapped DEK |
-| 自托管 KEK 泄露到发布配置 | KEK 保存在服务器 root:root `0600` Secret 文件，并作为容器内 node:node `0400` Compose Secret 挂载；容器环境、release env、数据库与普通备份不保存 KEK |
-| 自托管 KEK 泄露到进程参数 | root-owned Compose 启动器在特权进程内读取 KEK；部署、回滚、备份和恢复命令只传文件路径与 Compose 参数 |
+| 自托管 KEK 泄露到发布配置 | Canonical KEK 为服务器 root:root `0600` 文件；容器挂载副本位于 root:root `0700` 目录并保持 uid 1000、mode `0400`；容器环境、release env、数据库与普通备份不保存 KEK |
+| 自托管 KEK 泄露到进程参数 | root-owned Compose 启动器原子刷新受限挂载副本；部署、回滚、备份和恢复命令只传文件路径与 Compose 参数 |
 | 部署 Secret 泄露到 SSH 参数 | release env 与长期 bootstrap identity 均通过 SSH stdin 写入受限临时文件，再原子改名 |
 | Wrapped DEK 混用 | `oswk1.self-hosted-kek` 前缀和 envelope provider/version；AAD 绑定 provider、version、KEK ID 与完整凭据上下文 |
 | 错误 KEK 启动 | PostgreSQL 保存 KEK 绑定哨兵；Vault 就绪前验证历史 Wrapped DEK，并执行随机 DEK 的 generate、wrap、unwrap round trip；失败时服务不监听端口 |

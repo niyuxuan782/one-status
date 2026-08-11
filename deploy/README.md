@@ -66,9 +66,10 @@ export ONE_STATUS_SSH_IDENTITY="$HOME/.config/one-status/deploy/lhins-8owupwdq-e
 
 On the first self-hosted deployment, the script creates a random 256-bit KEK at
 `/opt/one-status/shared/secrets/vault-kek`. The host file is owned by
-`root:root` with mode `0600`. Compose mounts it into the isolated Vault container
-as a `node`-owned `0400` Secret file; it is omitted from the container environment
-and every release environment file. To seed
+`root:root` with mode `0600`. The root-owned Compose launcher prepares a
+`node`-owned `0400` mount copy below a `root:root 0700` directory, then Compose
+mounts that file into the isolated Vault container. The KEK is omitted from
+command arguments, the container environment, and every release environment file. To seed
 the server from an existing private key file, set
 `ONE_STATUS_VAULT_KEK_FILE=/absolute/path/to/vault-kek`. Supplying a different
 key after the server has one is rejected because existing Wrapped DEKs require
@@ -82,9 +83,8 @@ converted to a file-backed Compose Secret by the production stack.
 Both inputs use an unpadded Base64URL representation of exactly 32 bytes.
 
 The deploy script installs `/usr/local/sbin/one-status-compose` as a root-owned
-launcher. It reads the host KEK inside the privileged process and supplies it to
-Compose's file-backed Secret source, so the KEK never appears in command-line
-arguments. `bootstrap-identity.env` stores the two OPAQUE setups, PostgreSQL
+launcher. It validates the canonical KEK and atomically refreshes the restricted
+container mount copy before invoking Compose. `bootstrap-identity.env` stores the two OPAQUE setups, PostgreSQL
 password, provider, and key ID under `root:root 0600`; interrupted first
 deployments must reuse this identity set. Release env files are transferred over
 SSH stdin and atomically renamed, keeping Secret values out of SSH arguments.

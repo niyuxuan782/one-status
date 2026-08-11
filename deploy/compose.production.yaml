@@ -94,9 +94,6 @@ services:
     secrets:
       - source: vault_kek
         target: vault-kek
-        uid: "1000"
-        gid: "1000"
-        mode: 0400
     depends_on:
       postgres:
         condition: service_healthy
@@ -196,4 +193,4 @@ networks:
 
 secrets:
   vault_kek:
-    environment: ONE_STATUS_VAULT_KEK
+    file: "${ONE_STATUS_VAULT_KEK_MOUNT_FILE:?run through one-status-compose}"
