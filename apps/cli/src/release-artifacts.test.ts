@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import {
   chmod,
   mkdir,
@@ -44,17 +44,26 @@ describe("Device Sidecar release artifacts", () => {
 
     expect(workflow).toContain("workflow_dispatch:");
     expect(workflow).toContain('tags: ["v*"]');
-    expect(workflow.match(/uses: actions\/upload-artifact@v4/g)).toHaveLength(2);
+    expect(workflow.match(/uses: actions\/upload-artifact@v4/g)).toHaveLength(5);
     expect(workflow).toContain("name: one-status-cli");
     expect(workflow).toContain(
       "name: one-status-desktop-${{ matrix.platform }}-${{ matrix.arch }}",
+    );
+    expect(workflow).toContain(
+      "name: one-status-macos-signed-${{ matrix.arch }}",
+    );
+    expect(workflow).toContain(
+      "name: one-status-macos-prepared-${{ matrix.arch }}",
+    );
+    expect(workflow).toContain(
+      "name: one-status-desktop-mac-${{ matrix.arch }}",
     );
     expect(workflow.match(
       /if: github\.event_name == 'push' && startsWith\(github\.ref, 'refs\/tags\/v'\)/g,
     )).toHaveLength(3);
   });
 
-  it("uses electron-builder for app notarization and submits each DMG once", async () => {
+  it("keeps macOS notarization resumable across Apple delays", async () => {
     const workflow = await readFile(
       resolve(root, ".github", "workflows", "release.yml"),
       "utf8",
@@ -62,24 +71,85 @@ describe("Device Sidecar release artifacts", () => {
     const desktopPackage = JSON.parse(
       await readFile(resolve(root, "apps", "desktop", "package.json"), "utf8"),
     ) as { build: { mac: { notarize?: boolean } } };
+    const waitScript = await readFile(
+      resolve(root, "scripts", "wait-for-apple-notarization.sh"),
+      "utf8",
+    );
 
     expect(desktopPackage.build.mac.notarize).toBe(true);
     expect(workflow).toContain("APPLE_APP_SPECIFIC_PASSWORD:");
     expect(workflow).toContain("CSC_LINK:");
     expect(workflow).not.toContain('CSC_IDENTITY_AUTO_DISCOVERY: "false"');
-    expect(workflow).toContain("xcrun stapler validate \"$app_path\"");
+    expect(workflow).toContain("--config.mac.notarize=false");
+    expect(workflow).toContain(
+      'xcrun notarytool submit "$app_archive"',
+    );
     expect(workflow.match(/xcrun notarytool submit "\$image"/g)).toHaveLength(1);
+    expect(workflow).not.toContain("--wait");
+    expect(workflow.match(
+      /scripts\/wait-for-apple-notarization\.sh/g,
+    )).toHaveLength(2);
+    expect(workflow).toContain('xcrun stapler staple "$app_path"');
     expect(workflow.match(/xcrun stapler staple "\$image"/g)).toHaveLength(1);
-    expect(workflow).not.toContain('xcrun notarytool submit "$app_path"');
-    expect(workflow).not.toContain('xcrun stapler staple "$app_path"');
-
-    const submit = workflow.indexOf('xcrun notarytool submit "$image"');
-    const staple = workflow.indexOf('xcrun stapler staple "$image"');
-    const validate = workflow.indexOf('xcrun stapler validate "$image"');
-    expect(submit).toBeGreaterThan(-1);
-    expect(staple).toBeGreaterThan(submit);
-    expect(validate).toBeGreaterThan(staple);
+    expect(workflow).toContain(
+      "needs: [verify, desktop, mac_notarize]",
+    );
+    expect(waitScript).toContain("xcrun notarytool info");
+    expect(waitScript).toContain("Unable to query Apple notarization");
+    expect(waitScript).toContain("Rerun the failed job");
   });
+
+  it.runIf(process.platform !== "win32")(
+    "retries transient Apple notarization query failures",
+    async () => {
+      const directory = await temporaryDirectory();
+      const statePath = resolve(directory, "attempts");
+      const fakeXcrun = resolve(directory, "xcrun");
+      await writeFile(
+        fakeXcrun,
+        `#!/usr/bin/env bash
+set -euo pipefail
+attempts=0
+if [[ -f "$FAKE_NOTARY_STATE" ]]; then attempts="$(cat "$FAKE_NOTARY_STATE")"; fi
+attempts=$(( attempts + 1 ))
+printf '%s' "$attempts" >"$FAKE_NOTARY_STATE"
+if (( attempts == 1 )); then
+  echo "temporary network failure" >&2
+  exit 1
+fi
+printf '%s\n' '{"status":"Accepted"}'
+`,
+        { mode: 0o755 },
+      );
+
+      const result = spawnSync(
+        "bash",
+        [
+          resolve(root, "scripts", "wait-for-apple-notarization.sh"),
+          "00000000-0000-0000-0000-000000000000",
+          "5",
+        ],
+        {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            APPLE_APP_SPECIFIC_PASSWORD: "fixture-password",
+            APPLE_ID: "fixture@example.test",
+            APPLE_TEAM_ID: "FIXTURETEAM",
+            FAKE_NOTARY_STATE: statePath,
+            NOTARY_POLL_INTERVAL_SECONDS: "1",
+            PATH: `${directory}:${process.env.PATH ?? ""}`,
+            RUNNER_TEMP: directory,
+          },
+        },
+      );
+
+      expect(result.status).toBe(0);
+      expect(result.stderr).toContain("retrying");
+      expect(result.stdout).toContain("accepted submission");
+      await expect(readFile(statePath, "utf8")).resolves.toBe("2");
+    },
+  );
 
   it("clears every macOS extended attribute before code signing", async () => {
     const afterPack = await readFile(
