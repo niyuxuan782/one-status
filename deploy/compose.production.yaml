@@ -205,7 +205,15 @@ services:
       caddy:
         condition: service_started
     healthcheck:
-      disable: true
+      test:
+        - CMD
+        - node
+        - -e
+        - "process.kill(1, 0)"
+      interval: 15s
+      timeout: 3s
+      start_period: 5s
+      retries: 3
     read_only: true
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=8m
