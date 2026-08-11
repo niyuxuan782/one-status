@@ -1,7 +1,7 @@
 {
   "tag_name": "v0.8.0",
   "html_url": "https://github.com/niyuxuan782/one-status/releases/tag/v0.8.0",
-  "macos_notarized": false,
+  "macos_notarized": true,
   "assets": [
     {
       "name": "One-Status-0.8.0-linux-x64.AppImage",

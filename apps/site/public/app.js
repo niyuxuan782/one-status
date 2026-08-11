@@ -2,7 +2,7 @@ const releaseFallback = {
   tag_name: "v0.8.0",
   assets: [],
   html_url: "https://github.com/niyuxuan782/one-status/releases/latest",
-  macos_notarized: false,
+  macos_notarized: true,
 };
 
 const assetRules = {

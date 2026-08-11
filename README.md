@@ -169,7 +169,7 @@ curl -fsSL https://niyuxuan782.github.io/one-status/install.sh | bash -s -- --cl
 one-status app
 ```
 
-安装器从 GitHub Releases 下载原生产物并校验 `SHA256SUMS.txt`。CLI 安装会同时安装对应平台的 Device Sidecar。公开的 `v0.8.0` macOS 附件仍是未公证旧包；新 Release workflow 会拒绝发布未通过 Developer ID、Apple notarization、stapled ticket 与 Gatekeeper 校验的 macOS 包。Windows Authenticode 仍待接入。
+安装器从 GitHub Releases 下载原生产物并校验 `SHA256SUMS.txt`。CLI 安装会同时安装对应平台的 Device Sidecar。公开的 `v0.8.0` macOS 附件已经通过 Developer ID、Apple notarization、stapled ticket 与 Gatekeeper 校验；Release workflow 会拒绝发布未通过这些检查的 macOS 包。Windows Authenticode 仍待接入。
 
 [查看最新 Release 附件](https://github.com/niyuxuan782/one-status/releases/latest) · [阅读完整安装文档](docs/installation.md)
 

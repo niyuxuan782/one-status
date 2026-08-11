@@ -60,7 +60,7 @@ pnpm --filter @one-status/desktop dist:linux
 
 Release workflow 在对应操作系统 runner 生成 macOS arm64/x64 DMG 与 ZIP、Windows x64 NSIS 与 portable EXE、Linux x64 AppImage 与 DEB。Desktop App 内嵌本机 API，并在健康检查确认后复用已有 `127.0.0.1:8787` One Status 服务。
 
-公开的 `v0.8.0` macOS 附件仍是未公证旧包。新 Release workflow 要求 Developer ID、Apple notarization、stapled ticket 与 Gatekeeper 全部通过后才允许发布；Pages 会按每个 Release 的实际记录显示签名状态。Windows Authenticode 仍待接入。
+公开的 `v0.8.0` macOS 附件已经通过 Developer ID、Apple notarization、stapled ticket 与 Gatekeeper 校验。Release workflow 要求这些检查全部通过后才允许发布；Pages 会按每个 Release 的实际记录显示签名状态。Windows Authenticode 仍待接入。
 
 v0.8.0 构建会把模型配置 Rust Sidecar 放入 Desktop App resources，并同时生成独立原生附件，供 CLI、一键安装与 Homebrew 使用。原生构建需要验证：
 

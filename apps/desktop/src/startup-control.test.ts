@@ -81,6 +81,7 @@ describe("DesktopStartupControl", () => {
   it("creates a hidden XDG startup entry", async () => {
     const homeDirectory = await temporaryDirectory(directories);
     const control = new DesktopStartupControl({
+      environment: {},
       executablePath: "/opt/One Status/one-status",
       homeDirectory,
       platform: "linux",
