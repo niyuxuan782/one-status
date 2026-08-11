@@ -1068,6 +1068,11 @@ describe("local dashboard", () => {
     expect(styles.statusCode).toBe(200);
     expect(styles.body).toContain("max-height: calc(100dvh - 16px)");
     expect(styles.body).toContain(".provider-buttons");
+    expect(styles.body).toContain("@keyframes sync-pulse");
+    expect(styles.body).toContain("will-change: transform, opacity");
+    expect(styles.body).not.toContain("feTurbulence");
+    expect(styles.body).not.toContain("@keyframes ping");
+    expect(styles.body).not.toContain("backdrop-filter");
   });
 
   it("persists supported Agent grants and clears them on disconnect", async () => {

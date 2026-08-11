@@ -161,17 +161,15 @@ jobs:
           targets: ${{ matrix.rustTarget }}
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @one-status/desktop test
-      - name: Sign app and submit app notarization
+      - name: Sign and archive app
         shell: bash
         env:
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           CSC_KEY_PASSWORD: ${{ secrets.MACOS_CSC_KEY_PASSWORD }}
           CSC_LINK: ${{ secrets.MACOS_CSC_LINK }}
           CSC_NAME: ${{ secrets.MACOS_CSC_NAME }}
         run: |
-          for variable in CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_TEAM_ID APPLE_APP_SPECIFIC_PASSWORD; do
+          for variable in CSC_LINK CSC_KEY_PASSWORD APPLE_TEAM_ID; do
             if [[ -z "${!variable:-}" ]]; then
               echo "$variable is required for a public macOS release." >&2
               exit 1
@@ -211,8 +209,45 @@ jobs:
           mkdir -p apps/desktop/notary-staging
           app_archive="apps/desktop/notary-staging/one-status-signed-app-${{ matrix.arch }}.zip"
           ditto -c -k --sequesterRsrc --keepParent "$app_path" "$app_archive"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: one-status-macos-signed-${{ matrix.arch }}
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 14
+          path: apps/desktop/notary-staging/*
 
+  mac_app_submit:
+    name: macOS app submission (${{ matrix.arch }})
+    needs: mac_build
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [arm64, x64]
+    runs-on: macos-14
+    timeout-minutes: 30
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: one-status-macos-signed-${{ matrix.arch }}
+          path: apps/desktop/notary-staging
+      - name: Submit exact signed app to Apple
+        shell: bash
+        env:
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          for variable in APPLE_ID APPLE_TEAM_ID APPLE_APP_SPECIFIC_PASSWORD; do
+            if [[ -z "${!variable:-}" ]]; then
+              echo "$variable is required for a public macOS release." >&2
+              exit 1
+            fi
+          done
+
+          app_archive="apps/desktop/notary-staging/one-status-signed-app-${{ matrix.arch }}.zip"
           submission="apps/desktop/notary-staging/app-submission-${{ matrix.arch }}.json"
+          test -f "$app_archive"
           for attempt in 1 2 3; do
             if xcrun notarytool submit "$app_archive" \
               --apple-id "$APPLE_ID" \
@@ -229,15 +264,15 @@ jobs:
           echo "Submitted app notarization $(jq -r '.id' "$submission")."
       - uses: actions/upload-artifact@v4
         with:
-          name: one-status-macos-signed-${{ matrix.arch }}
+          name: one-status-macos-app-submission-${{ matrix.arch }}
           if-no-files-found: error
           overwrite: true
           retention-days: 14
-          path: apps/desktop/notary-staging/*
+          path: apps/desktop/notary-staging/app-submission-${{ matrix.arch }}.json
 
   mac_package:
-    name: macOS package and DMG submit (${{ matrix.arch }})
-    needs: mac_build
+    name: macOS package preparation (${{ matrix.arch }})
+    needs: mac_app_submit
     strategy:
       fail-fast: false
       matrix:
@@ -257,6 +292,10 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: one-status-macos-signed-${{ matrix.arch }}
+          path: apps/desktop/notary-staging
+      - uses: actions/download-artifact@v4
+        with:
+          name: one-status-macos-app-submission-${{ matrix.arch }}
           path: apps/desktop/notary-staging
       - name: Wait for app notarization and package distributions
         shell: bash
@@ -325,28 +364,11 @@ jobs:
           sidecar_archive="$(find apps/desktop/release -maxdepth 1 -type f -name 'one-status-device-sidecar-*-mac-${{ matrix.arch }}.tar.gz' -print -quit)"
           test -f "$sidecar_archive"
 
-          dmg_submission="apps/desktop/release/dmg-submission-${{ matrix.arch }}.json"
-          for attempt in 1 2 3; do
-            if xcrun notarytool submit "$image" \
-              --apple-id "$APPLE_ID" \
-              --team-id "$APPLE_TEAM_ID" \
-              --password "$APPLE_APP_SPECIFIC_PASSWORD" \
-              --output-format json >"$dmg_submission"; then
-              break
-            fi
-            rm -f "$dmg_submission"
-            if (( attempt == 3 )); then exit 1; fi
-            sleep $(( attempt * 15 ))
-          done
-          jq -e '.id | strings | length > 0' "$dmg_submission"
-          echo "Submitted DMG notarization $(jq -r '.id' "$dmg_submission")."
-
           prepared="apps/desktop/one-status-macos-prepared-${{ matrix.arch }}.tar.gz"
           tar -czf "$prepared" -C apps/desktop/release \
             "$(basename "$image")" \
             "$(basename "$archive")" \
-            "$(basename "$sidecar_archive")" \
-            "$(basename "$dmg_submission")"
+            "$(basename "$sidecar_archive")"
       - uses: actions/upload-artifact@v4
         with:
           name: one-status-macos-prepared-${{ matrix.arch }}
@@ -355,9 +377,67 @@ jobs:
           retention-days: 14
           path: apps/desktop/one-status-macos-prepared-${{ matrix.arch }}.tar.gz
 
+  mac_dmg_submit:
+    name: macOS DMG submission (${{ matrix.arch }})
+    needs: mac_package
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [arm64, x64]
+    runs-on: macos-14
+    timeout-minutes: 30
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: one-status-macos-prepared-${{ matrix.arch }}
+          path: prepared
+      - name: Submit exact DMG to Apple
+        shell: bash
+        env:
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          for variable in APPLE_ID APPLE_TEAM_ID APPLE_APP_SPECIFIC_PASSWORD; do
+            if [[ -z "${!variable:-}" ]]; then
+              echo "$variable is required for a public macOS release." >&2
+              exit 1
+            fi
+          done
+
+          payload="$RUNNER_TEMP/one-status-dmg-submit-${{ matrix.arch }}"
+          mkdir -p "$payload" apps/desktop/notary-staging
+          prepared="$(find prepared -maxdepth 1 -type f -name 'one-status-macos-prepared-*.tar.gz' -print -quit)"
+          test -f "$prepared"
+          tar -xzf "$prepared" -C "$payload"
+          image="$(find "$payload" -maxdepth 1 -type f -name 'One-Status-*.dmg' -print -quit)"
+          submission="apps/desktop/notary-staging/dmg-submission-${{ matrix.arch }}.json"
+          test -f "$image"
+          for attempt in 1 2 3; do
+            if xcrun notarytool submit "$image" \
+              --apple-id "$APPLE_ID" \
+              --team-id "$APPLE_TEAM_ID" \
+              --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+              --output-format json >"$submission"; then
+              break
+            fi
+            rm -f "$submission"
+            if (( attempt == 3 )); then exit 1; fi
+            sleep $(( attempt * 15 ))
+          done
+          jq -e '.id | strings | length > 0' "$submission"
+          echo "Submitted DMG notarization $(jq -r '.id' "$submission")."
+      - uses: actions/upload-artifact@v4
+        with:
+          name: one-status-macos-dmg-submission-${{ matrix.arch }}
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 14
+          path: apps/desktop/notary-staging/dmg-submission-${{ matrix.arch }}.json
+
   mac_notarize:
     name: macOS DMG notarization (${{ matrix.arch }})
-    needs: mac_package
+    needs: mac_dmg_submit
     strategy:
       fail-fast: false
       matrix:
@@ -370,6 +450,10 @@ jobs:
         with:
           name: one-status-macos-prepared-${{ matrix.arch }}
           path: prepared
+      - uses: actions/download-artifact@v4
+        with:
+          name: one-status-macos-dmg-submission-${{ matrix.arch }}
+          path: apps/desktop/notary-staging
       - name: Wait for DMG notarization and verify distributions
         shell: bash
         env:
@@ -386,7 +470,7 @@ jobs:
           image="$(find "$payload" -maxdepth 1 -type f -name 'One-Status-*.dmg' -print -quit)"
           archive="$(find "$payload" -maxdepth 1 -type f -name 'One-Status-*.zip' -print -quit)"
           sidecar_archive="$(find "$payload" -maxdepth 1 -type f -name 'one-status-device-sidecar-*.tar.gz' -print -quit)"
-          dmg_submission="$(find "$payload" -maxdepth 1 -type f -name 'dmg-submission-*.json' -print -quit)"
+          dmg_submission="$(find apps/desktop/notary-staging -maxdepth 1 -type f -name 'dmg-submission-*.json' -print -quit)"
           test -f "$image"
           test -f "$archive"
           test -f "$sidecar_archive"

@@ -44,7 +44,7 @@ describe("Device Sidecar release artifacts", () => {
 
     expect(workflow).toContain("workflow_dispatch:");
     expect(workflow).toContain('tags: ["v*"]');
-    expect(workflow.match(/uses: actions\/upload-artifact@v4/g)).toHaveLength(5);
+    expect(workflow.match(/uses: actions\/upload-artifact@v4/g)).toHaveLength(7);
     expect(workflow).toContain("name: one-status-cli");
     expect(workflow).toContain(
       "name: one-status-desktop-${{ matrix.platform }}-${{ matrix.arch }}",
@@ -53,7 +53,13 @@ describe("Device Sidecar release artifacts", () => {
       "name: one-status-macos-signed-${{ matrix.arch }}",
     );
     expect(workflow).toContain(
+      "name: one-status-macos-app-submission-${{ matrix.arch }}",
+    );
+    expect(workflow).toContain(
       "name: one-status-macos-prepared-${{ matrix.arch }}",
+    );
+    expect(workflow).toContain(
+      "name: one-status-macos-dmg-submission-${{ matrix.arch }}",
     );
     expect(workflow).toContain(
       "name: one-status-desktop-mac-${{ matrix.arch }}",
@@ -89,6 +95,10 @@ describe("Device Sidecar release artifacts", () => {
     expect(workflow.match(
       /jq -e '\.id \| strings \| length > 0'/g,
     )).toHaveLength(2);
+    expect(workflow.indexOf("name: one-status-macos-signed-${{ matrix.arch }}"))
+      .toBeLessThan(workflow.indexOf('xcrun notarytool submit "$app_archive"'));
+    expect(workflow.indexOf("name: one-status-macos-prepared-${{ matrix.arch }}"))
+      .toBeLessThan(workflow.indexOf('xcrun notarytool submit "$image"'));
     expect(workflow.match(
       /scripts\/wait-for-apple-notarization\.sh/g,
     )).toHaveLength(2);
