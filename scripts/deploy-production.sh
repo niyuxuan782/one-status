@@ -77,11 +77,13 @@ if [[ "$OPAQUE_SERVER_SETUP" == "$VAULT_OPAQUE_SERVER_SETUP" ]]; then
   printf 'Account and Vault OPAQUE server setups must be generated independently.\n' >&2
   exit 1
 fi
-if [[ ! "$POSTGRES_PASSWORD" =~ ^[A-Za-z0-9_-]{32,256}$ ]]; then
+if [[ ! "$POSTGRES_PASSWORD" =~ ^[A-Za-z0-9_-]+$ ]] ||
+  (( ${#POSTGRES_PASSWORD} < 32 || ${#POSTGRES_PASSWORD} > 256 )); then
   printf 'ONE_STATUS_POSTGRES_PASSWORD must be 32-256 URL-safe characters.\n' >&2
   exit 1
 fi
-if [[ ! "$VAULT_SERVICE_TOKEN" =~ ^[A-Za-z0-9_-]{32,512}$ ]]; then
+if [[ ! "$VAULT_SERVICE_TOKEN" =~ ^[A-Za-z0-9_-]+$ ]] ||
+  (( ${#VAULT_SERVICE_TOKEN} < 32 || ${#VAULT_SERVICE_TOKEN} > 512 )); then
   printf 'ONE_STATUS_VAULT_SERVICE_TOKEN must be 32-512 URL-safe characters.\n' >&2
   exit 1
 fi
@@ -90,7 +92,8 @@ if [[ "$VAULT_KMS_PROVIDER" != self-hosted && "$VAULT_KMS_PROVIDER" != tencent-k
   exit 1
 fi
 if [[ "$VAULT_KMS_PROVIDER" == self-hosted ]]; then
-  if [[ ! "$VAULT_KEK_ID" =~ ^[A-Za-z0-9._:-]{1,256}$ ]]; then
+  if [[ ! "$VAULT_KEK_ID" =~ ^[A-Za-z0-9._:-]+$ ]] ||
+    (( ${#VAULT_KEK_ID} > 256 )); then
     printf 'ONE_STATUS_VAULT_KEK_ID is invalid.\n' >&2
     exit 1
   fi
@@ -119,7 +122,8 @@ if [[ "$VAULT_KMS_PROVIDER" == self-hosted ]]; then
     exit 1
   fi
 else
-  if [[ ! "$VAULT_KMS_KEY_ID" =~ ^[A-Za-z0-9._:-]{1,256}$ ]]; then
+  if [[ ! "$VAULT_KMS_KEY_ID" =~ ^[A-Za-z0-9._:-]+$ ]] ||
+    (( ${#VAULT_KMS_KEY_ID} > 256 )); then
     printf 'ONE_STATUS_VAULT_KMS_KEY_ID is invalid.\n' >&2
     exit 1
   fi
@@ -127,11 +131,17 @@ else
     printf 'ONE_STATUS_VAULT_KMS_REGION is invalid.\n' >&2
     exit 1
   fi
-  if [[ ! "$TENCENT_SECRET_ID" =~ ^[A-Za-z0-9_-]{8,256}$ || ! "$TENCENT_SECRET_KEY" =~ ^[A-Za-z0-9_-]{8,256}$ ]]; then
+  if [[ ! "$TENCENT_SECRET_ID" =~ ^[A-Za-z0-9_-]+$ ]] ||
+    (( ${#TENCENT_SECRET_ID} < 8 || ${#TENCENT_SECRET_ID} > 256 )) ||
+    [[ ! "$TENCENT_SECRET_KEY" =~ ^[A-Za-z0-9_-]+$ ]] ||
+    (( ${#TENCENT_SECRET_KEY} < 8 || ${#TENCENT_SECRET_KEY} > 256 )); then
     printf 'Tencent Cloud KMS credentials contain unsupported characters.\n' >&2
     exit 1
   fi
-  if [[ -n "$TENCENT_SESSION_TOKEN" && ! "$TENCENT_SESSION_TOKEN" =~ ^[A-Za-z0-9._~+/=-]{8,4096}$ ]]; then
+  if [[ -n "$TENCENT_SESSION_TOKEN" ]] && {
+    [[ ! "$TENCENT_SESSION_TOKEN" =~ ^[A-Za-z0-9._~+/=-]+$ ]] ||
+      (( ${#TENCENT_SESSION_TOKEN} < 8 || ${#TENCENT_SESSION_TOKEN} > 4096 ));
+  }; then
     printf 'Tencent Cloud KMS session token contains unsupported characters.\n' >&2
     exit 1
   fi
