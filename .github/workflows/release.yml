@@ -225,7 +225,7 @@ jobs:
             if (( attempt == 3 )); then exit 1; fi
             sleep $(( attempt * 15 ))
           done
-          jq -e '.id and (.status == "In Progress" or .status == "Accepted")' "$submission"
+          jq -e '.id | strings | length > 0' "$submission"
           echo "Submitted app notarization $(jq -r '.id' "$submission")."
       - uses: actions/upload-artifact@v4
         with:
@@ -238,7 +238,6 @@ jobs:
   mac_package:
     name: macOS package and DMG submit (${{ matrix.arch }})
     needs: mac_build
-    if: ${{ always() && !cancelled() }}
     strategy:
       fail-fast: false
       matrix:
@@ -339,7 +338,7 @@ jobs:
             if (( attempt == 3 )); then exit 1; fi
             sleep $(( attempt * 15 ))
           done
-          jq -e '.id and (.status == "In Progress" or .status == "Accepted")' "$dmg_submission"
+          jq -e '.id | strings | length > 0' "$dmg_submission"
           echo "Submitted DMG notarization $(jq -r '.id' "$dmg_submission")."
 
           prepared="apps/desktop/one-status-macos-prepared-${{ matrix.arch }}.tar.gz"
@@ -359,7 +358,6 @@ jobs:
   mac_notarize:
     name: macOS DMG notarization (${{ matrix.arch }})
     needs: mac_package
-    if: ${{ always() && !cancelled() }}
     strategy:
       fail-fast: false
       matrix:

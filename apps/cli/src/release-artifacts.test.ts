@@ -87,6 +87,9 @@ describe("Device Sidecar release artifacts", () => {
     expect(workflow.match(/xcrun notarytool submit "\$image"/g)).toHaveLength(1);
     expect(workflow).not.toContain("--wait");
     expect(workflow.match(
+      /jq -e '\.id \| strings \| length > 0'/g,
+    )).toHaveLength(2);
+    expect(workflow.match(
       /scripts\/wait-for-apple-notarization\.sh/g,
     )).toHaveLength(2);
     expect(workflow).toContain('xcrun stapler staple "$app_path"');
