@@ -316,6 +316,8 @@ a { color: inherit; }
 .toggle input:checked + span { background: var(--ok); }
 .toggle input:checked + span::after { transform: translateX(16px); }
 .toggle strong { font-size: 11px; }
+.startup-toggle { min-height: 34px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: 9px; background: var(--surface); cursor: pointer; }
+.startup-toggle.disabled { opacity: .55; cursor: not-allowed; }
 .notebook { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); padding: 0; margin-bottom: 24px; }
 .notebook-page { padding: 20px 22px; min-width: 0; }
 .notebook-page + .notebook-page { border-left: 1px solid var(--line); }
@@ -741,6 +743,21 @@ function dashboardClient(): void {
         } finally {
           restore();
         }
+        return;
+      }
+      if (action === "toggle-background-startup") {
+        if (snapshot.backgroundStartup?.available !== true) {
+          toast("当前安装方式不支持开机自启动设置", true);
+          return;
+        }
+        const enabled = target.dataset.enabled === "true";
+        const updated = await api("/v1/dashboard/background-startup", {
+          method: "PUT",
+          body: { enabled },
+        });
+        snapshot.backgroundStartup = updated;
+        renderRoute();
+        toast(enabled ? "后台服务将在登录后自动启动" : "已关闭开机自启动");
         return;
       }
       if (action === "add-model-source") return openModelSourceModal();
@@ -1651,10 +1668,21 @@ function dashboardClient(): void {
     const denyNewDeviceLogins = Boolean(
       snapshot.account.deviceLoginPolicy?.denyNewDeviceLogins,
     );
+    const backgroundStartup = snapshot.backgroundStartup || {
+      available: false,
+      enabled: false,
+      mechanism: "unsupported",
+    };
+    const startupTitle = backgroundStartup.available
+      ? backgroundStartup.enabled
+        ? "登录系统后自动启动本机后台服务，不打开图形界面"
+        : "开启后将在登录系统时自动启动本机后台服务"
+      : "当前安装方式不支持管理系统开机项";
+    const startupToggle = `<label class="toggle startup-toggle${backgroundStartup.available ? "" : " disabled"}" data-action="toggle-background-startup" data-enabled="${backgroundStartup.enabled ? "false" : "true"}" title="${startupTitle}"><input type="checkbox" ${backgroundStartup.enabled ? "checked" : ""} ${backgroundStartup.available ? "" : "disabled"}><span></span><strong>开机自启动</strong></label>`;
     return `
       ${pageLead(
         `${devices.length} 台设备 · ${devices.filter((device: any) => device.online).length} 台在线 · ${installedToolCount} 个已安装工具`,
-        `<div class="header-actions"><button class="button secondary" data-action="toggle-device-login-policy" data-deny="${denyNewDeviceLogins ? "false" : "true"}" type="button">${icon("shield")}${denyNewDeviceLogins ? "允许新设备登录" : "拒绝新设备登录"}</button><button class="button secondary" data-action="sync-device-control" type="button">${icon("refresh")}扫描当前设备</button></div>`,
+        `<div class="header-actions">${startupToggle}<button class="button secondary" data-action="toggle-device-login-policy" data-deny="${denyNewDeviceLogins ? "false" : "true"}" type="button">${icon("shield")}${denyNewDeviceLogins ? "允许新设备登录" : "拒绝新设备登录"}</button><button class="button secondary" data-action="sync-device-control" type="button">${icon("refresh")}扫描当前设备</button></div>`,
       )}
       <div class="device-matrix">${devices.map((device: any) => renderDeviceBlock(device, true)).join("")}</div>
       <section class="data-section mt-20">

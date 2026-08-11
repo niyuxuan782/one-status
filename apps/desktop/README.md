@@ -1,8 +1,23 @@
 # One Status Desktop
 
-Electron desktop shell for the local One Status control center. It starts the
-loopback API on port `8787`, or reuses an already-running One Status instance
-after validating its `/health` response.
+Electron desktop shell for the local One Status control center. The main
+process owns the loopback API on port `8787`, or reuses an already-running One
+Status instance after validating its `/health` response.
+
+The executable has two launch modes:
+
+- `one-status --background` starts the local service and heartbeat without a
+  window. It keeps the single-instance lock so a later normal App launch can
+  show the control center in the same process.
+- A normal launch starts the service when needed and opens the window. Closing
+  the window releases Renderer resources while the local service remains
+  available to MCP and model Gateway calls.
+
+The overview startup switch manages a per-user login item. macOS writes
+`~/Library/LaunchAgents/top.furesta.onestatus.background.plist`, Windows uses
+the current user's `Run` registry key, and Linux writes a hidden XDG Autostart
+entry. Every login item passes only `--background`, so system login never opens
+the graphical interface.
 
 ## Development
 
@@ -42,5 +57,6 @@ Apple Developer ID and Windows code-signing credentials.
 The renderer has no Node.js integration or preload bridge. Context isolation,
 Chromium sandboxing, and web security stay enabled. Permission requests are
 denied, untrusted popup windows are blocked, and external HTTP(S) navigation is
-opened in the operating system browser. The embedded API binds only to
-`127.0.0.1`.
+opened in the operating system browser. The local API binds only to
+`127.0.0.1`. On macOS, each Status or Gateway operation loads the current
+device session and Status Key from Keychain through the local profile layer.

@@ -20,7 +20,7 @@
     "build": "node scripts/build.mjs",
     "dev": "pnpm build && electron .",
     "start": "electron .",
-    "test": "vitest run --root ../.. apps/desktop/src/service-runtime.test.ts",
+    "test": "vitest run --root ../.. apps/desktop/src/service-runtime.test.ts apps/desktop/src/startup-control.test.ts",
     "dist": "pnpm build && electron-builder",
     "dist:mac": "pnpm build && electron-builder --mac",
     "dist:win": "pnpm build && electron-builder --win",

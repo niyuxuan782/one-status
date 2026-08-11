@@ -115,6 +115,7 @@ export interface DashboardRuntime {
   permissionVault: PermissionVault;
   permissionSync?: Pick<PermissionSyncService, "run">;
   publicBaseUrl?: string;
+  startupControl?: BackgroundStartupControl;
   issueAgentCredential(
     session: AuthenticatedSession,
     agentId: string,
@@ -125,6 +126,17 @@ export interface DashboardRuntime {
     credentialId: string,
   ): boolean;
   toolGateway: ToolGateway;
+}
+
+export interface BackgroundStartupState {
+  available: boolean;
+  enabled: boolean;
+  mechanism: "launch-agent" | "registry" | "xdg-autostart" | "unsupported";
+}
+
+export interface BackgroundStartupControl {
+  setEnabled(enabled: boolean): Promise<BackgroundStartupState>;
+  status(): Promise<BackgroundStartupState>;
 }
 
 export function registerDashboardRoutes(
@@ -209,9 +221,15 @@ export function registerDashboardRoutes(
     if (!authorizeDashboard(request, reply, dashboardSession)) return;
     return dashboardCall(reply, () =>
       withPermissionVault(runtime, async () => {
-        const [snapshot, modelUsage] = await Promise.all([
+        const [snapshot, modelUsage, backgroundStartup] = await Promise.all([
           runtime.backend.getSnapshot(),
           runtime.modelUsage?.scan().catch(() => null) ?? Promise.resolve(null),
+          runtime.startupControl?.status() ??
+            Promise.resolve({
+              available: false,
+              enabled: false,
+              mechanism: "unsupported" as const,
+            }),
         ]);
         const userId = snapshot.profile.userId;
         const accountDeviceIds = new Set(
@@ -219,6 +237,7 @@ export function registerDashboardRoutes(
         );
         return {
           ...snapshot,
+          backgroundStartup,
           modelUsage,
           syncedModelUsage: readStoredModelUsage(snapshot.status).filter(
             (usage) => accountDeviceIds.has(usage.deviceId),
@@ -252,6 +271,21 @@ export function registerDashboardRoutes(
           },
         };
       }),
+    );
+  });
+
+  app.put("/v1/dashboard/background-startup", async (request, reply) => {
+    if (!authorizeDashboardWrite(request, reply, dashboardSession, csrfToken)) {
+      return;
+    }
+    if (!runtime.startupControl) {
+      return reply.code(501).send({
+        error: { message: "Background startup is unavailable in this installation." },
+      });
+    }
+    const input = backgroundStartupInputSchema.parse(request.body);
+    return dashboardCall(reply, () =>
+      runtime.startupControl!.setEnabled(input.enabled),
     );
   });
 
@@ -2153,6 +2187,10 @@ const contextInputSchema = z
     activeProjectId: z.string().min(1).max(120).optional(),
     currentContext: z.string().max(20_000),
   })
+  .strict();
+
+const backgroundStartupInputSchema = z
+  .object({ enabled: z.boolean() })
   .strict();
 
 const onboardingAccountSchema = z

@@ -16,6 +16,7 @@ import {
   resolveDesktopPort,
   type LocalService,
 } from "./service-runtime.js";
+import { DesktopStartupControl } from "./startup-control.js";
 
 const PRODUCT_NAME = "One Status";
 const APP_USER_MODEL_ID = "top.furesta.onestatus";
@@ -25,6 +26,8 @@ let localService: LocalService | undefined;
 let stopHeartbeat: (() => void) | undefined;
 let shutdownComplete = false;
 let shutdownPromise: Promise<void> | undefined;
+const backgroundMode = process.argv.includes("--background");
+let windowRequested = !backgroundMode;
 
 app.setName(PRODUCT_NAME);
 if (process.platform === "win32") app.setAppUserModelId(APP_USER_MODEL_ID);
@@ -39,7 +42,12 @@ if (!app.requestSingleInstanceLock()) {
 async function launch(): Promise<void> {
   try {
     await app.whenReady();
+    if (backgroundMode) app.dock?.hide();
     installSessionSecurity();
+    const startupControl = new DesktopStartupControl({
+      executablePath: process.execPath,
+      launchArguments: backgroundLaunchArguments(),
+    });
     localService = await ensureLocalService({
       port: resolveDesktopPort(),
       start: async (port) =>
@@ -49,13 +57,18 @@ async function launch(): Promise<void> {
           logger: false,
           port,
           publicBaseUrl: `http://127.0.0.1:${port}`,
+          startupControl,
         }),
     });
     stopHeartbeat = startHeartbeatLoop();
-    await createMainWindow(localService.baseUrl);
+    if (windowRequested) await createMainWindow(localService.baseUrl);
   } catch (error) {
-    await app.whenReady().catch(() => undefined);
-    dialog.showErrorBox("One Status could not start", startupErrorMessage(error));
+    if (backgroundMode) {
+      console.error(startupErrorMessage(error));
+    } else {
+      await app.whenReady().catch(() => undefined);
+      dialog.showErrorBox("One Status could not start", startupErrorMessage(error));
+    }
     stopHeartbeat?.();
     await localService?.close().catch((closeError: unknown) =>
       console.error("Failed to stop local service", closeError),
@@ -66,40 +79,56 @@ async function launch(): Promise<void> {
 }
 
 function installApplicationLifecycle(): void {
-  app.on("second-instance", () => {
-    if (!mainWindow || mainWindow.isDestroyed()) return;
-    if (mainWindow.isMinimized()) mainWindow.restore();
-    mainWindow.show();
-    mainWindow.focus();
+  app.on("second-instance", (_event, commandLine) => {
+    if (commandLine.includes("--background")) return;
+    windowRequested = true;
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      if (localService) {
+        void createMainWindow(localService.baseUrl).catch(showRuntimeError);
+      }
+      return;
+    }
+    focusMainWindow();
   });
 
   app.on("activate", () => {
+    windowRequested = true;
     if (BrowserWindow.getAllWindows().length === 0 && localService) {
       void createMainWindow(localService.baseUrl).catch(showRuntimeError);
     }
   });
 
   app.on("window-all-closed", () => {
-    if (process.platform !== "darwin") app.quit();
+    app.dock?.hide();
   });
 
   app.on("before-quit", (event: Event) => {
-    if (shutdownComplete || !localService) return;
-    event.preventDefault();
-    stopHeartbeat?.();
-    stopHeartbeat = undefined;
-    shutdownPromise ??= localService
-      .close()
-      .catch((error: unknown) => console.error("Failed to stop local service", error))
-      .finally(() => {
-        shutdownComplete = true;
-        app.exit(0);
-      });
+    closeOwnedServiceBeforeQuit(event);
   });
 
   for (const signal of ["SIGINT", "SIGTERM"] as const) {
     process.once(signal, () => app.quit());
   }
+}
+
+function closeOwnedServiceBeforeQuit(event: Event): void {
+  if (shutdownComplete || !localService) return;
+  event.preventDefault();
+  stopHeartbeat?.();
+  stopHeartbeat = undefined;
+  shutdownPromise ??= localService
+    .close()
+    .catch((error: unknown) => console.error("Failed to stop local service", error))
+    .finally(() => {
+      shutdownComplete = true;
+      app.exit(0);
+    });
+}
+
+function backgroundLaunchArguments(): string[] {
+  return app.isPackaged
+    ? ["--background"]
+    : [app.getAppPath(), "--background"];
 }
 
 function startHeartbeatLoop(): () => void {
@@ -128,6 +157,7 @@ function installSessionSecurity(): void {
 }
 
 async function createMainWindow(baseUrl: string): Promise<void> {
+  app.dock?.show();
   const window = new BrowserWindow({
     backgroundColor: "#f3efe6",
     height: 820,
@@ -181,10 +211,19 @@ async function createMainWindow(baseUrl: string): Promise<void> {
   );
   window.once("ready-to-show", () => window.show());
   window.on("closed", () => {
+    windowRequested = false;
     if (mainWindow === window) mainWindow = undefined;
   });
 
   await window.loadURL(baseUrl);
+}
+
+function focusMainWindow(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  app.dock?.show();
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
 }
 
 function isLocalApplicationUrl(url: string, baseUrl: string): boolean {

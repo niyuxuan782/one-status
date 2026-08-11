@@ -23,6 +23,7 @@ import {
 import { PermissionVault } from "./permission-vault.js";
 import { PermissionSyncService } from "./permission-sync.js";
 import { ToolGateway } from "./tool-gateway.js";
+import type { BackgroundStartupControl } from "./dashboard.js";
 
 export interface ApiServerOptions {
   dashboard?: boolean;
@@ -36,6 +37,7 @@ export interface ApiServerOptions {
   port?: number;
   publicBaseUrl?: string;
   releaseId?: string;
+  startupControl?: BackgroundStartupControl;
   trustProxy?: boolean;
   workspaceDbPath?: string;
 }
@@ -143,6 +145,7 @@ export async function startApiServer(
             permissionVault,
             permissionSync: permissionSync!,
             publicBaseUrl: normalizePublicBaseUrl(options.publicBaseUrl),
+            startupControl: options.startupControl,
             toolGateway: new ToolGateway(permissionVault),
           },
         }

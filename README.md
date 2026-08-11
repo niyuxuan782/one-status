@@ -179,6 +179,7 @@ one-status app
 - 密钥钱包中的模型 API Key、账号密码、SSH、云凭据、卡密，以及 Memory、Preferences、Task State 与配置意图都在设备端加密。
 - 查看或复制密钥需要钱包密码，日常模型切换不会显示密钥明文。
 - macOS 的设备 Token 与 Status Key 默认存入系统 Keychain。
+- Desktop 概览可开启开机自启动；系统登录只启动 `127.0.0.1:8787` 后台，点击 App 时再显示界面。
 - OAuth Token 与 API Key 保存在加密 Vault；同步前再次使用设备状态密钥加密。
 - Agent 通过 One Status Gateway 获得按 action 控制的连接能力，并可按用途读取用户允许的钥匙串条目。
 - 写操作和外部副作用要求精确参数审批，Activity 只保存脱敏审计信息。

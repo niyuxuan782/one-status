@@ -52,6 +52,7 @@ describe("local dashboard", () => {
   let directory: string;
   let backend: MemoryDashboardBackend;
   let handoffs: TestHandoffRuntime;
+  let backgroundStartupEnabled: boolean;
   let githubCliImporter: {
     import(userId: string): Promise<ReturnType<PermissionVault["upsertConnection"]>>;
   };
@@ -61,6 +62,7 @@ describe("local dashboard", () => {
     directory = await mkdtemp(join(tmpdir(), "one-status-dashboard-"));
     backend = new MemoryDashboardBackend();
     handoffs = new TestHandoffRuntime();
+    backgroundStartupEnabled = false;
     permissionVault = new PermissionVault({
       path: ":memory:",
       key: new Uint8Array(32).fill(7),
@@ -93,6 +95,23 @@ describe("local dashboard", () => {
           },
         },
         permissionVault,
+        startupControl: {
+          async setEnabled(enabled) {
+            backgroundStartupEnabled = enabled;
+            return {
+              available: true,
+              enabled,
+              mechanism: "launch-agent" as const,
+            };
+          },
+          async status() {
+            return {
+              available: true,
+              enabled: backgroundStartupEnabled,
+              mechanism: "launch-agent" as const,
+            };
+          },
+        },
         toolGateway: new ToolGateway(permissionVault),
       },
     });
@@ -135,8 +154,30 @@ describe("local dashboard", () => {
     expect(snapshot.statusCode).toBe(200);
     const snapshotBody = snapshot.json();
     expect(snapshotBody).toMatchObject({
+      backgroundStartup: {
+        available: true,
+        enabled: false,
+        mechanism: "launch-agent",
+      },
       version: 1,
       integrations: { connections: [], grants: [] },
+    });
+    const enableStartup = await app.inject({
+      method: "PUT",
+      url: "/v1/dashboard/background-startup",
+      headers: {
+        cookie,
+        host: "127.0.0.1:8787",
+        origin: "http://127.0.0.1:8787",
+        "x-one-status-csrf": csrf!,
+      },
+      payload: { enabled: true },
+    });
+    expect(enableStartup.statusCode).toBe(200);
+    expect(enableStartup.json()).toMatchObject({
+      available: true,
+      enabled: true,
+      mechanism: "launch-agent",
     });
     expect(
       snapshotBody.capabilityPacks.map(
@@ -1060,6 +1101,9 @@ describe("local dashboard", () => {
     expect(script.body).toContain("Agent Permission Firewall");
     expect(script.body).toContain("auditEvents");
     expect(script.body).toContain("gatewayAddress.textContent = location.host");
+    expect(script.body).toContain("toggle-background-startup");
+    expect(script.body).toContain("/v1/dashboard/background-startup");
+    expect(script.body).toContain("开机自启动");
     expect(script.body).toContain('data-form="handoff-publish"');
     expect(script.body).toContain('data-form="handoff-open"');
     expect(script.body).toContain("confirmCommit");

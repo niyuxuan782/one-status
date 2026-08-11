@@ -160,6 +160,14 @@ Homebrew service 在 `127.0.0.1:8787` 启动同步 API 与本地工作台，数�
 
 macOS 默认 profile 文件不保存设备 session Token 和 Status Key，这两项进入系统 Keychain。旧版 v1 明文 profile 会在首次成功读取 Keychain 后原子迁移；迁移失败时旧文件保持原状。通过显式 path 使用多 profile 或测试环境时，继续采用权限为 `0600` 的文件模式。
 
+Desktop App 使用独立后台生命周期。概览页开启“开机自启动”后：
+
+- macOS 创建用户级 `~/Library/LaunchAgents/top.furesta.onestatus.background.plist`；
+- Windows 写入当前用户的 `Run` 注册项；
+- Linux 创建隐藏的 XDG Autostart 条目。
+
+系统登录时只运行 `one-status --background`，后台监听 `127.0.0.1:8787`，不会创建窗口。用户点击 App 后，已运行的单实例后台进程创建图形界面；关闭窗口会释放 Renderer，后台服务继续响应 MCP、模型 Gateway 和设备心跳。首次手动打开 App 且后台尚未运行时，同一进程会先启动本地服务再显示界面。
+
 stdio 与 HTTP MCP 长驻进程会在每次 Status 或 Tool Gateway 操作前重新读取 profile 或完整的环境凭据组。工作台登录新账号、设备 Token 轮换、Status Key 变化或 `_FILE` Secret 更新后，下一次工具调用会建立对应的新客户端，无需重新启动 MCP 进程。
 
 OAuth Permission Vault 使用两个相邻文件：
