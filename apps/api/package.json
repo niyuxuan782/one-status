@@ -1,11 +1,13 @@
 {
   "name": "@one-status/api",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "private": true,
   "type": "module",
   "exports": {
     ".": "./src/app.ts",
+    "./cloud-vault": "./src/cloud-vault/index.ts",
     "./local-capability-manager": "./src/local-capability-manager.ts",
+    "./remote-mcp": "./src/remote-mcp.ts",
     "./runtime": "./src/runtime.ts"
   },
   "scripts": {
@@ -13,18 +15,25 @@
     "start": "tsx src/server.ts"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.25.0",
     "@one-status/adapter-engine": "workspace:*",
     "@one-status/capability-pack": "workspace:*",
     "@one-status/client": "workspace:*",
     "@one-status/crypto": "workspace:*",
     "@one-status/local-config": "workspace:*",
+    "@one-status/mcp": "workspace:*",
+    "@one-status/pake": "workspace:*",
     "@one-status/protocol": "workspace:*",
     "@secretlint/core": "^13.0.4",
     "@secretlint/secretlint-rule-preset-recommend": "^13.0.4",
     "fastify": "^5.6.0",
     "lucide": "^1.30.0",
     "smol-toml": "^1.7.1",
+    "ws": "^8.21.3",
     "yaml": "^2.9.0",
     "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.18.1"
   }
 }

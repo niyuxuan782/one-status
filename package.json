@@ -1,6 +1,6 @@
 {
   "name": "one-status",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "Manage AI tools, encrypted model credentials, memory, and work state across devices",
   "private": false,
   "type": "module",
@@ -19,6 +19,7 @@
   "files": [
     "dist/one-status.js",
     "dist/THIRD_PARTY_NOTICES.txt",
+    "dist/migrations",
     "deploy",
     "docs",
     "scripts/deploy-production.sh",
@@ -41,6 +42,7 @@
     "dev:api": "pnpm --filter @one-status/api dev",
     "start:api": "pnpm --filter @one-status/api start",
     "start:mcp": "pnpm --filter @one-status/mcp start",
+    "start:vault": "pnpm --filter @one-status/vault start",
     "pack:local": "pnpm build && npm pack --pack-destination dist",
     "prepack": "pnpm build:bundle",
     "release:prepare": "node scripts/prepare-release.mjs",

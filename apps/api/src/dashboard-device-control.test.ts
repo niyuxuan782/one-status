@@ -2,6 +2,14 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createEmptyStatus, type StatusDocument } from "@one-status/protocol";
+import {
+  createOpaqueServerSetup,
+  finishOpaqueLogin,
+  finishOpaqueRegistration,
+  startOpaqueLogin,
+  startOpaqueRegistration,
+} from "@one-status/pake";
+import { OpaquePasswordAuthority } from "@one-status/pake/authority";
 import type { FastifyInstance } from "fastify";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "./app.js";
@@ -25,6 +33,7 @@ describe("dashboard device control routes", () => {
   let backend: MemoryBackend;
   let directory: string;
   let permissionVault: PermissionVault;
+  let walletPake: OpaquePasswordAuthority;
   const apply = vi.fn(async () => ({
     appliedAt: "2026-08-09T16:00:00.000Z",
   }));
@@ -35,6 +44,17 @@ describe("dashboard device control routes", () => {
     permissionVault = new PermissionVault({
       path: ":memory:",
       key: new Uint8Array(32).fill(18),
+    });
+    walletPake = new OpaquePasswordAuthority({
+      serverSetup: await createOpaqueServerSetup(),
+      store: {
+        async get(userId) {
+          return permissionVault.getWalletPakeRecord(userId);
+        },
+        async set(record) {
+          permissionVault.upsertWalletPakeRecord(record);
+        },
+      },
     });
     const inventory = {
       async get() {
@@ -59,6 +79,7 @@ describe("dashboard device control routes", () => {
         inventory,
         permissionVault,
         toolGateway: new ToolGateway(permissionVault),
+        walletPake,
       },
     });
     await app.ready();
@@ -119,44 +140,32 @@ describe("dashboard device control routes", () => {
       method: "POST",
       url: `/v1/dashboard/model-wallet/${SOURCE_ID}/reveal`,
       headers,
-      payload: { password: "wrong-password" },
+      payload: { walletGrant: `oswg1_${"x".repeat(43)}` },
     });
     expect(deniedReveal.statusCode).toBe(403);
     expect(deniedReveal.headers["cache-control"]).toContain("no-store");
     expect(deniedReveal.body).not.toContain(API_KEY);
 
+    await registerWalletPassword(app, headers, "123456", "initial");
     const revealed = await app.inject({
       method: "POST",
       url: `/v1/dashboard/model-wallet/${SOURCE_ID}/reveal`,
       headers,
-      payload: { password: "123456" },
+      payload: { walletGrant: await unlockWallet(app, headers, "123456") },
     });
     expect(revealed.statusCode).toBe(200);
     expect(revealed.headers["cache-control"]).toContain("no-store");
     expect(revealed.headers.pragma).toBe("no-cache");
     expect(revealed.json()).toEqual({ apiKey: API_KEY, sourceId: SOURCE_ID });
 
-    const changedPassword = await app.inject({
-      method: "POST",
-      url: "/v1/dashboard/model-wallet/password",
-      headers,
-      payload: { currentPassword: "123456", newPassword: "654321" },
-    });
-    expect(changedPassword.statusCode).toBe(200);
-    expect(changedPassword.headers["cache-control"]).toContain("no-store");
-    expect(changedPassword.json()).toEqual({ changed: true });
-    const oldPasswordReveal = await app.inject({
-      method: "POST",
-      url: `/v1/dashboard/model-wallet/${SOURCE_ID}/reveal`,
-      headers,
-      payload: { password: "123456" },
-    });
-    expect(oldPasswordReveal.statusCode).toBe(403);
+    const changeGrant = await unlockWallet(app, headers, "123456");
+    await registerWalletPassword(app, headers, "654321", "change", changeGrant);
+    await expect(tryUnlockWallet(app, headers, "123456")).resolves.toBeNull();
     const newPasswordReveal = await app.inject({
       method: "POST",
       url: `/v1/dashboard/model-wallet/${SOURCE_ID}/reveal`,
       headers,
-      payload: { password: "654321" },
+      payload: { walletGrant: await unlockWallet(app, headers, "654321") },
     });
     expect(newPasswordReveal.statusCode).toBe(200);
     expect(newPasswordReveal.json()).toEqual({
@@ -403,6 +412,89 @@ async function dashboardHeaders(target: FastifyInstance): Promise<{
     origin: "http://127.0.0.1:8787",
     "x-one-status-csrf": csrf,
   };
+}
+
+async function registerWalletPassword(
+  target: FastifyInstance,
+  headers: Record<string, string>,
+  password: string,
+  authorization: "initial" | "change" | "reset",
+  walletGrant?: string,
+): Promise<void> {
+  const started = await startOpaqueRegistration(password);
+  const startResponse = await target.inject({
+    headers,
+    method: "POST",
+    payload: {
+      authorization,
+      registrationRequest: started.registrationRequest,
+      ...(walletGrant ? { walletGrant } : {}),
+    },
+    url: "/v1/dashboard/wallet-pake/register/start",
+  });
+  expect(startResponse.statusCode).toBe(200);
+  const challenge = startResponse.json();
+  const finished = await finishOpaqueRegistration({
+    clientRegistrationState: started.clientRegistrationState,
+    password,
+    profile: challenge.profile,
+    registrationResponse: challenge.registrationResponse,
+  });
+  expect(finished.serverStaticPublicKey).toBe(challenge.serverPublicKey);
+  const finishResponse = await target.inject({
+    headers,
+    method: "PUT",
+    payload: {
+      flowId: challenge.flowId,
+      registrationRecord: finished.registrationRecord,
+    },
+    url: "/v1/dashboard/wallet-pake/register/finish",
+  });
+  expect(finishResponse.statusCode).toBe(200);
+}
+
+async function tryUnlockWallet(
+  target: FastifyInstance,
+  headers: Record<string, string>,
+  password: string,
+): Promise<string | null> {
+  const started = await startOpaqueLogin(password);
+  const startResponse = await target.inject({
+    headers,
+    method: "POST",
+    payload: { startLoginRequest: started.startLoginRequest },
+    url: "/v1/dashboard/wallet-pake/login/start",
+  });
+  expect(startResponse.statusCode).toBe(200);
+  const challenge = startResponse.json();
+  const finished = await finishOpaqueLogin({
+    clientLoginState: started.clientLoginState,
+    loginResponse: challenge.loginResponse,
+    password,
+    profile: challenge.profile,
+  });
+  if (!finished) return null;
+  const finishResponse = await target.inject({
+    headers,
+    method: "POST",
+    payload: {
+      finishLoginRequest: finished.finishLoginRequest,
+      flowId: challenge.flowId,
+    },
+    url: "/v1/dashboard/wallet-pake/login/finish",
+  });
+  expect(finishResponse.statusCode).toBe(200);
+  return finishResponse.json().walletGrant as string;
+}
+
+async function unlockWallet(
+  target: FastifyInstance,
+  headers: Record<string, string>,
+  password: string,
+): Promise<string> {
+  const grant = await tryUnlockWallet(target, headers, password);
+  expect(grant).toMatch(/^oswg1_[A-Za-z0-9_-]{43}$/u);
+  return grant!;
 }
 
 const inventorySnapshot: LocalInventorySnapshot = {

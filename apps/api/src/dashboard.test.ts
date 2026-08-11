@@ -6,11 +6,22 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createEmptyStatus,
   type StatusDocument,
-  type WrappedStatusKey,
 } from "@one-status/protocol";
 import { recordPersonaEvent } from "@one-status/protocol/persona-operations";
 import type { LocalProfile } from "@one-status/local-config";
-import { encryptStatus, generateStatusKey } from "@one-status/crypto";
+import {
+  encryptStatus,
+  generateStatusKey,
+  wrapStatusKeyWithOpaqueExportKey,
+} from "@one-status/crypto";
+import {
+  createOpaqueServerSetup,
+  finishOpaqueLogin,
+  finishOpaqueRegistration,
+  startOpaqueLogin,
+  startOpaqueRegistration,
+} from "@one-status/pake";
+import { OpaquePasswordAuthority } from "@one-status/pake/authority";
 import { createApp } from "./app.js";
 import type {
   DashboardBackend,
@@ -30,23 +41,6 @@ import {
 import type { HandoffPreview, HandoffService } from "./handoff.js";
 import { LocalCapabilityManager } from "./local-capability-manager.js";
 
-const wrappedStatusKey: WrappedStatusKey = {
-  format: "one-status.wrapped-status-key",
-  version: 1,
-  algorithm: "AES-256-GCM",
-  kdf: {
-    algorithm: "scrypt",
-    salt: "s".repeat(22),
-    cost: 16_384,
-    blockSize: 8,
-    parallelization: 1,
-    keyLength: 32,
-  },
-  iv: "i".repeat(16),
-  ciphertext: "c".repeat(43),
-  authTag: "a".repeat(22),
-};
-
 describe("local dashboard", () => {
   let app: FastifyInstance;
   let directory: string;
@@ -57,6 +51,7 @@ describe("local dashboard", () => {
     import(userId: string): Promise<ReturnType<PermissionVault["upsertConnection"]>>;
   };
   let permissionVault: PermissionVault;
+  let walletPake: OpaquePasswordAuthority;
 
   beforeEach(async () => {
     directory = await mkdtemp(join(tmpdir(), "one-status-dashboard-"));
@@ -66,6 +61,17 @@ describe("local dashboard", () => {
     permissionVault = new PermissionVault({
       path: ":memory:",
       key: new Uint8Array(32).fill(7),
+    });
+    walletPake = new OpaquePasswordAuthority({
+      serverSetup: await createOpaqueServerSetup(),
+      store: {
+        async get(userId) {
+          return permissionVault.getWalletPakeRecord(userId);
+        },
+        async set(record) {
+          permissionVault.upsertWalletPakeRecord(record);
+        },
+      },
     });
     githubCliImporter = {
       async import() {
@@ -113,6 +119,7 @@ describe("local dashboard", () => {
           },
         },
         toolGateway: new ToolGateway(permissionVault),
+        walletPake,
       },
     });
     await app.ready();
@@ -443,7 +450,7 @@ describe("local dashboard", () => {
     }
   });
 
-  it("keeps Dashboard credential metadata masked and requires the wallet password for plaintext", async () => {
+  it("keeps Dashboard credential metadata masked and requires an OPAQUE wallet grant for plaintext", async () => {
     const page = await app.inject({
       method: "GET",
       url: "/models",
@@ -504,20 +511,23 @@ describe("local dashboard", () => {
       }),
     ]);
 
-    const wrongPassword = await app.inject({
+    const invalidGrant = await app.inject({
       method: "POST",
       url: `/v1/dashboard/private-credentials/${credentialId}/reveal`,
       headers,
-      payload: { password: "wrong" },
+      payload: { walletGrant: `oswg1_${"x".repeat(43)}` },
     });
-    expect(wrongPassword.statusCode).toBe(403);
-    expect(wrongPassword.body).not.toContain("dashboard-private-password");
+    expect(invalidGrant.statusCode).toBe(403);
+    expect(invalidGrant.body).not.toContain("dashboard-private-password");
+
+    await registerWalletPassword(app, headers, "123456", "initial");
+    const walletGrant = await unlockWallet(app, headers, "123456");
 
     const revealed = await app.inject({
       method: "POST",
       url: `/v1/dashboard/private-credentials/${credentialId}/reveal`,
       headers,
-      payload: { password: "123456" },
+      payload: { walletGrant },
     });
     expect(revealed.statusCode).toBe(200);
     expect(revealed.headers["cache-control"]).toContain("no-store");
@@ -547,36 +557,25 @@ describe("local dashboard", () => {
       },
     });
     expect(
-      permissionVault.revealPrivateCredential(
-        "user-1",
-        credentialId,
-        "123456",
-      )?.secrets,
+      permissionVault.revealPrivateCredentialAuthorized("user-1", credentialId)
+        ?.secrets,
     ).toEqual({ password: "dashboard-private-password" });
 
-    const changedPassword = await app.inject({
-      method: "POST",
-      url: "/v1/dashboard/model-wallet/password",
+    const changeGrant = await unlockWallet(app, headers, "123456");
+    await registerWalletPassword(
+      app,
       headers,
-      payload: {
-        currentPassword: "123456",
-        newPassword: "new-wallet-password",
-      },
-    });
-    expect(changedPassword.statusCode).toBe(200);
+      "new-wallet-password",
+      "change",
+      changeGrant,
+    );
+    await expect(tryUnlockWallet(app, headers, "123456")).resolves.toBeNull();
+    await expect(
+      unlockWallet(app, headers, "new-wallet-password"),
+    ).resolves.toMatch(/^oswg1_/u);
     expect(
-      permissionVault.revealPrivateCredential(
-        "user-1",
-        credentialId,
-        "123456",
-      ),
-    ).toBeNull();
-    expect(
-      permissionVault.revealPrivateCredential(
-        "user-1",
-        credentialId,
-        "new-wallet-password",
-      )?.secrets,
+      permissionVault.revealPrivateCredentialAuthorized("user-1", credentialId)
+        ?.secrets,
     ).toEqual({ password: "dashboard-private-password" });
 
     const deleted = await app.inject({
@@ -1417,22 +1416,11 @@ describe("local dashboard", () => {
   });
 
   it("keeps local sync database sessions valid for Tool Gateway routes", async () => {
-    const registration = await app.inject({
-      method: "POST",
-      url: "/v1/auth/register",
-      payload: {
-        email: "local-tools@example.test",
-        password: "local tools password",
-        deviceName: "Local Mac",
-        initialEnvelope: encryptStatus(createEmptyStatus(), generateStatusKey(), 1),
-        wrappedStatusKey,
-      },
+    const session = await registerSyncAccount(app, {
+      deviceName: "Local Mac",
+      email: "local-tools@example.test",
+      password: "local tools password",
     });
-    expect(registration.statusCode).toBe(201);
-    const session = registration.json<{
-      token: string;
-      userId: string;
-    }>();
     const connection = permissionVault.upsertConnection({
       accountId: "local-42",
       credential: { accessToken: "encrypted-in-vault" },
@@ -1471,23 +1459,11 @@ describe("local dashboard", () => {
   });
 
   it("lets authenticated Agents register, resolve, read, rotate, and delete private credentials", async () => {
-    const registration = await app.inject({
-      method: "POST",
-      url: "/v1/auth/register",
-      payload: {
-        email: "agent-keychain@example.test",
-        password: "agent keychain password",
-        deviceName: "Agent Keychain Mac",
-        initialEnvelope: encryptStatus(
-          createEmptyStatus(),
-          generateStatusKey(),
-          1,
-        ),
-        wrappedStatusKey,
-      },
+    const session = await registerSyncAccount(app, {
+      deviceName: "Agent Keychain Mac",
+      email: "agent-keychain@example.test",
+      password: "agent keychain password",
     });
-    expect(registration.statusCode).toBe(201);
-    const session = registration.json<{ token: string; userId: string }>();
     const codex = await issueAgentCredential(app, session.token, "codex");
     const claude = await issueAgentCredential(
       app,
@@ -1692,23 +1668,11 @@ describe("local dashboard", () => {
   });
 
   it("validates and forwards a one-time Tool Gateway approval ID", async () => {
-    const registration = await app.inject({
-      method: "POST",
-      url: "/v1/auth/register",
-      payload: {
-        email: "tool-confirmation@example.test",
-        password: "tool confirmation password",
-        deviceName: "Local Mac",
-        initialEnvelope: encryptStatus(
-          createEmptyStatus(),
-          generateStatusKey(),
-          1,
-        ),
-        wrappedStatusKey,
-      },
+    const session = await registerSyncAccount(app, {
+      deviceName: "Local Mac",
+      email: "tool-confirmation@example.test",
+      password: "tool confirmation password",
     });
-    expect(registration.statusCode).toBe(201);
-    const session = registration.json<{ token: string; userId: string }>();
     const credential = await issueAgentCredential(app, session.token, "codex");
     const execute = vi
       .spyOn(ToolGateway.prototype, "execute")
@@ -2395,6 +2359,134 @@ describe("local dashboard", () => {
     });
   });
 });
+
+type DashboardRequestHeaders = Record<string, string>;
+
+async function registerSyncAccount(
+  app: FastifyInstance,
+  input: { deviceName: string; email: string; password: string },
+): Promise<{ token: string; userId: string }> {
+  const statusKey = generateStatusKey();
+  const started = await startOpaqueRegistration(input.password);
+  const startResponse = await app.inject({
+    method: "POST",
+    payload: {
+      email: input.email,
+      registrationRequest: started.registrationRequest,
+    },
+    url: "/v1/auth/opaque/register/start",
+  });
+  expect(startResponse.statusCode).toBe(200);
+  const challenge = startResponse.json();
+  const finished = await finishOpaqueRegistration({
+    clientRegistrationState: started.clientRegistrationState,
+    password: input.password,
+    profile: challenge.profile,
+    registrationResponse: challenge.registrationResponse,
+  });
+  expect(finished.serverStaticPublicKey).toBe(challenge.serverPublicKey);
+  const finishResponse = await app.inject({
+    method: "POST",
+    payload: {
+      deviceName: input.deviceName,
+      flowId: challenge.flowId,
+      initialEnvelope: encryptStatus(createEmptyStatus(), statusKey, 1),
+      registrationRecord: finished.registrationRecord,
+      wrappedStatusKey: wrapStatusKeyWithOpaqueExportKey(
+        statusKey,
+        finished.exportKey,
+        challenge.accountBinding,
+      ),
+    },
+    url: "/v1/auth/opaque/register/finish",
+  });
+  expect(finishResponse.statusCode).toBe(201);
+  return finishResponse.json();
+}
+
+async function registerWalletPassword(
+  app: FastifyInstance,
+  headers: DashboardRequestHeaders,
+  password: string,
+  authorization: "initial" | "change" | "reset",
+  walletGrant?: string,
+): Promise<void> {
+  const started = await startOpaqueRegistration(password);
+  const startResponse = await app.inject({
+    headers,
+    method: "POST",
+    payload: {
+      authorization,
+      registrationRequest: started.registrationRequest,
+      ...(walletGrant ? { walletGrant } : {}),
+    },
+    url: "/v1/dashboard/wallet-pake/register/start",
+  });
+  expect(startResponse.statusCode).toBe(200);
+  const challenge = startResponse.json();
+  const finished = await finishOpaqueRegistration({
+    clientRegistrationState: started.clientRegistrationState,
+    password,
+    profile: challenge.profile,
+    registrationResponse: challenge.registrationResponse,
+  });
+  expect(finished.serverStaticPublicKey).toBe(challenge.serverPublicKey);
+  const finishResponse = await app.inject({
+    headers,
+    method: "PUT",
+    payload: {
+      flowId: challenge.flowId,
+      registrationRecord: finished.registrationRecord,
+    },
+    url: "/v1/dashboard/wallet-pake/register/finish",
+  });
+  expect(finishResponse.statusCode).toBe(200);
+}
+
+async function tryUnlockWallet(
+  app: FastifyInstance,
+  headers: DashboardRequestHeaders,
+  password: string,
+): Promise<string | null> {
+  const started = await startOpaqueLogin(password);
+  const startResponse = await app.inject({
+    headers,
+    method: "POST",
+    payload: { startLoginRequest: started.startLoginRequest },
+    url: "/v1/dashboard/wallet-pake/login/start",
+  });
+  expect(startResponse.statusCode).toBe(200);
+  const challenge = startResponse.json();
+  const finished = await finishOpaqueLogin({
+    clientLoginState: started.clientLoginState,
+    loginResponse: challenge.loginResponse,
+    password,
+    profile: challenge.profile,
+  });
+  if (!finished) return null;
+  expect(finished.serverStaticPublicKey).toBe(challenge.serverPublicKey);
+  const finishResponse = await app.inject({
+    headers,
+    method: "POST",
+    payload: {
+      finishLoginRequest: finished.finishLoginRequest,
+      flowId: challenge.flowId,
+    },
+    url: "/v1/dashboard/wallet-pake/login/finish",
+  });
+  expect(finishResponse.statusCode).toBe(200);
+  return finishResponse.json().walletGrant as string;
+}
+
+async function unlockWallet(
+  app: FastifyInstance,
+  headers: DashboardRequestHeaders,
+  password: string,
+): Promise<string> {
+  const grant = await tryUnlockWallet(app, headers, password);
+  expect(grant).toMatch(/^oswg1_[A-Za-z0-9_-]{43}$/u);
+  return grant!;
+}
 
 const inventorySnapshot = {
   schemaVersion: 1 as const,

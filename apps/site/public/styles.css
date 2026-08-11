@@ -236,6 +236,7 @@ a:focus-visible, button:focus-visible { outline: 3px solid #74bca0; outline-offs
 .connection-row > strong i { display: inline-grid; width: 34px; height: 34px; flex: 0 0 auto; place-items: center; color: #fff; background: #26332e; border-radius: 5px; font-style: normal; font-size: 9px; }
 .connection-row > span:not(.health) { color: #5f686c; line-height: 1.55; }
 .connection-note { width: min(var(--max), 100%); margin: 18px auto 0; color: #687176; font-size: 11px; line-height: 1.7; }
+.connection-note code { overflow-wrap: anywhere; color: #2f4840; }
 
 .continuity-section { display: grid; grid-template-columns: minmax(0, .9fr) minmax(480px, 1.1fr); background: #fff; }
 .continuity-copy { padding: 100px max(24px, calc((100vw - var(--max)) / 2)); padding-right: 7vw; }
@@ -402,7 +403,7 @@ a:focus-visible, button:focus-visible { outline: 3px solid #74bca0; outline-offs
   .download-grid a:last-child { border-bottom: 0; }
   .security-section, .contribute-section { padding: 70px 17px; }
   .security-flow { grid-template-columns: 1fr; }
-  .security-flow i { text-align: center; transform: rotate(90deg); }
+  .security-flow i { width: 18px; justify-self: center; text-align: center; transform: rotate(90deg); }
   .contribute-actions { flex-direction: column; }
   .site-footer { padding: 34px 17px; }
   .site-footer > div:last-child { flex-wrap: wrap; }

@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#111315" />
     <meta
       name="description"
-      content="One Status 是跨设备的个人 AI 控制中心，通过端到端加密的密钥钱包统一管理模型 API Key、账号密码、SSH、云凭据、卡密、AI 工具与记忆。"
+      content="One Status 是跨设备的个人 AI 控制中心，通过 E2EE Status 与 KMS 加密密钥钱包统一管理 AI 工具、模型、凭据和记忆。"
     />
     <meta property="og:title" content="One Status - 所有设备上的 AI 工具与密钥钱包" />
     <meta
@@ -60,7 +60,7 @@
           <h1 id="hero-title">One Status</h1>
           <p class="hero-line">所有设备上的 AI 工具、模型、凭据和记忆，集中在一处。</p>
           <p class="hero-copy">
-            自动扫描模型配置，把账号密码、SSH、云平台凭据、卡密和 API Key 收进 E2EE 钥匙串，让 Codex 与 Claude Code 按任务直接使用。
+            自动扫描模型配置，把账号密码、SSH、云平台凭据、卡密和 API Key 收进 KMS 加密钥匙串，让本机与远程 Agent 按任务直接使用。
           </p>
           <div class="hero-actions">
             <a class="button button-primary" href="#install">
@@ -78,7 +78,7 @@
           </div>
           <p class="release-line">
             <span class="status-dot"></span>
-            <span id="release-label">v0.8.0</span>
+            <span id="release-label">v0.9.0</span>
             <span>Open Core</span>
             <span>macOS · Windows · Linux</span>
             <span>Private by design</span>
@@ -89,7 +89,7 @@
 
       <section class="signal-band" aria-label="产品主线">
         <div><strong>Overview</strong><span>设备 · 工具 · 模型 · 用量</span></div>
-        <div><strong>Key Wallet</strong><span>自动登记 · 按需读取 · E2EE</span></div>
+        <div><strong>Key Wallet</strong><span>自动登记 · KMS 加密 · 按需读取</span></div>
         <div><strong>Memory</strong><span>后台生成 · 用户确认</span></div>
         <div><strong>Connections</strong><span>授权与能力统一管理</span></div>
       </section>
@@ -116,7 +116,7 @@
           </div>
           <section class="device-block">
             <header>
-              <div><span class="online-dot"></span><strong>Ryan's MacBook Pro</strong><small>macOS · local 0.8.0 · 刚刚同步</small></div>
+              <div><span class="online-dot"></span><strong>Ryan's MacBook Pro</strong><small>macOS · local 0.9.0 · 刚刚同步</small></div>
               <span class="health healthy">在线</span>
             </header>
             <div class="tool-row tool-head"><span>AI 工具</span><span>当前模型</span><span>可配模型</span><span>近期用量</span><span></span></div>
@@ -138,14 +138,14 @@
 
       <section class="model-section" id="wallet" aria-labelledby="wallet-title">
         <div class="section-heading light compact-heading">
-          <p class="eyebrow"><span></span> KEY WALLET · E2EE</p>
+          <p class="eyebrow"><span></span> KEY WALLET · KMS ENVELOPE</p>
           <h2 id="wallet-title">一个钥匙串，供所有设备和 Agent 使用</h2>
-          <p>密钥钱包自动识别模型配置，也接收用户交给 Agent 的账号密码、SSH、云平台凭据、卡密、Token 和证书。条目在客户端加密后同步，云端只保存密文。</p>
+          <p>密钥钱包自动识别模型配置，也接收用户交给 Agent 的账号密码、SSH、云平台凭据、卡密、Token 和证书。每条凭据使用独立 DEK 加密，云端持久层只保存密文与 KMS Wrapped DEK；远程写入通过钱包内的一次性精确审批完成。</p>
         </div>
         <ol class="configuration-flow" aria-label="密钥钱包工作流">
           <li><span>01</span><strong>自动扫描</strong><small>只读识别 Codex、Claude Code、CC Switch 与本机模型服务</small></li>
           <li><span>02</span><strong>自动登记</strong><small>用户向 Agent 提供可复用凭据时，同轮加密写入钱包</small></li>
-          <li><span>03</span><strong>端到端同步</strong><small>账号、主机、用途与 Secret 随 E2EE Vault bundle 到达其他设备</small></li>
+          <li><span>03</span><strong>加密同步</strong><small>Vault Runtime 立即用 AES-256-GCM 与腾讯云 KMS 重新加密</small></li>
           <li><span>04</span><strong>按需使用</strong><small>Agent 按服务、主机、账号、项目和用途选取；模型可以直接切换</small></li>
           <li><span>05</span><strong>持续更新</strong><small>密码或 Token 轮换时更新原条目，所有读取留下脱敏审计</small></li>
         </ol>
@@ -204,7 +204,7 @@
           <div class="connection-row" role="row"><strong><i>GC</i>Google Calendar</strong><span>日程读取 · 空闲查询 · 创建日程</span><span>Codex 读取</span><span class="health healthy">已连接</span></div>
           <div class="connection-row" role="row"><strong><i>SL</i>Slack</strong><span>频道读取 · 搜索 · 消息发送</span><span>等待 Agent 授权</span><span class="health pending">待设置</span></div>
         </div>
-        <p class="connection-note">第三方服务只授权 One Status 一次；每个 Agent 只连接 One Status，并拥有独立的 action 权限。</p>
+        <p class="connection-note">第三方服务只授权 One Status 一次；每个 Agent 只连接 One Status，并拥有独立的 action 权限。ChatGPT、Claude Web 与移动端通过 OAuth 2.1 + PKCE 连接 <code>https://mcp.os.furesta.top/mcp</code>。</p>
       </section>
 
       <section class="continuity-section" id="projects">
@@ -342,14 +342,14 @@ brew services start niyuxuan782/tap/one-status</code>
         <div>
           <p class="eyebrow"><span></span> SECURITY · SETTINGS</p>
           <h2>切换保持顺手，密钥明文始终受保护</h2>
-          <p>钱包条目、记忆、任务状态和配置意图在设备端加密。用户查看或复制密钥必须输入钱包密码；模型切换无需密码；Agent 使用绑定身份按用途读取获准凭据，并只留下脱敏审计。</p>
+          <p>记忆、任务状态和配置意图保持设备端 E2EE。钱包持久层只保存密文；Vault Runtime 在授权请求期间临时解密指定凭据。用户查看需要钱包密码，Agent 读取受身份、用途、项目、过期时间和撤销状态约束。</p>
         </div>
-        <div class="security-flow" aria-label="端到端加密流程">
-          <div><strong>Device A</strong><span>Scan and encrypt locally</span></div>
+        <div class="security-flow" aria-label="状态与密钥加密流程">
+          <div><strong>Device / Agent</strong><span>OAuth · Grant · Policy</span></div>
           <i>→</i>
-          <div class="cipher"><strong>E2EE Ciphertext</strong><span>Keys · memory · intent</span></div>
+          <div class="cipher"><strong>Encrypted Storage</strong><span>E2EE Status · KMS Vault</span></div>
           <i>→</i>
-          <div><strong>Device B</strong><span>Decrypt and apply locally</span></div>
+          <div><strong>Authorized Runtime</strong><span>Temporary in-memory use</span></div>
         </div>
         <div class="security-links">
           <a href="https://github.com/niyuxuan782/one-status/blob/main/docs/threat-model.md" target="_blank" rel="noreferrer">Threat Model</a>
@@ -384,6 +384,6 @@ brew services start niyuxuan782/tap/one-status</code>
     </footer>
 
     <div class="toast" hidden>已复制到剪贴板</div>
-    <script src="./app.js?v=0.8.0-20260811" defer></script>
+    <script src="./app.js?v=0.9.0-20260811" defer></script>
   </body>
 </html>

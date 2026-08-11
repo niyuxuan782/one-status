@@ -16,14 +16,15 @@
 - 用户控制的本地设备
 - 本地 One Status CLI 与 MCP 进程
 - 操作系统提供的文件权限
+- 隔离的 Vault Runtime 与腾讯云 KMS
 
 低信任组件：
 
-- 同步 API 与数据库
+- 同步 API、Remote MCP 与数据库持久层
 - 网络链路
 - 接入的 Agent
 
-服务端可以观察账号、设备、请求时间、密文大小和版本。服务端持有的密文无法在缺少 Status Key 时解密。
+服务端可以观察账号、设备、请求时间、密文大小和版本。Status 密文无法在缺少 Status Key 时解密。Cloud Vault 的 PostgreSQL 持久层缺少 KMS 权限时无法解密凭据；Vault Runtime 在授权请求期间具备临时解密能力。
 
 ## 已覆盖风险
 
@@ -31,7 +32,7 @@
 | --- | --- |
 | 数据库读取 | Status 与封装后的 Status Key 均为 AES-256-GCM 密文 |
 | 密文篡改与跨 revision 替换 | GCM authentication tag 与 revision-bound AAD |
-| 密码泄漏 | `scrypt` 独立 salt 与 constant-time comparison |
+| 密码泄漏 | RFC 9807 OPAQUE；服务端只保存 registration record，密码不进入 Sync API、OAuth Server 或 Vault Service |
 | 会话库泄漏 | 随机 Token 只以 SHA-256 摘要保存 |
 | 并发覆盖 | 版本条件写入与客户端冲突重试 |
 | 提交响应丢失 | 稳定 `mutationId` 与服务端幂等结果 |
@@ -51,13 +52,21 @@
 | 跨账号 Status 读取 | 所有 Status 查询绑定认证后的 `userId` |
 | OAuth 凭据落盘 | 独立 Permission Vault、AES-256-GCM、独立 256 位本地 key、文件权限 `0600` |
 | OAuth 凭据跨设备 | HKDF 派生同步密钥、独立 AES-256-GCM envelope、目标设备本地重新加密 |
-| 通用钥匙串落盘 | 每条完整 payload 使用 AES-256-GCM 加密；SQLite、列表和 Dashboard snapshot 不含明文字段 |
-| 通用钥匙串跨设备 | Permission Vault bundle 使用 Status Key 派生密钥二次加密；删除墓碑随 E2EE bundle 合并 |
-| Agent 凭据登记与读取 | 路由只接受短期 Agent credential，服务端绑定 user、device、agent；请求体不接受来源身份覆盖 |
+| 通用钥匙串落盘 | 每条凭据使用独立 DEK 和 AES-256-GCM；PostgreSQL 只保存密文、IV、Auth Tag 与 KMS Wrapped DEK |
+| 通用钥匙串迁移 | Desktop 经 TLS Backfill；Vault Runtime 立即重新加密，并用一次性 HMAC 摘要校验数量和内容 |
+| 本机旧钱包覆盖云端新密钥 | Backfill 只接受相同记录重放或补齐缺失 ID；内容差异或云端额外条目返回 `migration_conflict`；钱包 OPAQUE record 独立迁移 |
+| Agent 凭据登记与读取 | Remote OAuth Token、最长一小时的 Vault Session、Agent Grant 与凭据策略共同约束 user、agent、project 和 purpose |
+| Agent 伪造 Project ID | Project ID 必须包含在服务端签发的 Vault Session 中；请求体不能扩大 Session 范围 |
+| Remote Agent 修改钱包 | `credentials_request_approval` 生成绑定 Session、操作和完整参数 HMAC 的 10 分钟一次性 Token；密钥钱包负责批准或拒绝 |
+| Secret 误放明文索引 | 服务端与 MCP Schema 拒绝 password、token、API key、private key、client secret 等 Secret 字段名进入 `fields` |
 | 凭据元数据响应 | register、list、resolve、update 和 delete 统一遮罩全部 Secret；`credentials_get` 只返回当前任务读取结果 |
 | 凭据错误与日志泄漏 | MCP 客户端将凭据 API 失败统一为固定错误；普通 Status、Persona、Activity 与审计记录不保存 Secret |
 | 凭据轮换产生重复项 | MCP instructions 要求先 resolve 原条目，再调用 update；Secret 按字段合并并保留稳定 ID |
 | Agent 凭据读取审计 | 每次读取记录 Agent、项目、用途、决策、原因与时间，不记录明文 Secret |
+| 凭据写入与审计不一致 | Cloud Vault 凭据变更与对应审计事件使用同一个 PostgreSQL 事务提交 |
+| Remote OAuth 重放与撤销 | Authorization Code + PKCE；Refresh Token 轮换；重放或撤销会原子失效同 family 的 Access/Refresh Token |
+| Remote Status 过度暴露 | Desktop 只返回 Profile、Context 或 Memory 的最小投影视图，Relay 不接收完整解密 Status |
+| Relay 本机暴露 | Desktop 主动建立出站 WSS，本机不开放公网端口；异常 Upgrade 路径立即关闭 |
 | OAuth callback 重放 | state 只保存 SHA-256 摘要、10 分钟 TTL、消费后删除、PKCE |
 | Slack Client Secret 落盘 | Slack 使用 public client PKCE，只保存 Client ID；exchange 与 refresh 不发送 Client Secret |
 | Dashboard 跨站写入 | 回环 Host 校验、HttpOnly SameSite cookie、Origin 与 CSRF 双校验、CSP |
@@ -70,16 +79,18 @@
 
 - Windows 与 Linux 默认 profile 尚未接入 Credential Manager 或 Secret Service；显式自定义 path 为便携场景保留明文 `0600` 文件模式。
 - 新设备默认凭账密直接登录；用户可开启“拒绝新设备登录”，并从其他设备撤销 Session、封禁或解除封禁设备。
-- 账号密码进入当前 HTTPS 登录处理进程；密码封装保护数据库静态泄露场景，无法防御恶意服务端在登录时截获密码。
+- 账号密码和钱包密码只在受信任客户端参与 OPAQUE；服务端持有持久化 ServerSetup 和 registration record。客户端仍需校验服务端静态公钥，ServerSetup 丢失会阻断对应账号登录。
 - 整份 Status 共用一个 envelope，大文档会增加同步流量和冲突概率。
 - 服务端仍可同时回放旧版本号和旧密文，客户端目前没有设备侧可信版本锚点。
 - 客户端在线执行 mutation，尚未持久化离线写入队列。
 - 本地 MCP 对当前 Status 拥有完整解密能力，细粒度 Agent 数据授权尚未实现。
-- 本地 Permission Vault key 与本机密文位于同一受信任设备，尚未接入系统安全存储；同步 bundle 的派生密钥依赖 Status Key 保密。
+- Desktop GUI 迁移期仍保留本机 Permission Vault 副本；Cloud Vault 已成为 Remote MCP 的凭据数据源，删除本机持久副本需要等桌面全部 CRUD 切换完成。
 - Tool API 使用哈希落库、可撤销且最长 24 小时的 Agent credential；凭据签发仍由设备会话授权，持有设备 Token 的本地进程可以请求其他 `agentId`，设备签名和 Agent 加密身份仍待实现。
 - 写 action 已使用 Dashboard 审批和参数绑定；审批记录暂存于单进程内存，服务重启后失效，多实例共享与持久化尚未实现。
 - Google、GitHub 与 Slack 已完成真实账号验收；新增 Provider 需要各自 OAuth App、scope 审核和真实账号验收，未建立连接与 Agent grant 时不会出现在 `tools_list`。
-- 在线 MCP runtime 持有 Status Key，部署平台管理员可以读取运行时内存和环境变量。
+- Vault Runtime 的 KMS 权限和进程内存属于高信任边界；部署平台管理员可以在授权窗口观察运行时内存。
+- Node.js 会主动清零 DEK、明文 Buffer 等可变内存；返回给调用方的 JavaScript 字符串及序列化副本由运行时 GC 管理，无法承诺字节级即时清除。
+- PostgreSQL 备份在保留期内包含旧 ciphertext 与 Wrapped DEK；只要同一 KMS KEK 仍可用，备份内的历史密文仍具备可恢复性。删除凭据不会追溯改写已有备份。
 - HTTP MCP bearer 提供 endpoint 访问控制，公网机密性依赖外部 TLS reverse proxy。
 - 开发服务器使用 Node.js 内置 SQLite，当前 Node 版本仍标记该 API 为 experimental。
 - SQLite 为同步驱动，写锁等待期间仍会短暂阻塞单进程 API；当前锁等待上限为 500ms，繁忙错误返回可重试的 503。

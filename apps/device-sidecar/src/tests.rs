@@ -584,7 +584,7 @@ fn cursor_writes_only_the_extension_manifest() {
     let home = TempDir::new().unwrap();
     fs::create_dir_all(
         home.path()
-            .join(".cursor/extensions/top.furesta.one-status-0.8.0"),
+            .join(".cursor/extensions/top.furesta.one-status-0.9.0"),
     )
     .unwrap();
     let settings = home

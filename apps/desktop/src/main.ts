@@ -17,6 +17,10 @@ import {
   type LocalService,
 } from "./service-runtime.js";
 import { DesktopStartupControl } from "./startup-control.js";
+import {
+  startDeviceRelayClient,
+  type RunningDeviceRelayClient,
+} from "./device-relay-client.js";
 
 const PRODUCT_NAME = "One Status";
 const APP_USER_MODEL_ID = "top.furesta.onestatus";
@@ -24,6 +28,7 @@ const APP_USER_MODEL_ID = "top.furesta.onestatus";
 let mainWindow: BrowserWindow | undefined;
 let localService: LocalService | undefined;
 let stopHeartbeat: (() => void) | undefined;
+let deviceRelay: RunningDeviceRelayClient | undefined;
 let shutdownComplete = false;
 let shutdownPromise: Promise<void> | undefined;
 const backgroundMode = process.argv.includes("--background");
@@ -61,6 +66,10 @@ async function launch(): Promise<void> {
         }),
     });
     stopHeartbeat = startHeartbeatLoop();
+    deviceRelay = startDeviceRelayClient({
+      localBaseUrl: localService.baseUrl,
+      relayUrl: process.env.ONE_STATUS_RELAY_URL,
+    });
     if (windowRequested) await createMainWindow(localService.baseUrl);
   } catch (error) {
     if (backgroundMode) {
@@ -116,6 +125,8 @@ function closeOwnedServiceBeforeQuit(event: Event): void {
   event.preventDefault();
   stopHeartbeat?.();
   stopHeartbeat = undefined;
+  deviceRelay?.close();
+  deviceRelay = undefined;
   shutdownPromise ??= localService
     .close()
     .catch((error: unknown) => console.error("Failed to stop local service", error))

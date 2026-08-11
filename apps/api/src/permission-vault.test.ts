@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { oneStatusOpaqueProfile } from "@one-status/pake";
 import {
   PermissionVault,
   type PermissionVaultBundle,
@@ -177,7 +178,7 @@ describe("Permission Vault", () => {
     vault.close();
   });
 
-  it("gates wallet reveal with a persisted scrypt verifier", async () => {
+  it("persists the wallet OPAQUE record outside the synchronized bundle", async () => {
     const directory = await mkdtemp(
       join(tmpdir(), "one-status-wallet-password-"),
     );
@@ -188,53 +189,26 @@ describe("Permission Vault", () => {
       keyPath: join(directory, "permission.key"),
     });
 
-    expect(vault.verifyModelWalletPassword("user-1", "wrong-password")).toBe(
-      false,
+    const record = {
+      createdAt: "2026-08-11T08:00:00.000Z",
+      profile: oneStatusOpaqueProfile,
+      registrationRecord: "registration-record-fixture",
+      updatedAt: "2026-08-11T08:00:00.000Z",
+      userId: "user-1",
+    };
+    vault.upsertWalletPakeRecord(record);
+    expect(vault.getWalletPakeRecord("user-1")).toEqual(record);
+    expect(JSON.stringify(vault.exportBundle("user-1"))).not.toContain(
+      "registration-record-fixture",
     );
-    expect(vault.verifyModelWalletPassword("user-1", "123456")).toBe(true);
-    expect(
-      vault.changeModelWalletPassword("user-1", "wrong-password", "654321"),
-    ).toBe(false);
-    expect(
-      vault.changeModelWalletPassword("user-1", "123456", "654321"),
-    ).toBe(true);
-    expect(vault.verifyModelWalletPassword("user-1", "123456")).toBe(false);
-    expect(vault.verifyModelWalletPassword("user-1", "654321")).toBe(true);
-    expect(vault.exportBundle("user-1").walletPassword).toMatchObject({
-      salt: expect.stringMatching(/^[A-Za-z0-9_-]{22}$/),
-      verifier: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/),
-    });
     vault.close();
 
-    const persisted = await readFile(path, "utf8");
-    expect(persisted).not.toContain("123456");
-    expect(persisted).not.toContain("654321");
     const reopened = new PermissionVault({
       path,
       keyPath: join(directory, "permission.key"),
     });
-    expect(reopened.verifyModelWalletPassword("user-1", "123456")).toBe(false);
-    expect(reopened.verifyModelWalletPassword("user-1", "654321")).toBe(true);
+    expect(reopened.getWalletPakeRecord("user-1")).toEqual(record);
     reopened.close();
-  });
-
-  it("preserves a custom wallet password when importing a legacy bundle", () => {
-    const vault = new PermissionVault({
-      path: ":memory:",
-      key: new Uint8Array(32).fill(24),
-    });
-    expect(vault.verifyModelWalletPassword("user-1", "123456")).toBe(true);
-    expect(
-      vault.changeModelWalletPassword("user-1", "123456", "654321"),
-    ).toBe(true);
-    const legacy = structuredClone(vault.exportBundle("user-1"));
-    delete legacy.walletPassword;
-
-    vault.importBundle("user-1", legacy);
-
-    expect(vault.verifyModelWalletPassword("user-1", "123456")).toBe(false);
-    expect(vault.verifyModelWalletPassword("user-1", "654321")).toBe(true);
-    vault.close();
   });
 
   it("encrypts model source API keys and exposes availability metadata", () => {
@@ -596,10 +570,7 @@ describe("Permission Vault", () => {
       "server-password-plaintext",
     );
     expect(
-      vault.revealPrivateCredential("user-1", stored.id, "incorrect"),
-    ).toBeNull();
-    expect(
-      vault.revealPrivateCredential("user-1", stored.id, "123456")?.secrets,
+      vault.revealPrivateCredentialAuthorized("user-1", stored.id)?.secrets,
     ).toEqual({
       password: "server-password-plaintext",
       privateKey:
@@ -625,7 +596,7 @@ describe("Permission Vault", () => {
       userId: "user-1",
     });
     expect(
-      vault.revealPrivateCredential("user-1", stored.id, "123456")?.secrets,
+      vault.revealPrivateCredentialAuthorized("user-1", stored.id)?.secrets,
     ).toEqual({
       password: "rotated-server-password",
       privateKey:
@@ -643,7 +614,7 @@ describe("Permission Vault", () => {
       secrets: { password: "********", privateKey: "********" },
     });
     expect(
-      vault.revealPrivateCredential("user-1", stored.id, "123456")?.secrets,
+      vault.revealPrivateCredentialAuthorized("user-1", stored.id)?.secrets,
     ).toEqual({
       password: "rotated-server-password",
       privateKey:
@@ -751,8 +722,7 @@ describe("Permission Vault", () => {
     });
     second.importBundle("user-1", first.exportBundle("user-1"));
     expect(
-      second.revealPrivateCredential("user-1", credential.id, "123456")
-        ?.secrets,
+      second.revealPrivateCredentialAuthorized("user-1", credential.id)?.secrets,
     ).toEqual({ token: "github-private-token" });
 
     const legacyBundle = structuredClone(first.exportBundle("user-1"));

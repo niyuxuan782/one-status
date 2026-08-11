@@ -1,11 +1,19 @@
 import { execFileSync } from "node:child_process";
-import { chmod, copyFile, mkdir, rm } from "node:fs/promises";
+import { chmod, copyFile, mkdir, readFile, rm } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { resolve } from "node:path";
 import { build } from "esbuild";
 
 const desktopRoot = resolve(import.meta.dirname, "..");
 const outputDirectory = resolve(desktopRoot, "dist");
 const sidecarRoot = resolve(desktopRoot, "..", "device-sidecar");
+const nodeRequire = createRequire(
+  resolve(desktopRoot, "../../packages/pake/package.json"),
+);
+const opaqueBrowserBundle = await readFile(
+  nodeRequire.resolve("@serenity-kit/opaque/esm/index.js"),
+  "utf8",
+);
 
 await rm(outputDirectory, { recursive: true, force: true });
 await mkdir(outputDirectory, { recursive: true });
@@ -15,7 +23,10 @@ await build({
     js: 'import { createRequire as __oneStatusCreateRequire } from "node:module"; const require = __oneStatusCreateRequire(import.meta.url);',
   },
   bundle: true,
-  define: { "process.env.NODE_ENV": '"production"' },
+  define: {
+    "process.env.NODE_ENV": '"production"',
+    __ONE_STATUS_OPAQUE_BROWSER_BUNDLE__: JSON.stringify(opaqueBrowserBundle),
+  },
   entryPoints: [resolve(desktopRoot, "src", "main.ts")],
   external: ["electron"],
   format: "esm",

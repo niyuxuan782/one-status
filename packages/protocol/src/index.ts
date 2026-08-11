@@ -3,6 +3,59 @@ import { z } from "zod";
 
 export const ONE_STATUS_VERSION = packageMetadata.version;
 
+export const credentialPublicFieldNames = [
+  "account",
+  "accountId",
+  "address",
+  "appId",
+  "audience",
+  "baseUrl",
+  "certificateSha1",
+  "clientId",
+  "cloudAccountId",
+  "database",
+  "deviceName",
+  "domain",
+  "email",
+  "endpoint",
+  "environment",
+  "host",
+  "identity",
+  "keyFormat",
+  "keyId",
+  "model",
+  "modelId",
+  "organization",
+  "owner",
+  "platform",
+  "port",
+  "project",
+  "protocol",
+  "provider",
+  "recordId",
+  "region",
+  "repository",
+  "resource",
+  "service",
+  "sourceId",
+  "subscriptionId",
+  "teamId",
+  "tenant",
+  "url",
+  "username",
+  "validatedAt",
+  "validationStatus",
+  "workspace",
+] as const;
+
+const credentialPublicFieldNameSet = new Set<string>(
+  credentialPublicFieldNames,
+);
+
+export function isCredentialPublicFieldName(value: string): boolean {
+  return credentialPublicFieldNameSet.has(value);
+}
+
 const timestampSchema = z.iso.datetime({ offset: true });
 
 export const memoryScopeSchema = z.enum(["user", "project", "session"]);
@@ -845,7 +898,7 @@ export const encryptedEnvelopeSchema = z
 
 export type EncryptedEnvelope = z.infer<typeof encryptedEnvelopeSchema>;
 
-export const wrappedStatusKeySchema = z
+export const legacyWrappedStatusKeySchema = z
   .object({
     format: z.literal("one-status.wrapped-status-key"),
     version: z.literal(1),
@@ -866,9 +919,150 @@ export const wrappedStatusKeySchema = z
   })
   .strict();
 
+export const opaqueWrappedStatusKeySchema = z
+  .object({
+    format: z.literal("one-status.wrapped-status-key"),
+    version: z.literal(2),
+    algorithm: z.literal("AES-256-GCM"),
+    kdf: z
+      .object({
+        algorithm: z.literal("HKDF-SHA-256"),
+        source: z.literal("OPAQUE-export-key"),
+        suite: z.literal("opaque-rfc9807-ristretto255-sha512"),
+        binding: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
+        keyLength: z.literal(32),
+      })
+      .strict(),
+    iv: z.string().regex(/^[A-Za-z0-9_-]{16}$/),
+    ciphertext: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
+    authTag: z.string().regex(/^[A-Za-z0-9_-]{22}$/),
+  })
+  .strict();
+
+export const wrappedStatusKeySchema = z.union([
+  legacyWrappedStatusKeySchema,
+  opaqueWrappedStatusKeySchema,
+]);
+
 export type WrappedStatusKey = z.infer<typeof wrappedStatusKeySchema>;
 
-export const authRequestSchema = z
+const opaqueValueSchema = z.string().regex(/^[A-Za-z0-9_-]{1,16384}$/);
+
+export const opaqueProfileSchema = z
+  .object({
+    version: z.literal(1),
+    suite: z.literal("opaque-rfc9807-ristretto255-sha512"),
+    keyStretching: z.literal("memory-constrained"),
+    argon2id: z
+      .object({
+        memoryKiB: z.literal(65_536),
+        iterations: z.literal(3),
+        parallelism: z.literal(4),
+      })
+      .strict(),
+  })
+  .strict();
+
+export type OpaqueProfile = z.infer<typeof opaqueProfileSchema>;
+
+export const opaqueRegistrationStartRequestSchema = z
+  .object({
+    email: z.email().transform((value) => value.toLowerCase()),
+    registrationRequest: opaqueValueSchema,
+  })
+  .strict();
+
+export const opaqueRegistrationStartResponseSchema = z
+  .object({
+    accountBinding: z.uuid(),
+    flowId: z.uuid(),
+    profile: opaqueProfileSchema,
+    registrationResponse: opaqueValueSchema,
+    serverPublicKey: opaqueValueSchema,
+  })
+  .strict();
+
+export const opaqueRegistrationFinishRequestSchema = z
+  .object({
+    flowId: z.uuid(),
+    registrationRecord: opaqueValueSchema,
+    deviceName: z.string().min(1).max(120),
+    installationId: z.uuid().optional(),
+    initialEnvelope: encryptedEnvelopeSchema,
+    wrappedStatusKey: opaqueWrappedStatusKeySchema,
+  })
+  .strict()
+  .superRefine((request, context) => {
+    if (request.initialEnvelope.revision !== 1) {
+      context.addIssue({
+        code: "custom",
+        message: "initialEnvelope revision must be 1",
+        path: ["initialEnvelope", "revision"],
+      });
+    }
+  });
+
+export const opaqueLoginStartRequestSchema = z
+  .object({
+    email: z.email().transform((value) => value.toLowerCase()),
+    startLoginRequest: opaqueValueSchema,
+  })
+  .strict();
+
+export const opaqueLoginStartResponseSchema = z
+  .object({
+    flowId: z.uuid(),
+    loginResponse: opaqueValueSchema,
+    profile: opaqueProfileSchema,
+    serverPublicKey: opaqueValueSchema,
+  })
+  .strict();
+
+export const opaqueLoginFinishRequestSchema = z
+  .object({
+    deviceName: z.string().min(1).max(120),
+    finishLoginRequest: opaqueValueSchema,
+    flowId: z.uuid(),
+    installationId: z.uuid().optional(),
+  })
+  .strict();
+
+export const opaqueProofStartRequestSchema = opaqueLoginStartRequestSchema.extend({
+  purpose: z.enum([
+    "oauth-authorize",
+    "wallet-reset",
+    "account-password-change",
+  ]),
+});
+
+export const opaqueProofFinishRequestSchema = z
+  .object({
+    finishLoginRequest: opaqueValueSchema,
+    flowId: z.uuid(),
+  })
+  .strict();
+
+export const opaqueProofFinishResponseSchema = z
+  .object({ proofToken: z.string().regex(/^osp1_[A-Za-z0-9_-]{43}$/) })
+  .strict();
+
+export const opaqueMigrationStartRequestSchema = z
+  .object({
+    accountProof: z.string().regex(/^osp1_[A-Za-z0-9_-]{43}$/).optional(),
+    registrationRequest: opaqueValueSchema,
+  })
+  .strict();
+
+export const opaqueMigrationFinishRequestSchema = z
+  .object({
+    flowId: z.uuid(),
+    registrationRecord: opaqueValueSchema,
+    wrappedStatusKey: opaqueWrappedStatusKeySchema,
+  })
+  .strict();
+
+// This validates local SDK input. OPAQUE messages are the only network auth DTOs.
+export const clientAuthInputSchema = z
   .object({
     email: z.email().transform((value) => value.toLowerCase()),
     password: z.string().min(10).max(256),
@@ -877,19 +1071,6 @@ export const authRequestSchema = z
   })
   .strict();
 
-export const registerRequestSchema = authRequestSchema.extend({
-  initialEnvelope: encryptedEnvelopeSchema,
-  wrappedStatusKey: wrappedStatusKeySchema.optional(),
-}).superRefine((request, context) => {
-  if (request.initialEnvelope.revision !== 1) {
-    context.addIssue({
-      code: "custom",
-      message: "initialEnvelope revision must be 1",
-      path: ["initialEnvelope", "revision"],
-    });
-  }
-});
-
 export const authResponseSchema = z
   .object({
     userId: z.string().min(1),
@@ -897,13 +1078,6 @@ export const authResponseSchema = z
     token: z.string().min(1),
     expiresAt: timestampSchema,
     wrappedStatusKey: wrappedStatusKeySchema.nullable().default(null),
-  })
-  .strict();
-
-export const statusKeyMigrationRequestSchema = z
-  .object({
-    password: z.string().min(10).max(256),
-    wrappedStatusKey: wrappedStatusKeySchema,
   })
   .strict();
 
@@ -1007,8 +1181,7 @@ export const putStatusRequestSchema = z
     }
   });
 
-export type AuthRequest = z.infer<typeof authRequestSchema>;
-export type RegisterRequest = z.infer<typeof registerRequestSchema>;
+export type ClientAuthInput = z.infer<typeof clientAuthInputSchema>;
 export type AuthResponse = z.infer<typeof authResponseSchema>;
 export type AccountResponse = z.infer<typeof accountResponseSchema>;
 export type SessionRevocationResponse = z.infer<

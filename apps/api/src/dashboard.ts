@@ -63,7 +63,13 @@ import type {
   LocalCapabilityManager,
   LocalCapabilityTarget,
 } from "./local-capability-manager.js";
-import type { LocalOnboardingService } from "./onboarding.js";
+import {
+  onboardingLoginFinishInputSchema,
+  onboardingLoginStartInputSchema,
+  onboardingRegistrationFinishInputSchema,
+  onboardingRegistrationStartInputSchema,
+  type LocalOnboardingService,
+} from "./onboarding.js";
 import type { DeviceControlService } from "./device-control.js";
 import type { LocalModelUsageSnapshot } from "./device-sidecar.js";
 import { readStoredModelUsage } from "./model-usage.js";
@@ -71,6 +77,11 @@ import {
   registerModelGatewayRoutes,
   type ModelGateway,
 } from "./model-gateway.js";
+import type {
+  CloudVaultDesktopApproval,
+  CloudVaultDesktopClient,
+} from "./cloud-vault-desktop-client.js";
+import type { OpaquePasswordAuthority } from "@one-status/pake/authority";
 
 const dashboardPaths = new Set([
   "/",
@@ -92,6 +103,11 @@ export interface DashboardRuntime {
     "install" | "prepareInstallation"
   >;
   closeLocalState?: () => void;
+  cloudVault?: Pick<
+    CloudVaultDesktopClient,
+    | "decideApproval"
+    | "listApprovals"
+  >;
   handoffs: Pick<
     HandoffService,
     | "mapProject"
@@ -111,7 +127,14 @@ export interface DashboardRuntime {
   >;
   modelUsage?: { scan(): Promise<LocalModelUsageSnapshot> };
   modelGateway?: ModelGateway;
-  onboarding?: Pick<LocalOnboardingService, "login" | "register" | "status">;
+  onboarding?: Pick<
+    LocalOnboardingService,
+    | "finishLogin"
+    | "finishRegistration"
+    | "startLogin"
+    | "startRegistration"
+    | "status"
+  >;
   permissionVault: PermissionVault;
   permissionSync?: Pick<PermissionSyncService, "run">;
   publicBaseUrl?: string;
@@ -120,12 +143,21 @@ export interface DashboardRuntime {
     session: AuthenticatedSession,
     agentId: string,
   ): IssuedAgentCredential;
+  listAgentIds?(userId: string): string[];
   revokeAgentCredential(
     userId: string,
     deviceId: string,
     credentialId: string,
   ): boolean;
   toolGateway: ToolGateway;
+  walletPake?: Pick<
+    OpaquePasswordAuthority,
+    | "consumeGrant"
+    | "finishLogin"
+    | "finishRegistration"
+    | "startLogin"
+    | "startRegistration"
+  >;
 }
 
 export interface BackgroundStartupState {
@@ -197,23 +229,51 @@ export function registerDashboardRoutes(
     return dashboardCall(reply, () => runtime.onboarding!.status());
   });
 
-  app.post("/v1/dashboard/onboarding/register", async (request, reply) => {
+  app.post("/v1/dashboard/onboarding/register/start", async (request, reply) => {
     if (!authorizeDashboardWrite(request, reply, dashboardSession, csrfToken)) {
       return;
     }
     if (!runtime.onboarding) return reply.code(404).send({ error: "not_found" });
     return dashboardCall(reply, () =>
-      runtime.onboarding!.register(onboardingAccountSchema.parse(request.body)),
+      runtime.onboarding!.startRegistration(
+        onboardingRegistrationStartInputSchema.parse(request.body),
+      ),
     );
   });
 
-  app.post("/v1/dashboard/onboarding/login", async (request, reply) => {
+  app.post("/v1/dashboard/onboarding/register/finish", async (request, reply) => {
     if (!authorizeDashboardWrite(request, reply, dashboardSession, csrfToken)) {
       return;
     }
     if (!runtime.onboarding) return reply.code(404).send({ error: "not_found" });
     return dashboardCall(reply, () =>
-      runtime.onboarding!.login(onboardingLoginSchema.parse(request.body)),
+      runtime.onboarding!.finishRegistration(
+        onboardingRegistrationFinishInputSchema.parse(request.body),
+      ),
+    );
+  });
+
+  app.post("/v1/dashboard/onboarding/login/start", async (request, reply) => {
+    if (!authorizeDashboardWrite(request, reply, dashboardSession, csrfToken)) {
+      return;
+    }
+    if (!runtime.onboarding) return reply.code(404).send({ error: "not_found" });
+    return dashboardCall(reply, () =>
+      runtime.onboarding!.startLogin(
+        onboardingLoginStartInputSchema.parse(request.body),
+      ),
+    );
+  });
+
+  app.post("/v1/dashboard/onboarding/login/finish", async (request, reply) => {
+    if (!authorizeDashboardWrite(request, reply, dashboardSession, csrfToken)) {
+      return;
+    }
+    if (!runtime.onboarding) return reply.code(404).send({ error: "not_found" });
+    return dashboardCall(reply, () =>
+      runtime.onboarding!.finishLogin(
+        onboardingLoginFinishInputSchema.parse(request.body),
+      ),
     );
   });
 
@@ -221,7 +281,8 @@ export function registerDashboardRoutes(
     if (!authorizeDashboard(request, reply, dashboardSession)) return;
     return dashboardCall(reply, () =>
       withPermissionVault(runtime, async () => {
-        const [snapshot, modelUsage, backgroundStartup] = await Promise.all([
+        const [snapshot, modelUsage, backgroundStartup, cloudVaultApprovals] =
+          await Promise.all([
           runtime.backend.getSnapshot(),
           runtime.modelUsage?.scan().catch(() => null) ?? Promise.resolve(null),
           runtime.startupControl?.status() ??
@@ -230,6 +291,8 @@ export function registerDashboardRoutes(
               enabled: false,
               mechanism: "unsupported" as const,
             }),
+          runtime.cloudVault?.listApprovals().catch(() => []) ??
+            Promise.resolve([] as CloudVaultDesktopApproval[]),
         ]);
         const userId = snapshot.profile.userId;
         const accountDeviceIds = new Set(
@@ -239,12 +302,14 @@ export function registerDashboardRoutes(
           ...snapshot,
           backgroundStartup,
           modelUsage,
+          cloudVaultApprovals,
           syncedModelUsage: readStoredModelUsage(snapshot.status).filter(
             (usage) => accountDeviceIds.has(usage.deviceId),
           ),
           capabilityPacks: listBuiltInCapabilityPacks().map(
             ({ manifest, digest }) => ({ manifest, digest }),
           ),
+          knownAgentIds: runtime.listAgentIds?.(userId) ?? [],
           modelCredentialSources:
             runtime.permissionVault.listModelCredentialStatus(userId),
           privateCredentials:
@@ -478,6 +543,99 @@ export function registerDashboardRoutes(
   );
 
   app.post(
+    "/v1/dashboard/wallet-pake/login/start",
+    async (request, reply) => {
+      reply.headers({
+        "cache-control": "no-store, max-age=0",
+        pragma: "no-cache",
+      });
+      if (!authorizeDashboardWrite(request, reply, dashboardSession, csrfToken)) {
+        return;
+      }
+      const input = walletPakeLoginStartSchema.parse(request.body);
+      return dashboardCall(reply, () =>
+        withPermissionVault(runtime, async () => {
+          const snapshot = await runtime.backend.getSnapshot();
+          return requiredWalletPake(runtime).startLogin({
+            startLoginRequest: input.startLoginRequest,
+            userId: snapshot.profile.userId,
+          });
+        }),
+      );
+    },
+  );
+
+  app.post(
+    "/v1/dashboard/wallet-pake/login/finish",
+    async (request, reply) => {
+      reply.headers({
+        "cache-control": "no-store, max-age=0",
+        pragma: "no-cache",
+      });
+      if (!authorizeDashboardWrite(request, reply, dashboardSession, csrfToken)) {
+        return;
+      }
+      const input = walletPakeLoginFinishSchema.parse(request.body);
+      return dashboardCall(reply, () =>
+        withPermissionVault(runtime, async () => {
+          const snapshot = await runtime.backend.getSnapshot();
+          return requiredWalletPake(runtime).finishLogin({
+            ...input,
+            userId: snapshot.profile.userId,
+          });
+        }),
+      );
+    },
+  );
+
+  app.post(
+    "/v1/dashboard/wallet-pake/register/start",
+    async (request, reply) => {
+      reply.headers({
+        "cache-control": "no-store, max-age=0",
+        pragma: "no-cache",
+      });
+      if (!authorizeDashboardWrite(request, reply, dashboardSession, csrfToken)) {
+        return;
+      }
+      const input = walletPakeRegistrationStartSchema.parse(request.body);
+      return dashboardCall(reply, () =>
+        withPermissionVault(runtime, async () => {
+          const snapshot = await runtime.backend.getSnapshot();
+          return requiredWalletPake(runtime).startRegistration({
+            ...input,
+            userId: snapshot.profile.userId,
+          });
+        }),
+      );
+    },
+  );
+
+  app.put(
+    "/v1/dashboard/wallet-pake/register/finish",
+    async (request, reply) => {
+      reply.headers({
+        "cache-control": "no-store, max-age=0",
+        pragma: "no-cache",
+      });
+      if (!authorizeDashboardWrite(request, reply, dashboardSession, csrfToken)) {
+        return;
+      }
+      const input = walletPakeRegistrationFinishSchema.parse(request.body);
+      return dashboardCall(reply, () =>
+        withPermissionVault(runtime, async () => {
+          const snapshot = await runtime.backend.getSnapshot();
+          const record = await requiredWalletPake(runtime).finishRegistration({
+            ...input,
+            userId: snapshot.profile.userId,
+          });
+          return { registered: true, updatedAt: record.updatedAt };
+        }),
+      );
+    },
+  );
+
+  app.post(
     "/v1/dashboard/model-wallet/:sourceId/reveal",
     async (request, reply) => {
       reply.headers({
@@ -488,20 +646,20 @@ export function registerDashboardRoutes(
         return;
       }
       const { sourceId } = modelWalletParameterSchema.parse(request.params);
-      const { password } = modelWalletRevealInputSchema.parse(request.body);
+      const { walletGrant } = walletGrantInputSchema.parse(request.body);
       return dashboardCall(reply, () =>
         withPermissionVault(runtime, async () => {
           const snapshot = await runtime.backend.getSnapshot();
           if (
-            !runtime.permissionVault.verifyModelWalletPassword(
+            !requiredWalletPake(runtime).consumeGrant(
               snapshot.profile.userId,
-              password,
+              walletGrant,
             )
           ) {
             return reply.code(403).send({
               error: {
-                code: "invalid_model_wallet_password",
-                message: "Model wallet password is invalid.",
+                code: "wallet_pake_grant_invalid",
+                message: "Wallet authorization is invalid or expired.",
               },
             });
           }
@@ -518,40 +676,6 @@ export function registerDashboardRoutes(
             });
           }
           return { apiKey, sourceId };
-        }),
-      );
-    },
-  );
-
-  app.post(
-    "/v1/dashboard/model-wallet/password",
-    async (request, reply) => {
-      reply.headers({
-        "cache-control": "no-store, max-age=0",
-        pragma: "no-cache",
-      });
-      if (!authorizeDashboardWrite(request, reply, dashboardSession, csrfToken)) {
-        return;
-      }
-      const input = modelWalletPasswordInputSchema.parse(request.body);
-      return dashboardCall(reply, () =>
-        withPermissionVault(runtime, async () => {
-          const snapshot = await runtime.backend.getSnapshot();
-          if (
-            !runtime.permissionVault.changeModelWalletPassword(
-              snapshot.profile.userId,
-              input.currentPassword,
-              input.newPassword,
-            )
-          ) {
-            return reply.code(403).send({
-              error: {
-                code: "invalid_model_wallet_password",
-                message: "Model wallet password is invalid.",
-              },
-            });
-          }
-          return { changed: true };
         }),
       );
     },
@@ -585,6 +709,23 @@ export function registerDashboardRoutes(
       }),
     );
   });
+
+  app.patch(
+    "/v1/dashboard/cloud-vault-approvals/:approvalId",
+    async (request, reply) => {
+      if (!authorizeDashboardWrite(request, reply, dashboardSession, csrfToken)) {
+        return;
+      }
+      if (!runtime.cloudVault) return reply.code(404).send({ error: "not_found" });
+      const { approvalId } = cloudVaultApprovalParameterSchema.parse(
+        request.params,
+      );
+      const { decision } = cloudVaultApprovalDecisionSchema.parse(request.body);
+      return dashboardCall(reply, () =>
+        runtime.cloudVault!.decideApproval(approvalId, decision),
+      );
+    },
+  );
 
   app.put(
     "/v1/dashboard/private-credentials/:credentialId",
@@ -653,17 +794,30 @@ export function registerDashboardRoutes(
       const { credentialId } = privateCredentialParameterSchema.parse(
         request.params,
       );
-      const { password } = privateCredentialRevealInputSchema.parse(
+      const { walletGrant } = walletGrantInputSchema.parse(
         request.body,
       );
       return dashboardCall(reply, () =>
         withPermissionVault(runtime, async () => {
           const snapshot = await runtime.backend.getSnapshot();
-          const credential = runtime.permissionVault.revealPrivateCredential(
-            snapshot.profile.userId,
-            credentialId,
-            password,
-          );
+          if (
+            !requiredWalletPake(runtime).consumeGrant(
+              snapshot.profile.userId,
+              walletGrant,
+            )
+          ) {
+            return reply.code(403).send({
+              error: {
+                code: "wallet_pake_grant_invalid",
+                message: "Wallet authorization is invalid or expired.",
+              },
+            });
+          }
+          const credential =
+            runtime.permissionVault.revealPrivateCredentialAuthorized(
+              snapshot.profile.userId,
+              credentialId,
+            );
           if (!credential) {
             return reply.code(403).send({
               error: {
@@ -2101,7 +2255,7 @@ function setDashboardHeaders(reply: FastifyReply): void {
   reply.headers({
     "cache-control": "no-store",
     "content-security-policy":
-      "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self' https://accounts.google.com https://github.com https://slack.com",
+      "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self' https://accounts.google.com https://github.com https://slack.com",
     "referrer-policy": "no-referrer",
     "x-content-type-options": "nosniff",
     "x-frame-options": "DENY",
@@ -2120,6 +2274,15 @@ async function dashboardCall(
     const status = error instanceof z.ZodError ? 400 : 422;
     return reply.code(status).send({ error: { message } });
   }
+}
+
+function requiredWalletPake(
+  runtime: DashboardRuntime,
+): NonNullable<DashboardRuntime["walletPake"]> {
+  if (!runtime.walletPake) {
+    throw new Error("Wallet OPAQUE service is unavailable.");
+  }
+  return runtime.walletPake;
 }
 
 function parseCookies(value?: string): Record<string, string> {
@@ -2192,17 +2355,6 @@ const contextInputSchema = z
 const backgroundStartupInputSchema = z
   .object({ enabled: z.boolean() })
   .strict();
-
-const onboardingAccountSchema = z
-  .object({
-    deviceName: z.string().trim().min(1).max(120),
-    email: z.email().transform((value) => value.toLowerCase()),
-    password: z.string().min(10).max(256),
-    serverUrl: z.url().max(2_000),
-  })
-  .strict();
-
-const onboardingLoginSchema = onboardingAccountSchema;
 
 const identityInputSchema = z
   .object({
@@ -2337,13 +2489,45 @@ const modelControlParameterSchema = z.object({
 const modelWalletParameterSchema = z.object({
   sourceId: modelControlParameterSchema.shape.id,
 });
-const modelWalletRevealInputSchema = z
-  .object({ password: z.string().min(1).max(256) })
+const cloudVaultApprovalParameterSchema = z
+  .object({ approvalId: z.uuid() })
   .strict();
-const modelWalletPasswordInputSchema = z
+const cloudVaultApprovalDecisionSchema = z
+  .object({ decision: z.enum(["approve", "deny"]) })
+  .strict();
+const opaqueValueSchema = z
+  .string()
+  .min(1)
+  .max(16_384)
+  .regex(/^[A-Za-z0-9_-]+$/u);
+const walletGrantSchema = z
+  .string()
+  .regex(/^oswg1_[A-Za-z0-9_-]{43}$/u);
+const walletGrantInputSchema = z
+  .object({ walletGrant: walletGrantSchema })
+  .strict();
+const walletPakeLoginStartSchema = z
   .object({
-    currentPassword: z.string().min(1).max(256),
-    newPassword: z.string().min(6).max(256),
+    startLoginRequest: opaqueValueSchema,
+  })
+  .strict();
+const walletPakeLoginFinishSchema = z
+  .object({
+    finishLoginRequest: opaqueValueSchema,
+    flowId: z.uuid(),
+  })
+  .strict();
+const walletPakeRegistrationStartSchema = z
+  .object({
+    authorization: z.enum(["initial", "change", "reset"]),
+    registrationRequest: opaqueValueSchema,
+    walletGrant: walletGrantSchema.optional(),
+  })
+  .strict();
+const walletPakeRegistrationFinishSchema = z
+  .object({
+    flowId: z.uuid(),
+    registrationRecord: opaqueValueSchema,
   })
   .strict();
 const privateCredentialParameterSchema = z
@@ -2411,9 +2595,6 @@ const privateCredentialUpdateInputSchema = z
     secrets: privateCredentialSecretsInputSchema.optional(),
     tags: privateCredentialMetadataListSchema.max(50).optional(),
   })
-  .strict();
-const privateCredentialRevealInputSchema = z
-  .object({ password: z.string().min(1).max(256) })
   .strict();
 const agentPrivateCredentialCreateInputSchema =
   privateCredentialCreateInputSchema.extend({

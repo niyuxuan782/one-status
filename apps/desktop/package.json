@@ -1,6 +1,6 @@
 {
   "name": "@one-status/desktop",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "private": true,
   "type": "module",
   "description": "One Status desktop control center",
@@ -20,7 +20,7 @@
     "build": "node scripts/build.mjs",
     "dev": "pnpm build && electron .",
     "start": "electron .",
-    "test": "vitest run --root ../.. apps/desktop/src/service-runtime.test.ts apps/desktop/src/startup-control.test.ts",
+    "test": "vitest run --root ../.. apps/desktop/src/service-runtime.test.ts apps/desktop/src/startup-control.test.ts apps/desktop/src/device-relay-client.test.ts",
     "dist": "pnpm build && electron-builder",
     "dist:mac": "pnpm build && electron-builder --mac",
     "dist:win": "pnpm build && electron-builder --win",
@@ -29,9 +29,12 @@
   "dependencies": {
     "@one-status/api": "workspace:*",
     "@one-status/client": "workspace:*",
-    "@one-status/local-config": "workspace:*"
+    "@one-status/crypto": "workspace:*",
+    "@one-status/local-config": "workspace:*",
+    "ws": "^8.21.3"
   },
   "devDependencies": {
+    "@types/ws": "^8.18.1",
     "electron": "^37.2.6",
     "electron-builder": "^26.0.12",
     "esbuild": "^0.28.0",

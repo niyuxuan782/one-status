@@ -79,6 +79,9 @@ async function main(): Promise<void> {
     case "server":
       await runServer(arguments_.flags);
       break;
+    case "vault-server":
+      await runVaultServer(arguments_.flags);
+      break;
     case "app":
       await openDesktopApp();
       break;
@@ -552,6 +555,12 @@ async function runMcp(flags: Map<string, string>): Promise<void> {
         "100",
       "max-sessions",
     ),
+    maxSessionsPerPrincipal: parsePositiveInteger(
+      flags.get("max-sessions-per-principal") ??
+        process.env.ONE_STATUS_MCP_MAX_SESSIONS_PER_PRINCIPAL ??
+        "5",
+      "max-sessions-per-principal",
+    ),
     port: parsePort(
       flags.get("port") ?? process.env.ONE_STATUS_MCP_PORT ?? "3000",
       "port",
@@ -572,8 +581,13 @@ async function runServer(flags: Map<string, string>): Promise<void> {
   const app = await startApiServer({
     dashboard: dashboardEnabled,
     dbPath: flags.get("db") ?? process.env.ONE_STATUS_DB,
+    deviceRelay:
+      (flags.get("device-relay") ?? process.env.ONE_STATUS_DEVICE_RELAY) ===
+      "true",
     host,
     logger: true,
+    oauthDbPath:
+      flags.get("oauth-db") ?? process.env.ONE_STATUS_OAUTH_DB,
     permissionDbPath:
       flags.get("permission-db") ?? process.env.ONE_STATUS_PERMISSION_DB,
     permissionKeyPath:
@@ -585,6 +599,14 @@ async function runServer(flags: Map<string, string>): Promise<void> {
     ),
     publicBaseUrl:
       flags.get("public-url") ?? process.env.ONE_STATUS_PUBLIC_URL,
+    remoteMcp:
+      (flags.get("remote-mcp") ?? process.env.ONE_STATUS_REMOTE_MCP) ===
+      "true",
+    remoteMcpIssuer:
+      flags.get("oauth-issuer") ?? process.env.ONE_STATUS_OAUTH_ISSUER,
+    remoteMcpResource:
+      flags.get("mcp-resource") ??
+      process.env.ONE_STATUS_REMOTE_MCP_RESOURCE,
     trustProxy:
       (flags.get("trust-proxy") ?? process.env.ONE_STATUS_TRUST_PROXY) ===
       "true",
@@ -596,6 +618,20 @@ async function runServer(flags: Map<string, string>): Promise<void> {
     stopHeartbeat();
     await app.close();
   });
+}
+
+async function runVaultServer(flags: Map<string, string>): Promise<void> {
+  const { startVaultServerFromEnv } = await import("@one-status/vault/runtime");
+  const runtime = await startVaultServerFromEnv({
+    host: flags.get("host"),
+    logger: true,
+    migrate: flags.get("migrate") !== "false",
+    port: flags.has("port")
+      ? parsePort(flags.get("port")!, "port")
+      : undefined,
+  });
+  console.error(`One Status Vault listening at ${runtime.url}`);
+  installGracefulShutdown(runtime.close);
 }
 
 async function openDesktopApp(): Promise<void> {
@@ -863,8 +899,9 @@ Usage:
   one-status revoke-device --id <device-id>
   one-status logout
   one-status mcp --transport stdio [--agent <agent-id>]
-  one-status mcp --transport http [--agent <agent-id>] [--host <host>] [--port <port>] [--endpoint </mcp>]
-  one-status server [--host <host>] [--port <port>] [--db <path>] [--workspace-db <path>] [--public-url <url>] [--trust-proxy true]
+  one-status mcp --transport http [--agent <agent-id>] [--host <host>] [--port <port>] [--endpoint </mcp>] [--max-sessions-per-principal <count>]
+  one-status server [--host <host>] [--port <port>] [--db <path>] [--workspace-db <path>] [--public-url <url>] [--trust-proxy true] [--device-relay true] [--remote-mcp true] [--oauth-issuer <url>] [--mcp-resource <url>]
+  one-status vault-server [--host <host>] [--port <port>] [--migrate true|false]
   one-status app
   one-status handoff --project <id> --agent claude-code|codex [--publish]
   one-status capability list
@@ -890,6 +927,17 @@ Environment:
   ONE_STATUS_DASHBOARD_URL  Local dashboard URL used by handoff (default: http://127.0.0.1:8787)
   ONE_STATUS_PUBLIC_URL  Public HTTPS base URL for OAuth callbacks
   ONE_STATUS_TRUST_PROXY  Trust reverse-proxy forwarding headers (true/false)
+  ONE_STATUS_DEVICE_RELAY  Enable the authenticated outbound-device WSS relay (true/false)
+  ONE_STATUS_REMOTE_MCP  Enable OAuth, Remote MCP, and Device Relay (true/false)
+  ONE_STATUS_OAUTH_ISSUER  Public OAuth Authorization Server URL
+  ONE_STATUS_REMOTE_MCP_RESOURCE  Public Remote MCP resource URL
+  ONE_STATUS_OAUTH_DB  OAuth state database path (defaults to ONE_STATUS_DB)
+  ONE_STATUS_VAULT_DATABASE_URL  PostgreSQL URL for the internal Vault Service
+  ONE_STATUS_VAULT_DATABASE_SSL  disable, require, or verify-full (default: verify-full)
+  ONE_STATUS_VAULT_SERVICE_TOKEN  Internal service Bearer token (required)
+  ONE_STATUS_VAULT_KMS_KEY_ID  Tencent Cloud KMS CMK ID (required)
+  ONE_STATUS_VAULT_KMS_REGION  Tencent Cloud KMS region
+  TENCENTCLOUD_SECRET_ID / TENCENTCLOUD_SECRET_KEY  Tencent Cloud KMS credentials
 `);
 }
 

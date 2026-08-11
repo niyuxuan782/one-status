@@ -8,7 +8,9 @@ import {
   importStatusKey,
   StatusDecryptionError,
   StatusKeyUnwrapError,
+  unwrapStatusKeyWithOpaqueExportKey,
   unwrapStatusKey,
+  wrapStatusKeyWithOpaqueExportKey,
   wrapStatusKey,
 } from "./index.js";
 
@@ -63,5 +65,41 @@ describe("status encryption", () => {
     await expect(
       unwrapStatusKey(wrapped, "incorrect password value"),
     ).rejects.toBeInstanceOf(StatusKeyUnwrapError);
+  });
+
+  it("wraps a Status Key with the OPAQUE export key", () => {
+    const key = generateStatusKey();
+    const exportKey = Buffer.alloc(64, 17).toString("base64url");
+    const wrapped = wrapStatusKeyWithOpaqueExportKey(
+      key,
+      exportKey,
+      "User@Example.Test",
+    );
+
+    expect(wrapped.version).toBe(2);
+    expect(
+      unwrapStatusKeyWithOpaqueExportKey(
+        wrapped,
+        exportKey,
+        "user@example.test",
+      ),
+    ).toEqual(key);
+  });
+
+  it("binds an OPAQUE wrapped Status Key to the account", () => {
+    const exportKey = Buffer.alloc(64, 19).toString("base64url");
+    const wrapped = wrapStatusKeyWithOpaqueExportKey(
+      generateStatusKey(),
+      exportKey,
+      "first@example.test",
+    );
+
+    expect(() =>
+      unwrapStatusKeyWithOpaqueExportKey(
+        wrapped,
+        exportKey,
+        "second@example.test",
+      ),
+    ).toThrow(StatusKeyUnwrapError);
   });
 });

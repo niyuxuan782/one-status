@@ -1,8 +1,8 @@
 # One Status 在线部署
 
-## 推荐部署形态：Ciphertext Sync Cloud
+## 推荐部署形态：Sync + Remote MCP + Cloud Vault
 
-桌面优先产品的共享云只运行 Sync API。它保存账号、设备 presence、session token hash、mutation receipt 和加密 Status envelope。Status Key、原始会话、本机路径和可解密 Permission Vault 留在用户设备；OAuth bundle 在 Status 内仍是独立密文。
+生产云运行 Sync API、OAuth 2.1 Authorization Server、Streamable HTTP Remote MCP、出站 WSS Device Relay、Vault Runtime 和 PostgreSQL。Status Key、原始会话和本机路径留在用户设备。Status、Memory 与 Persona 保持 E2EE；Cloud Vault 持久层保存逐条凭据密文和腾讯云 KMS Wrapped DEK。
 
 仓库中的生产栈位于：
 
@@ -13,40 +13,55 @@ deploy/backup.sh
 scripts/deploy-production.sh
 ```
 
-该栈包含 Caddy 自动 HTTPS、登录与注册限流、只读 API 容器、持久化 SQLite 数据目录、健康检查和停机一致性备份。`/health` 与 `/v1/*` 进入密文 Sync API，其余路径跳转到 GitHub Pages。官网图片、JavaScript、CSS、安装脚本和安装包均由 GitHub 提供。完整命令见 `deploy/README.md`。
+该栈包含 Caddy 自动 HTTPS、登录与注册限流、API、Vault、PostgreSQL、持久化数据目录、健康检查和 SQLite + PostgreSQL 一致性备份。`os.furesta.top` 承载 `/v1/*`、`/oauth/*` 和 `/v1/relay`，`mcp.os.furesta.top` 承载 `/mcp`。官网静态资源、安装脚本和安装包由 GitHub 提供。完整命令见 `deploy/README.md`。
 
 当前生产栈运行在腾讯云轻量应用服务器，DNS A 记录由腾讯云 DNS 管理。Caddy 运行在该实例的 Docker Compose 内，仅承担 TLS 证书、HTTPS 和反向代理，不依赖 Cloudflare 网络服务。
 
-## 可选形态：Trusted Remote MCP
+## OPAQUE 长期 Setup
+
+账号密码与密钥钱包密码分别使用独立的 OPAQUE server setup：
+
+- `ONE_STATUS_OPAQUE_SERVER_SETUP`：账号注册与登录；
+- `ONE_STATUS_VAULT_OPAQUE_SERVER_SETUP`：密钥钱包查看授权。
+
+两项 setup 只生成一次，作为长期 Secret 独立保存，不能互相复用。更换账号 setup 会使已有账号密码记录失效；更换 Vault setup 会使已有钱包密码记录失效。PostgreSQL、SQLite 备份不包含这两个值，灾难恢复时必须从 Secret Manager 恢复原值。
+
+```bash
+install -d -m 0700 "$HOME/.config/one-status/deploy"
+npx --yes @serenity-kit/opaque@1.1.0 create-server-setup \
+  > "$HOME/.config/one-status/deploy/account-opaque.setup"
+npx --yes @serenity-kit/opaque@1.1.0 create-server-setup \
+  > "$HOME/.config/one-status/deploy/vault-opaque.setup"
+chmod 0600 "$HOME/.config/one-status/deploy/"*.setup
+
+export ONE_STATUS_OPAQUE_SERVER_SETUP="$(tr -d '\r\n' < "$HOME/.config/one-status/deploy/account-opaque.setup")"
+export ONE_STATUS_VAULT_OPAQUE_SERVER_SETUP="$(tr -d '\r\n' < "$HOME/.config/one-status/deploy/vault-opaque.setup")"
+```
+
+生产 Compose 将两项变量设为必填；部署脚本校验其 Base64URL 格式、长度和相互独立性，并原样写入权限为 `0600` 的 release `production.env`。
+
+## Remote MCP 信任边界
 
 ### 信任边界
 
-在线 MCP 进程需要解密 Status，因此它等价于一台受信任设备。推荐运行位置：
+在线 Desktop 只向 Remote MCP 返回 Profile、Context 或 Memory 的最小投影视图。Remote MCP 不持有 Status Key。需要第三方连接或本机能力时，请求经 WSS 路由到在线 Desktop；设备离线时返回 `device_offline`。
 
-- 用户自己的 VPS
-- 私有容器平台
-- 本机常驻服务
-- 用户控制的家庭服务器
+Vault Runtime 独占 KMS 权限。每次凭据读取都经过 OAuth scope、短期 Agent Session、Vault Grant、Agent ID、服务端绑定的 Project ID、purpose、凭据策略、过期时间和撤销检查。远程写入还需要密钥钱包签发的 10 分钟一次性精确审批。明文和 DEK 只在请求内存中存在，请求与结果不写普通日志。
 
-当前版本不适合将多名陌生用户的 Status Key 汇集到同一个共享网关。共享托管形态需要设备密钥封装、硬件隔离或客户端原生插件配合。
+首次钱包 Backfill 会验证完整凭据集合，并由 Vault Runtime 逐条重新加密。后续请求发现云端内容更新或云端额外条目时返回 `migration_conflict`。钱包密码通过独立 OPAQUE registration record 管理。生产稳定并完成 Desktop 全部云端 CRUD 切换前，本机 Permission Vault 继续保留副本。
 
 ## 拓扑
 
 ```text
-Agent
-  |
-  | MCP Streamable HTTP + Bearer + TLS
-  v
-Trusted One Status MCP runtime
-  |
-  | Encrypted Status API + Device Token
-  v
-One Status Sync API
+Remote Agent -> OAuth 2.1 + PKCE -> Remote MCP
+Remote MCP -> WSS Relay -> Online Desktop
+Remote MCP -> Vault Service -> Tencent KMS + PostgreSQL ciphertext
+Desktop Agent -> stdio MCP -> Local Background Service
 ```
 
-MCP runtime 在内存中持有 Status Key。Sync API 继续只保存密文。
+## 独立本机 HTTP MCP 环境变量
 
-## 环境变量
+以下变量用于单用户本机或私有 HTTP MCP。生产 Remote MCP 与 Cloud Vault 使用 `deploy/production.env.example` 中的 `ONE_STATUS_VAULT_*`、`TENCENTCLOUD_*` 和 PostgreSQL 配置。
 
 | 变量 | 必填 | 说明 |
 | --- | --- | --- |
@@ -61,6 +76,7 @@ MCP runtime 在内存中持有 Status Key。Sync API 继续只保存密文。
 | `ONE_STATUS_MCP_ENDPOINT` | 否 | 默认 `/mcp` |
 | `ONE_STATUS_MCP_PUBLIC_URL` | 否 | 日志展示的公网 URL |
 | `ONE_STATUS_MCP_MAX_SESSIONS` | 否 | 默认 `100` |
+| `ONE_STATUS_MCP_MAX_SESSIONS_PER_PRINCIPAL` | 否 | 默认每个 OAuth principal `5` |
 | `ONE_STATUS_MCP_IDLE_TIMEOUT_MS` | 否 | 默认 30 分钟 |
 
 `ONE_STATUS_TOKEN`、`ONE_STATUS_STATUS_KEY`、`ONE_STATUS_AGENT_TOKEN` 和 `ONE_STATUS_MCP_BEARER_TOKEN` 都支持对应的 `*_FILE` 变量，适合 Docker secrets 与 Kubernetes Secret volume。直接值与文件变量不能同时提供。Bearer 至少需要 32 字节，并且必须与设备 Token 不同。
@@ -74,7 +90,7 @@ MCP runtime 在内存中持有 Status Key。Sync API 继续只保存密文。
 构建：
 
 ```bash
-docker build -t one-status:0.8.0 .
+docker build -t one-status:0.9.0 .
 ```
 
 运行：
@@ -90,7 +106,7 @@ docker run --rm -p 127.0.0.1:3000:3000 \
   -e ONE_STATUS_TOKEN \
   -e ONE_STATUS_STATUS_KEY \
   -e ONE_STATUS_MCP_BEARER_TOKEN \
-  one-status:0.8.0
+  one-status:0.9.0
 ```
 
 Compose：

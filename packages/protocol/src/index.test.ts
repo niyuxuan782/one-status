@@ -2,16 +2,16 @@ import { describe, expect, it } from "vitest";
 import {
   accountResponseSchema,
   authResponseSchema,
+  clientAuthInputSchema,
   configurationIntentSchema,
   createEmptyStatus,
   memoryEntrySchema,
   modelSourceSchema,
+  opaqueMigrationStartRequestSchema,
   parseStatusDocument,
   personaEventSchema,
-  registerRequestSchema,
   removeDeviceControlState,
   statusDocumentSchema,
-  statusKeyMigrationRequestSchema,
   statusKeyMigrationResponseSchema,
 } from "./index.js";
 
@@ -47,36 +47,26 @@ describe("status protocol", () => {
     ).toBeNull();
   });
 
-  it("accepts legacy registration requests without a wrapped Status Key", () => {
+  it("validates local SDK authentication input", () => {
     expect(
-      registerRequestSchema.parse({
-        email: "legacy@example.test",
-        password: "legacy account password",
-        deviceName: "Legacy Mac",
-        initialEnvelope: {
-          format: "one-status.encrypted-status",
-          version: 1,
-          algorithm: "AES-256-GCM",
-          revision: 1,
-          iv: "iv",
-          ciphertext: "ciphertext",
-          authTag: "auth-tag",
-        },
-      }).wrappedStatusKey,
-    ).toBeUndefined();
+      clientAuthInputSchema.parse({
+        email: "user@example.test",
+        password: "local account password",
+        deviceName: "Mac",
+      }),
+    ).toMatchObject({ email: "user@example.test", deviceName: "Mac" });
   });
 
-  it("validates the one-time wrapped Status Key migration contract", () => {
+  it("validates an OPAQUE wrapped Status Key migration response", () => {
     const wrappedStatusKey = {
       format: "one-status.wrapped-status-key" as const,
-      version: 1 as const,
+      version: 2 as const,
       algorithm: "AES-256-GCM" as const,
       kdf: {
-        algorithm: "scrypt" as const,
-        salt: "s".repeat(22),
-        cost: 16_384 as const,
-        blockSize: 8 as const,
-        parallelization: 1 as const,
+        algorithm: "HKDF-SHA-256" as const,
+        source: "OPAQUE-export-key" as const,
+        suite: "opaque-rfc9807-ristretto255-sha512" as const,
+        binding: "b".repeat(43),
         keyLength: 32 as const,
       },
       iv: "i".repeat(16),
@@ -84,17 +74,32 @@ describe("status protocol", () => {
       authTag: "a".repeat(22),
     };
     expect(
-      statusKeyMigrationRequestSchema.parse({
-        password: "legacy account password",
-        wrappedStatusKey,
-      }),
-    ).toMatchObject({ wrappedStatusKey });
-    expect(
       statusKeyMigrationResponseSchema.parse({
         migrated: true,
         wrappedStatusKey,
       }),
     ).toEqual({ migrated: true, wrappedStatusKey });
+  });
+
+  it("accepts only an optional one-time account proof for OPAQUE migration", () => {
+    const accountProof = `osp1_${"p".repeat(43)}`;
+    expect(
+      opaqueMigrationStartRequestSchema.parse({
+        accountProof,
+        registrationRequest: "opaque_registration_request",
+      }),
+    ).toEqual({ accountProof, registrationRequest: "opaque_registration_request" });
+    expect(
+      opaqueMigrationStartRequestSchema.parse({
+        registrationRequest: "legacy_migration_request",
+      }),
+    ).toEqual({ registrationRequest: "legacy_migration_request" });
+    expect(() =>
+      opaqueMigrationStartRequestSchema.parse({
+        password: "must-not-enter-http",
+        registrationRequest: "opaque_registration_request",
+      }),
+    ).toThrow();
   });
 
   it("creates a future-ready empty status document", () => {

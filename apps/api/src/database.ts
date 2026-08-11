@@ -1,23 +1,23 @@
-import { createHash, randomBytes, randomUUID, scrypt, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { chmodSync, mkdirSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname } from "node:path";
-import { promisify } from "node:util";
 import type { DatabaseSync as DatabaseSyncType } from "node:sqlite";
 import {
   encryptedEnvelopeSchema,
+  opaqueProfileSchema,
   wrappedStatusKeySchema,
   type AccountResponse,
   type AuthResponse,
   type EncryptedEnvelope,
+  type OpaqueProfile,
   type StatusKeyMigrationResponse,
   type StatusSnapshot,
   type WrappedStatusKey,
 } from "@one-status/protocol";
 
-const scryptAsync = promisify(scrypt);
 const nodeRequire = createRequire(import.meta.url);
-const PASSWORD_HASH_BYTES = 64;
+const LEGACY_PASSWORD_FIELD_BYTES = 64;
 const SESSION_DAYS = 30;
 const AGENT_CREDENTIAL_HOURS = 24;
 const AGENT_CREDENTIAL_PREFIX = "osa1_";
@@ -29,8 +29,9 @@ const DEVICE_TOUCH_INTERVAL_MS = 15_000;
 interface UserRow {
   id: string;
   email: string;
-  password_salt: string;
-  password_hash: string;
+  opaque_profile: string | null;
+  opaque_registration_record: string | null;
+  password_auth_scheme: string;
   wrapped_status_key: string | null;
   deny_new_device_logins: number;
   created_at: string;
@@ -75,7 +76,6 @@ export class EmailAlreadyRegisteredError extends Error {}
 export class InvalidCredentialsError extends Error {}
 export class DeviceLoginBlockedError extends Error {}
 export class NewDeviceLoginDeniedError extends Error {}
-export class StatusKeyMigrationNotAllowedError extends Error {}
 export class MutationIdConflictError extends Error {}
 
 export class VersionConflictError extends Error {
@@ -90,6 +90,8 @@ export interface AuthenticatedSession {
   expiresAt?: string;
   statusKeyMigrationEligible?: boolean;
 }
+
+export type PasswordAuthScheme = "legacy-scrypt" | "opaque";
 
 export interface AuthenticatedAgentSession extends AuthenticatedSession {
   agentId: string;
@@ -127,6 +129,9 @@ export class OneStatusDatabase {
         email TEXT NOT NULL UNIQUE,
         password_salt TEXT NOT NULL,
         password_hash TEXT NOT NULL,
+        opaque_registration_record TEXT,
+        opaque_profile TEXT,
+        password_auth_scheme TEXT NOT NULL DEFAULT 'legacy-scrypt',
         wrapped_status_key TEXT,
         deny_new_device_logins INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL
@@ -193,6 +198,19 @@ export class OneStatusDatabase {
     ensureColumn(
       this.#database,
       "users",
+      "opaque_registration_record",
+      "TEXT",
+    );
+    ensureColumn(this.#database, "users", "opaque_profile", "TEXT");
+    ensureColumn(
+      this.#database,
+      "users",
+      "password_auth_scheme",
+      "TEXT NOT NULL DEFAULT 'legacy-scrypt'",
+    );
+    ensureColumn(
+      this.#database,
+      "users",
       "deny_new_device_logins",
       "INTEGER NOT NULL DEFAULT 0",
     );
@@ -214,49 +232,127 @@ export class OneStatusDatabase {
     this.#database.close();
   }
 
-  async register(
+  hasRegisteredEmail(email: string): boolean {
+    return Boolean(
+      this.#database.prepare("SELECT 1 FROM users WHERE email = ?").get(email),
+    );
+  }
+
+  getOpaqueLoginRecord(email: string): {
+    profile: OpaqueProfile;
+    registrationRecord: string;
+    userId: string;
+  } | null {
+    const row = this.#database
+      .prepare(
+        `SELECT id, opaque_registration_record, opaque_profile,
+                password_auth_scheme
+           FROM users WHERE email = ?`,
+      )
+      .get(email) as
+      | {
+          id: string;
+          opaque_profile: string | null;
+          opaque_registration_record: string | null;
+          password_auth_scheme: string;
+        }
+      | undefined;
+    if (
+      !row ||
+      row.password_auth_scheme !== "opaque" ||
+      !row.opaque_registration_record ||
+      !row.opaque_profile
+    ) {
+      return null;
+    }
+    return {
+      profile: opaqueProfileSchema.parse(JSON.parse(row.opaque_profile)),
+      registrationRecord: row.opaque_registration_record,
+      userId: row.id,
+    };
+  }
+
+  getOpaqueMigrationIdentity(userId: string): {
+    authScheme: PasswordAuthScheme;
+    email: string;
+    registrationRecord: string | null;
+  } | null {
+    const row = this.#database
+      .prepare(
+        `SELECT email, opaque_registration_record, password_auth_scheme
+           FROM users WHERE id = ?`,
+      )
+      .get(userId) as
+      | {
+          email: string;
+          opaque_registration_record: string | null;
+          password_auth_scheme: string;
+        }
+      | undefined;
+    if (
+      !row ||
+      (row.password_auth_scheme !== "legacy-scrypt" &&
+        row.password_auth_scheme !== "opaque")
+    ) {
+      return null;
+    }
+    if (
+      row.password_auth_scheme === "opaque" &&
+      !row.opaque_registration_record
+    ) {
+      return null;
+    }
+    return {
+      authScheme: row.password_auth_scheme,
+      email: row.email,
+      registrationRecord: row.opaque_registration_record,
+    };
+  }
+
+  registerOpaque(
+    userId: string,
     email: string,
-    password: string,
+    registrationRecord: string,
+    profile: OpaqueProfile,
     deviceName: string,
     initialEnvelope: EncryptedEnvelope,
-    wrappedStatusKey: WrappedStatusKey | undefined,
+    wrappedStatusKey: WrappedStatusKey,
     installationId?: string,
-  ): Promise<AuthResponse> {
-    const existing = this.#database
-      .prepare("SELECT id FROM users WHERE email = ?")
-      .get(email);
-    if (existing) {
+  ): AuthResponse {
+    if (this.hasRegisteredEmail(email)) {
       throw new EmailAlreadyRegisteredError("Email is already registered.");
     }
-
     const now = new Date().toISOString();
-    const userId = randomUUID();
-    const salt = randomBytes(16);
-    const passwordHash = await derivePasswordHash(password, salt);
-
+    const retiredSalt = randomBytes(16).toString("base64url");
+    const retiredHash = randomBytes(LEGACY_PASSWORD_FIELD_BYTES).toString(
+      "base64url",
+    );
     this.#database.exec("BEGIN IMMEDIATE");
     try {
       this.#database
         .prepare(
           `INSERT INTO users
-             (id, email, password_salt, password_hash, wrapped_status_key,
-              created_at)
-           VALUES (?, ?, ?, ?, ?, ?)`,
+             (id, email, password_salt, password_hash,
+              opaque_registration_record, opaque_profile,
+              password_auth_scheme, wrapped_status_key, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, 'opaque', ?, ?)`,
         )
         .run(
           userId,
           email,
-          salt.toString("base64url"),
-          passwordHash.toString("base64url"),
-          wrappedStatusKey ? JSON.stringify(wrappedStatusKey) : null,
+          retiredSalt,
+          retiredHash,
+          registrationRecord,
+          JSON.stringify(opaqueProfileSchema.parse(profile)),
+          JSON.stringify(wrappedStatusKeySchema.parse(wrappedStatusKey)),
           now,
         );
       const response = this.#createDeviceSession(
         userId,
         deviceName,
         now,
-        wrappedStatusKey ?? null,
-        wrappedStatusKey === undefined,
+        wrappedStatusKey,
+        false,
         installationId,
       );
       this.#database
@@ -276,30 +372,21 @@ export class OneStatusDatabase {
     }
   }
 
-  async login(
+  loginOpaque(
     email: string,
-    password: string,
     deviceName: string,
     installationId?: string,
-  ): Promise<AuthResponse> {
+  ): AuthResponse {
     const user = this.#database
       .prepare("SELECT * FROM users WHERE email = ?")
       .get(email) as unknown as UserRow | undefined;
-
-    if (!user) {
-      await derivePasswordHash(password, randomBytes(16));
+    if (
+      !user ||
+      user.password_auth_scheme !== "opaque" ||
+      !user.opaque_registration_record
+    ) {
       throw new InvalidCredentialsError("Invalid email or password.");
     }
-
-    const actualHash = await derivePasswordHash(
-      password,
-      Buffer.from(user.password_salt, "base64url"),
-    );
-    const expectedHash = Buffer.from(user.password_hash, "base64url");
-    if (!timingSafeEqual(actualHash, expectedHash)) {
-      throw new InvalidCredentialsError("Invalid email or password.");
-    }
-
     const deviceId = installationId ?? randomUUID();
     const existingDevice = this.#database
       .prepare("SELECT user_id, blocked FROM devices WHERE id = ?")
@@ -312,7 +399,6 @@ export class OneStatusDatabase {
         "New device logins are disabled for this account.",
       );
     }
-
     this.#database.exec("BEGIN IMMEDIATE");
     try {
       const response = this.#createDeviceSession(
@@ -331,6 +417,53 @@ export class OneStatusDatabase {
       this.#database.exec("ROLLBACK");
       throw error;
     }
+  }
+
+  migrateOpaqueRegistration(
+    session: AuthenticatedSession,
+    registrationRecord: string,
+    profile: OpaqueProfile,
+    wrappedStatusKey: WrappedStatusKey,
+    expected: {
+      authScheme: PasswordAuthScheme;
+      registrationRecord: string | null;
+    },
+  ): StatusKeyMigrationResponse {
+    const parsedWrapped = wrappedStatusKeySchema.parse(wrappedStatusKey);
+    if (parsedWrapped.version !== 2) {
+      throw new Error("OPAQUE migration requires a version 2 Status Key wrapper.");
+    }
+    const retiredSalt = randomBytes(16).toString("base64url");
+    const retiredHash = randomBytes(LEGACY_PASSWORD_FIELD_BYTES).toString(
+      "base64url",
+    );
+    const result = this.#database
+      .prepare(
+        `UPDATE users
+            SET opaque_registration_record = ?, opaque_profile = ?,
+                password_auth_scheme = 'opaque', password_salt = ?,
+                password_hash = ?, wrapped_status_key = ?
+          WHERE id = ? AND password_auth_scheme = ?
+            AND ((? IS NULL AND opaque_registration_record IS NULL)
+              OR opaque_registration_record = ?)`,
+      )
+      .run(
+        registrationRecord,
+        JSON.stringify(opaqueProfileSchema.parse(profile)),
+        retiredSalt,
+        retiredHash,
+        JSON.stringify(parsedWrapped),
+        session.userId,
+        expected.authScheme,
+        expected.registrationRecord,
+        expected.registrationRecord,
+      );
+    if (Number(result.changes) !== 1) {
+      throw new InvalidCredentialsError(
+        "Account password changed while the OPAQUE flow was pending.",
+      );
+    }
+    return { migrated: true, wrappedStatusKey: parsedWrapped };
   }
 
   authenticate(token: string): AuthenticatedSession | null {
@@ -419,6 +552,21 @@ export class OneStatusDatabase {
       expiresAt,
       token,
     };
+  }
+
+  listAgentIds(userId: string, now = new Date()): string[] {
+    return (
+      this.#database
+        .prepare(
+          `SELECT DISTINCT agent_id
+             FROM agent_credentials
+            WHERE user_id = ?
+              AND revoked_at IS NULL
+              AND expires_at > ?
+            ORDER BY agent_id`,
+        )
+        .all(userId, now.toISOString()) as Array<{ agent_id: string }>
+    ).map((row) => row.agent_id);
   }
 
   authenticateAgent(
@@ -611,59 +759,6 @@ export class OneStatusDatabase {
       )
       .run(denyNewDeviceLogins ? 1 : 0, userId);
     return { denyNewDeviceLogins };
-  }
-
-  async migrateWrappedStatusKey(
-    session: AuthenticatedSession,
-    password: string,
-    wrappedStatusKey: WrappedStatusKey,
-  ): Promise<StatusKeyMigrationResponse> {
-    const user = this.#database
-      .prepare("SELECT * FROM users WHERE id = ?")
-      .get(session.userId) as unknown as UserRow | undefined;
-    if (!user) throw new InvalidCredentialsError("Invalid email or password.");
-    const actualHash = await derivePasswordHash(
-      password,
-      Buffer.from(user.password_salt, "base64url"),
-    );
-    const expectedHash = Buffer.from(user.password_hash, "base64url");
-    if (!timingSafeEqual(actualHash, expectedHash)) {
-      throw new InvalidCredentialsError("Invalid email or password.");
-    }
-
-    if (user.wrapped_status_key) {
-      return {
-        migrated: false,
-        wrappedStatusKey: wrappedStatusKeySchema.parse(
-          JSON.parse(user.wrapped_status_key),
-        ),
-      };
-    }
-    if (session.statusKeyMigrationEligible !== true) {
-      throw new StatusKeyMigrationNotAllowedError(
-        "Status Key migration must be completed from a previously connected device.",
-      );
-    }
-
-    const serialized = JSON.stringify(wrappedStatusKey);
-    this.#database
-      .prepare(
-        `UPDATE users SET wrapped_status_key = ?
-          WHERE id = ? AND wrapped_status_key IS NULL`,
-      )
-      .run(serialized, session.userId);
-    const stored = this.#database
-      .prepare("SELECT wrapped_status_key FROM users WHERE id = ?")
-      .get(session.userId) as { wrapped_status_key: string | null };
-    if (!stored.wrapped_status_key) {
-      throw new Error("Status Key migration did not persist.");
-    }
-    return {
-      migrated: stored.wrapped_status_key === serialized,
-      wrappedStatusKey: wrappedStatusKeySchema.parse(
-        JSON.parse(stored.wrapped_status_key),
-      ),
-    };
   }
 
   getStatus(userId: string): StatusSnapshot {
@@ -892,13 +987,6 @@ function ensureColumn(
   }>;
   if (columns.some((entry) => entry.name === column)) return;
   database.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
-}
-
-async function derivePasswordHash(
-  password: string,
-  salt: Uint8Array,
-): Promise<Buffer> {
-  return (await scryptAsync(password, salt, PASSWORD_HASH_BYTES)) as Buffer;
 }
 
 function hashToken(token: string): string {

@@ -1,12 +1,19 @@
-import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import {
   decryptStatus,
   encryptStatus,
-  unwrapStatusKey,
-  wrapStatusKey,
+  unwrapStatusKeyWithOpaqueExportKey,
+  wrapStatusKeyWithOpaqueExportKey,
 } from "@one-status/crypto";
 import {
+  finishOpaqueLogin,
+  finishOpaqueRegistration,
+  startOpaqueLogin,
+  startOpaqueRegistration,
+} from "@one-status/pake";
+import {
   accountResponseSchema,
+  clientAuthInputSchema,
   authResponseSchema,
   createEmptyStatus,
   deviceBlockResponseSchema,
@@ -14,11 +21,14 @@ import {
   deviceLoginPolicySchema,
   deviceRevocationResponseSchema,
   deviceSessionRevocationResponseSchema,
+  opaqueLoginStartResponseSchema,
+  opaqueProofFinishResponseSchema,
+  opaqueRegistrationStartResponseSchema,
   parseStatusDocument,
   sessionRevocationResponseSchema,
   statusKeyMigrationResponseSchema,
   statusSnapshotSchema,
-  type AuthRequest,
+  type ClientAuthInput,
   type AuthResponse,
   type EncryptedEnvelope,
   type StatusDocument,
@@ -38,6 +48,10 @@ export type AuthenticatedDeviceSession = AuthResponse & {
 export interface StatusKeyMigrationCandidate {
   statusKey: Uint8Array;
   userId: string;
+}
+
+export interface StatusKeyMigrationOptions {
+  currentPassword?: string;
 }
 
 export class OneStatusApiError extends Error {
@@ -98,92 +112,189 @@ export class OneStatusClient {
   }
 
   async register(
-    input: AuthRequest,
+    input: ClientAuthInput,
     statusKey: Uint8Array,
   ): Promise<AuthenticatedDeviceSession> {
-    const wrappedStatusKey = await wrapStatusKey(statusKey, input.password);
-    const initialEnvelope = encryptStatus(createEmptyStatus(), statusKey, 1);
-    const session = authResponseSchema.parse(
-      await this.#request("/v1/auth/register", {
+    const auth = clientAuthInputSchema.parse(input);
+    const start = await startOpaqueRegistration(auth.password);
+    const challenge = opaqueRegistrationStartResponseSchema.parse(
+      await this.#request("/v1/auth/opaque/register/start", {
         method: "POST",
         body: JSON.stringify({
-          ...input,
+          email: auth.email,
+          registrationRequest: start.registrationRequest,
+        }),
+      }),
+    );
+    const registration = await finishOpaqueRegistration({
+      clientRegistrationState: start.clientRegistrationState,
+      password: auth.password,
+      profile: challenge.profile,
+      registrationResponse: challenge.registrationResponse,
+    });
+    assertOpaqueServerKey(
+      registration.serverStaticPublicKey,
+      challenge.serverPublicKey,
+    );
+    const wrappedStatusKey = wrapStatusKeyWithOpaqueExportKey(
+      statusKey,
+      registration.exportKey,
+      challenge.accountBinding,
+    );
+    const initialEnvelope = encryptStatus(createEmptyStatus(), statusKey, 1);
+    const session = authResponseSchema.parse(
+      await this.#request("/v1/auth/opaque/register/finish", {
+        method: "POST",
+        body: JSON.stringify({
+          deviceName: auth.deviceName,
+          flowId: challenge.flowId,
           initialEnvelope,
+          ...(auth.installationId
+            ? { installationId: auth.installationId }
+            : {}),
+          registrationRecord: registration.registrationRecord,
           wrappedStatusKey,
         }),
       }),
     );
+    if (session.userId !== challenge.accountBinding) {
+      throw new Error("OPAQUE registration account binding changed.");
+    }
     return { ...session, statusKey };
   }
 
   async login(
-    input: AuthRequest,
-    migrationCandidate?: StatusKeyMigrationCandidate,
+    input: ClientAuthInput,
+    _migrationCandidate?: StatusKeyMigrationCandidate,
   ): Promise<AuthenticatedDeviceSession> {
-    const session = authResponseSchema.parse(
-      await this.#request("/v1/auth/login", {
+    const auth = clientAuthInputSchema.parse(input);
+    const start = await startOpaqueLogin(auth.password);
+    const challenge = opaqueLoginStartResponseSchema.parse(
+      await this.#request("/v1/auth/opaque/login/start", {
         method: "POST",
-        body: JSON.stringify(input),
+        body: JSON.stringify({
+          email: auth.email,
+          startLoginRequest: start.startLoginRequest,
+        }),
       }),
     );
-    const authenticated = this.#authenticated(session.token);
+    const login = await finishOpaqueLogin({
+      clientLoginState: start.clientLoginState,
+      loginResponse: challenge.loginResponse,
+      password: auth.password,
+      profile: challenge.profile,
+    });
+    if (!login) throw invalidOpaqueCredentialsError();
+    assertOpaqueServerKey(login.serverStaticPublicKey, challenge.serverPublicKey);
+    const session = authResponseSchema.parse(
+      await this.#request("/v1/auth/opaque/login/finish", {
+        method: "POST",
+        body: JSON.stringify({
+          deviceName: auth.deviceName,
+          finishLoginRequest: login.finishLoginRequest,
+          flowId: challenge.flowId,
+          ...(auth.installationId
+            ? { installationId: auth.installationId }
+            : {}),
+        }),
+      }),
+    );
     if (!session.wrappedStatusKey) {
-      try {
-        if (
-          !migrationCandidate ||
-          migrationCandidate.userId !== session.userId
-        ) {
-          throw statusKeyMigrationRequiredError();
-        }
-        await authenticated.createVault(migrationCandidate.statusKey).read();
-        const migration = await authenticated.migrateStatusKey(
-          input.password,
-          migrationCandidate.statusKey,
-        );
-        const storedStatusKey = await unwrapStatusKey(
-          migration.wrappedStatusKey,
-          input.password,
-        );
-        if (!sameStatusKey(storedStatusKey, migrationCandidate.statusKey)) {
-          throw new Error(
-            "The migrated Status Key does not match this device's local key.",
-          );
-        }
-        return {
-          ...session,
-          wrappedStatusKey: migration.wrappedStatusKey,
-          statusKey: migrationCandidate.statusKey,
-        };
-      } catch (error) {
-        await authenticated.logout().catch(() => undefined);
-        throw error;
-      }
+      throw statusKeyMigrationRequiredError();
     }
     try {
       return {
         ...session,
-        statusKey: await unwrapStatusKey(
+        statusKey: unwrapStatusKeyWithOpaqueExportKey(
           session.wrappedStatusKey,
-          input.password,
+          login.exportKey,
+          session.userId,
         ),
       };
     } catch (error) {
-      await authenticated.logout().catch(() => undefined);
+      await this.#authenticated(session.token).logout().catch(() => undefined);
       throw error;
     }
   }
 
-  async migrateStatusKey(password: string, statusKey: Uint8Array) {
+  async migrateStatusKey(
+    nextPassword: string,
+    statusKey: Uint8Array,
+    options: StatusKeyMigrationOptions = {},
+  ) {
     if (!this.#token) {
       throw new Error("A device session token is required to migrate a Status Key.");
     }
-    const wrappedStatusKey = await wrapStatusKey(statusKey, password);
-    return statusKeyMigrationResponseSchema.parse(
-      await this.#request("/v1/account/wrapped-status-key", {
-        method: "PUT",
-        body: JSON.stringify({ password, wrappedStatusKey }),
+    const accountProof = options.currentPassword
+      ? await this.#createAccountPasswordProof(options.currentPassword)
+      : undefined;
+    const start = await startOpaqueRegistration(nextPassword);
+    const challenge = opaqueRegistrationStartResponseSchema.parse(
+      await this.#request("/v1/account/opaque/register/start", {
+        method: "POST",
+        body: JSON.stringify({
+          ...(accountProof ? { accountProof } : {}),
+          registrationRequest: start.registrationRequest,
+        }),
       }),
     );
+    const registration = await finishOpaqueRegistration({
+      clientRegistrationState: start.clientRegistrationState,
+      password: nextPassword,
+      profile: challenge.profile,
+      registrationResponse: challenge.registrationResponse,
+    });
+    assertOpaqueServerKey(
+      registration.serverStaticPublicKey,
+      challenge.serverPublicKey,
+    );
+    const wrappedStatusKey = wrapStatusKeyWithOpaqueExportKey(
+      statusKey,
+      registration.exportKey,
+      challenge.accountBinding,
+    );
+    return statusKeyMigrationResponseSchema.parse(
+      await this.#request("/v1/account/opaque/register/finish", {
+        method: "PUT",
+        body: JSON.stringify({
+          flowId: challenge.flowId,
+          registrationRecord: registration.registrationRecord,
+          wrappedStatusKey,
+        }),
+      }),
+    );
+  }
+
+  async #createAccountPasswordProof(password: string): Promise<string> {
+    const account = await this.getAccount();
+    const start = await startOpaqueLogin(password);
+    const challenge = opaqueLoginStartResponseSchema.parse(
+      await this.#request("/v1/auth/opaque/proof/start", {
+        method: "POST",
+        body: JSON.stringify({
+          email: account.user.email,
+          purpose: "account-password-change",
+          startLoginRequest: start.startLoginRequest,
+        }),
+      }),
+    );
+    const login = await finishOpaqueLogin({
+      clientLoginState: start.clientLoginState,
+      loginResponse: challenge.loginResponse,
+      password,
+      profile: challenge.profile,
+    });
+    if (!login) throw invalidOpaqueCredentialsError();
+    assertOpaqueServerKey(login.serverStaticPublicKey, challenge.serverPublicKey);
+    return opaqueProofFinishResponseSchema.parse(
+      await this.#request("/v1/auth/opaque/proof/finish", {
+        method: "POST",
+        body: JSON.stringify({
+          finishLoginRequest: login.finishLoginRequest,
+          flowId: challenge.flowId,
+        }),
+      }),
+    ).proofToken;
   }
 
   async getStatusSnapshot() {
@@ -464,11 +575,19 @@ function statusKeyMigrationRequiredError(): OneStatusApiError {
   );
 }
 
-function sameStatusKey(left: Uint8Array, right: Uint8Array): boolean {
-  return (
-    left.byteLength === right.byteLength &&
-    timingSafeEqual(Buffer.from(left), Buffer.from(right))
+function invalidOpaqueCredentialsError(): OneStatusApiError {
+  return new OneStatusApiError(
+    "Invalid email or password.",
+    401,
+    "invalid_credentials",
+    null,
   );
+}
+
+function assertOpaqueServerKey(actual: string, expected: string): void {
+  if (actual !== expected) {
+    throw new Error("OPAQUE server identity verification failed.");
+  }
 }
 
 function isTransportError(error: unknown): boolean {

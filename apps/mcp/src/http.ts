@@ -7,12 +7,21 @@ import {
 } from "node:http";
 import type { AddressInfo } from "node:net";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { OAuthTokenVerifier } from "@modelcontextprotocol/sdk/server/auth/provider.js";
+import type { AuthInfo } from "@modelcontextprotocol/sdk/server/auth/types.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { ONE_STATUS_VERSION } from "@one-status/protocol";
 import type { McpRuntimeConfig } from "./config.js";
 import { loadMcpRuntimeConfig } from "./config.js";
 import { createMcpServer, type Vault } from "./server.js";
+import {
+  createRemoteMcpServer,
+  hasRemoteScope,
+  remoteMcpScopes,
+  type RemoteMcpAgentSession,
+  type RemoteMcpStatusReader,
+} from "./remote-server.js";
 import {
   createReloadingRuntimeToolGateway,
   createRuntimeToolGateway,
@@ -26,11 +35,40 @@ import {
 const DEFAULT_BODY_LIMIT = 1024 * 1024;
 const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60 * 1_000;
 const DEFAULT_MAX_SESSIONS = 100;
+const DEFAULT_MAX_SESSIONS_PER_PRINCIPAL = 5;
+const HTTP_REMOTE_SUPPORTED_SCOPES = [
+  remoteMcpScopes.all,
+  remoteMcpScopes.profile,
+  remoteMcpScopes.context,
+  remoteMcpScopes.memory,
+] as const;
 
 interface SessionEntry {
+  grantedScopes: string[];
   lastSeenAt: number;
   mcp: McpServer;
+  principalId: string;
   transport: StreamableHTTPServerTransport;
+}
+
+export interface RemoteMcpOAuthOptions {
+  /** RFC 9728 authorization server identifiers advertised to MCP clients. */
+  authorizationServers: string[];
+  /**
+   * Maps verified token claims to one stable One Status Agent session. The
+   * resulting subject is passed to resolveStatusReader.
+   */
+  resolveAgentSession(authInfo: AuthInfo):
+    | { agentId: string; subject: string }
+    | Promise<{ agentId: string; subject: string }>;
+  /** Resolves only the authenticated subject's read-only Status data source. */
+  resolveStatusReader(
+    session: RemoteMcpAgentSession,
+  ): RemoteMcpStatusReader | Promise<RemoteMcpStatusReader>;
+  /** RFC 8707 resource identifier; defaults to publicUrl. */
+  resource?: string;
+  /** Validates signature, audience, revocation, expiry, client, and scopes. */
+  verifier: OAuthTokenVerifier;
 }
 
 export interface HttpMcpServerOptions {
@@ -40,6 +78,8 @@ export interface HttpMcpServerOptions {
   host?: string;
   idleTimeoutMs?: number;
   maxSessions?: number;
+  maxSessionsPerPrincipal?: number;
+  oauth?: RemoteMcpOAuthOptions;
   port?: number;
   publicUrl?: string;
   upstreamToken?: string;
@@ -86,14 +126,34 @@ export async function startHttpMcpServer(
   const host = options.host ?? "127.0.0.1";
   const endpoint = normalizeEndpoint(options.endpoint ?? "/mcp");
   const bearerToken = options.bearerToken;
+  const oauth = normalizeRemoteOAuth(options.oauth, options.publicUrl);
+  if (bearerToken && oauth) {
+    throw new Error("Remote MCP OAuth and a static bearer cannot be enabled together.");
+  }
   validateBearerToken(bearerToken, options.upstreamToken);
-  if (!isLoopbackHost(host) && !bearerToken) {
+  if (!isLoopbackHost(host) && !bearerToken && !oauth) {
     throw new Error(
-      "ONE_STATUS_MCP_BEARER_TOKEN is required when HTTP MCP binds beyond loopback.",
+      "Remote MCP OAuth or ONE_STATUS_MCP_BEARER_TOKEN is required when HTTP MCP binds beyond loopback.",
     );
   }
   const sessions = new Map<string, SessionEntry>();
   const maxSessions = options.maxSessions ?? DEFAULT_MAX_SESSIONS;
+  const maxSessionsPerPrincipal =
+    options.maxSessionsPerPrincipal ?? DEFAULT_MAX_SESSIONS_PER_PRINCIPAL;
+  if (!Number.isSafeInteger(maxSessions) || maxSessions <= 0) {
+    throw new Error("HTTP MCP maxSessions must be a positive integer.");
+  }
+  if (
+    !Number.isSafeInteger(maxSessionsPerPrincipal) ||
+    maxSessionsPerPrincipal <= 0 ||
+    maxSessionsPerPrincipal > maxSessions
+  ) {
+    throw new Error(
+      "HTTP MCP maxSessionsPerPrincipal must be a positive integer no larger than maxSessions.",
+    );
+  }
+  let pendingSessions = 0;
+  const pendingSessionsByPrincipal = new Map<string, number>();
   const idleTimeoutMs = options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
   const bodyLimit = options.bodyLimit ?? DEFAULT_BODY_LIMIT;
 
@@ -107,11 +167,26 @@ export async function startHttpMcpServer(
 
   const nodeServer = createNodeServer(async (request, response) => {
     try {
-      if (!bearerToken && !isTrustedLoopbackRequest(request)) {
+      if (!bearerToken && !oauth && !isTrustedLoopbackRequest(request)) {
         sendJson(response, 403, { error: "forbidden_host" });
         return;
       }
       const url = new URL(request.url ?? "/", "http://one-status.local");
+      if (oauth && isProtectedResourceMetadataPath(url.pathname, oauth)) {
+        setRemoteCorsHeaders(response);
+        if (request.method === "OPTIONS") {
+          response.writeHead(204);
+          response.end();
+          return;
+        }
+        if (request.method !== "GET") {
+          response.setHeader("allow", "GET, OPTIONS");
+          sendJson(response, 405, { error: "method_not_allowed" });
+          return;
+        }
+        sendJson(response, 200, oauth.metadata);
+        return;
+      }
       if (request.method === "GET" && url.pathname === "/health") {
         sendJson(response, 200, {
           service: "one-status-mcp",
@@ -122,13 +197,26 @@ export async function startHttpMcpServer(
         return;
       }
       if (request.method === "GET" && url.pathname === "/ready") {
-        if (!isAuthorized(request, bearerToken)) {
-          response.setHeader("www-authenticate", 'Bearer realm="one-status-mcp"');
-          sendJson(response, 401, { error: "unauthorized" });
+        const authorization = await authorizeRequest(
+          request,
+          agentId,
+          bearerToken,
+          oauth,
+        );
+        if (!authorization.ok) {
+          sendAuthorizationError(response, authorization, oauth);
           return;
         }
         try {
-          await vault.read();
+          if (authorization.remoteSession) {
+            const statusReader = await resolveRemoteStatusReader(
+              oauth,
+              authorization.remoteSession,
+            );
+            await statusReader.read({ view: "profile" });
+          } else {
+            await vault.read();
+          }
           sendJson(response, 200, {
             service: "one-status-mcp",
             status: "ready",
@@ -143,6 +231,9 @@ export async function startHttpMcpServer(
       }
       if (request.method === "GET" && url.pathname === "/") {
         sendJson(response, 200, {
+          ...(oauth
+            ? { resourceMetadata: oauth.resourceMetadataUrl }
+            : {}),
           endpoint,
           name: "One Status MCP",
           transport: "streamable-http",
@@ -154,25 +245,82 @@ export async function startHttpMcpServer(
         sendJson(response, 404, { error: "not_found" });
         return;
       }
-      if (!isAuthorized(request, bearerToken)) {
-        response.setHeader("www-authenticate", 'Bearer realm="one-status-mcp"');
-        sendJson(response, 401, { error: "unauthorized" });
+      if (oauth) setRemoteCorsHeaders(response);
+      if (request.method === "OPTIONS" && oauth) {
+        response.writeHead(204);
+        response.end();
+        return;
+      }
+      const authorization = await authorizeRequest(
+        request,
+        agentId,
+        bearerToken,
+        oauth,
+      );
+      if (!authorization.ok) {
+        sendAuthorizationError(response, authorization, oauth);
         return;
       }
 
       const sessionId = readHeader(request, "mcp-session-id");
       let entry = sessionId ? sessions.get(sessionId) : undefined;
+      if (entry && entry.principalId !== authorization.principalId) {
+        sendJson(response, 404, { error: "unknown_session" });
+        return;
+      }
+      if (
+        entry &&
+        !entry.grantedScopes.every((scope) =>
+          hasRemoteScope(authorization.scopes, scope),
+        )
+      ) {
+        sendAuthorizationError(
+          response,
+          { ok: false, status: 403, error: "insufficient_scope" },
+          oauth,
+          entry.grantedScopes,
+        );
+        return;
+      }
       let body: unknown;
       if (request.method === "POST") {
         body = await readJsonBody(request, bodyLimit);
       }
 
       if (!entry && !sessionId && body && isInitializeRequest(body)) {
-        if (sessions.size >= maxSessions) {
+        const principalSessions = [...sessions.values()].filter(
+          (session) => session.principalId === authorization.principalId,
+        ).length;
+        const principalPending =
+          pendingSessionsByPrincipal.get(authorization.principalId) ?? 0;
+        if (
+          sessions.size + pendingSessions >= maxSessions ||
+          principalSessions + principalPending >= maxSessionsPerPrincipal
+        ) {
           sendJson(response, 503, { error: "session_limit_reached" });
           return;
         }
-        entry = await createSession(vault, agentId, sessions, toolGateway);
+        pendingSessions += 1;
+        pendingSessionsByPrincipal.set(
+          authorization.principalId,
+          principalPending + 1,
+        );
+        try {
+          entry = await createSession(
+            vault,
+            agentId,
+            sessions,
+            authorization,
+            oauth,
+            toolGateway,
+          );
+        } finally {
+          pendingSessions -= 1;
+          releasePendingSession(
+            pendingSessionsByPrincipal,
+            authorization.principalId,
+          );
+        }
       }
 
       if (!entry) {
@@ -183,13 +331,21 @@ export async function startHttpMcpServer(
       }
 
       entry.lastSeenAt = Date.now();
+      if (authorization.authInfo) {
+        (request as IncomingMessage & { auth?: AuthInfo }).auth =
+          authorization.authInfo;
+      }
       await entry.transport.handleRequest(request, response, body);
     } catch (error) {
       if (!response.headersSent) {
-        const status = error instanceof RequestBodyTooLargeError ? 413 : 400;
-        sendJson(response, status, {
-          error: error instanceof Error ? error.message : String(error),
-        });
+        if (error instanceof RemoteStatusReaderUnavailableError) {
+          sendJson(response, 503, { error: "status_reader_unavailable" });
+        } else {
+          const status = error instanceof RequestBodyTooLargeError ? 413 : 400;
+          sendJson(response, status, {
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
       } else {
         response.end();
       }
@@ -222,13 +378,29 @@ export async function startHttpMcpServer(
   };
 }
 
+function releasePendingSession(
+  pending: Map<string, number>,
+  principalId: string,
+): void {
+  const count = pending.get(principalId) ?? 0;
+  if (count <= 1) pending.delete(principalId);
+  else pending.set(principalId, count - 1);
+}
+
 async function createSession(
   vault: Vault,
   agentId: string,
   sessions: Map<string, SessionEntry>,
+  authorization: AuthorizedRequest,
+  oauth: NormalizedRemoteOAuth | undefined,
   toolGateway?: RuntimeToolGateway,
 ): Promise<SessionEntry> {
-  const mcp = createMcpServer(vault, agentId, toolGateway);
+  const mcp = authorization.remoteSession
+    ? createRemoteMcpServer(
+        await resolveRemoteStatusReader(oauth, authorization.remoteSession),
+        authorization.remoteSession,
+      )
+    : createMcpServer(vault, agentId, toolGateway);
   let entry: SessionEntry;
   const transport = new StreamableHTTPServerTransport({
     onsessionclosed: (sessionId) => {
@@ -241,9 +413,285 @@ async function createSession(
     },
     sessionIdGenerator: randomUUID,
   });
-  entry = { lastSeenAt: Date.now(), mcp, transport };
+  entry = {
+    grantedScopes: authorization.remoteSession?.scopes ?? [],
+    lastSeenAt: Date.now(),
+    mcp,
+    principalId: authorization.principalId,
+    transport,
+  };
   await mcp.connect(transport);
   return entry;
+}
+
+interface AuthorizedRequest {
+  authInfo?: AuthInfo;
+  ok: true;
+  principalId: string;
+  remoteSession?: RemoteMcpAgentSession;
+  scopes: string[];
+}
+
+interface AuthorizationError {
+  error: "insufficient_scope" | "invalid_token" | "unauthorized";
+  ok: false;
+  status: 401 | 403;
+}
+
+interface NormalizedRemoteOAuth {
+  authorizationServers: string[];
+  metadata: {
+    authorization_servers: string[];
+    bearer_methods_supported: ["header"];
+    resource: string;
+    resource_name: string;
+    scopes_supported: string[];
+  };
+  resolveAgentSession: RemoteMcpOAuthOptions["resolveAgentSession"];
+  resolveStatusReader: RemoteMcpOAuthOptions["resolveStatusReader"];
+  resource: URL;
+  resourceMetadataUrl: string;
+  supportedScopes: string[];
+  verifier: OAuthTokenVerifier;
+}
+
+async function authorizeRequest(
+  request: IncomingMessage,
+  localAgentId: string,
+  bearerToken: string | undefined,
+  oauth: NormalizedRemoteOAuth | undefined,
+): Promise<AuthorizedRequest | AuthorizationError> {
+  if (!oauth) {
+    if (!isAuthorized(request, bearerToken)) {
+      return { ok: false, status: 401, error: "unauthorized" };
+    }
+    return {
+      ok: true,
+      principalId: `local:${localAgentId}`,
+      scopes: [],
+    };
+  }
+
+  const token = readBearerToken(request);
+  if (!token) return { ok: false, status: 401, error: "invalid_token" };
+  try {
+    const authInfo = await oauth.verifier.verifyAccessToken(token);
+    if (!validAuthInfo(authInfo, oauth.resource)) {
+      return { ok: false, status: 401, error: "invalid_token" };
+    }
+    const clientId = requiredIdentity(authInfo.clientId);
+    const identity = await oauth.resolveAgentSession(authInfo);
+    const agentId = requiredIdentity(identity.agentId);
+    const subject = requiredIdentity(identity.subject);
+    const scopes = [...new Set(authInfo.scopes)].filter((scope) =>
+      oauth.supportedScopes.includes(scope),
+    );
+    if (scopes.length === 0) {
+      return { ok: false, status: 403, error: "insufficient_scope" };
+    }
+    return {
+      authInfo: { ...authInfo, token },
+      ok: true,
+      principalId: remotePrincipalId(subject, clientId, agentId),
+      remoteSession: {
+        agentId,
+        clientId,
+        scopes,
+        subject,
+      },
+      scopes,
+    };
+  } catch {
+    return { ok: false, status: 401, error: "invalid_token" };
+  }
+}
+
+function normalizeRemoteOAuth(
+  oauth: RemoteMcpOAuthOptions | undefined,
+  publicUrl: string | undefined,
+): NormalizedRemoteOAuth | undefined {
+  if (!oauth) return undefined;
+  const resource = secureRemoteUrl(oauth.resource ?? publicUrl, "OAuth resource");
+  if (
+    oauth.resource &&
+    publicUrl &&
+    normalizedResource(new URL(oauth.resource)) !==
+      normalizedResource(new URL(publicUrl))
+  ) {
+    throw new Error("OAuth resource and public MCP URL must match.");
+  }
+  if (resource.username || resource.password || resource.search || resource.hash) {
+    throw new Error("OAuth resource URL cannot contain credentials, query, or hash.");
+  }
+  if (oauth.authorizationServers.length === 0) {
+    throw new Error("Remote MCP OAuth requires an authorization server.");
+  }
+  const authorizationServers = oauth.authorizationServers.map((value) => {
+    const url = secureRemoteUrl(value, "OAuth authorization server");
+    if (url.username || url.password || url.search || url.hash) {
+      throw new Error(
+        "OAuth authorization server URL cannot contain credentials, query, or hash.",
+      );
+    }
+    return url.toString().replace(/\/$/, "");
+  });
+  const resourceMetadataUrl = protectedResourceMetadataUrl(resource);
+  return {
+    authorizationServers,
+    metadata: {
+      authorization_servers: authorizationServers,
+      bearer_methods_supported: ["header"],
+      resource: resource.toString(),
+      resource_name: "One Status Remote MCP",
+      scopes_supported: [...HTTP_REMOTE_SUPPORTED_SCOPES],
+    },
+    resolveAgentSession: oauth.resolveAgentSession,
+    resolveStatusReader: oauth.resolveStatusReader,
+    resource,
+    resourceMetadataUrl,
+    supportedScopes: [...HTTP_REMOTE_SUPPORTED_SCOPES],
+    verifier: oauth.verifier,
+  };
+}
+
+async function resolveRemoteStatusReader(
+  oauth: NormalizedRemoteOAuth | undefined,
+  session: RemoteMcpAgentSession,
+): Promise<RemoteMcpStatusReader> {
+  if (!oauth) throw new RemoteStatusReaderUnavailableError();
+  try {
+    const reader = await oauth.resolveStatusReader(session);
+    if (!reader || typeof reader.read !== "function") {
+      throw new Error("invalid Status reader");
+    }
+    return {
+      async read(request) {
+        try {
+          return await reader.read(request);
+        } catch {
+          throw new Error("Remote status is unavailable.");
+        }
+      },
+    };
+  } catch {
+    throw new RemoteStatusReaderUnavailableError();
+  }
+}
+
+class RemoteStatusReaderUnavailableError extends Error {
+  constructor() {
+    super("status_reader_unavailable");
+    this.name = "RemoteStatusReaderUnavailableError";
+  }
+}
+
+function validAuthInfo(authInfo: AuthInfo, resource: URL): boolean {
+  return Boolean(
+    authInfo &&
+      typeof authInfo.clientId === "string" &&
+      authInfo.clientId.length > 0 &&
+      Array.isArray(authInfo.scopes) &&
+      typeof authInfo.expiresAt === "number" &&
+      Number.isFinite(authInfo.expiresAt) &&
+      authInfo.expiresAt > Date.now() / 1_000 &&
+      authInfo.resource &&
+      normalizedResource(authInfo.resource) === normalizedResource(resource),
+  );
+}
+
+function secureRemoteUrl(value: string | undefined, label: string): URL {
+  if (!value) throw new Error(`${label} URL is required.`);
+  const url = new URL(value);
+  if (url.protocol !== "https:" && !isLoopbackHostname(url.hostname)) {
+    throw new Error(`${label} URL requires HTTPS outside loopback.`);
+  }
+  return url;
+}
+
+function normalizedResource(resource: URL): string {
+  const normalized = new URL(resource);
+  normalized.hash = "";
+  return normalized.toString();
+}
+
+function protectedResourceMetadataUrl(resource: URL): string {
+  const path = resource.pathname === "/"
+    ? ""
+    : resource.pathname.replace(/\/$/, "");
+  return new URL(
+    `/.well-known/oauth-protected-resource${path}`,
+    resource.origin,
+  ).toString();
+}
+
+function isProtectedResourceMetadataPath(
+  pathname: string,
+  oauth: NormalizedRemoteOAuth,
+): boolean {
+  return pathname === new URL(oauth.resourceMetadataUrl).pathname ||
+    pathname === "/.well-known/oauth-protected-resource";
+}
+
+function requiredIdentity(value: string): string {
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length > 500 ||
+    value !== value.trim() ||
+    /[\u0000-\u001f\u007f]/.test(value)
+  ) {
+    throw new Error("Remote MCP Agent identity is invalid.");
+  }
+  return value;
+}
+
+function remotePrincipalId(
+  subject: string,
+  clientId: string,
+  agentId: string,
+): string {
+  return JSON.stringify([subject, clientId, agentId]);
+}
+
+function readBearerToken(request: IncomingMessage): string | undefined {
+  const authorization = readHeader(request, "authorization");
+  if (!authorization) return undefined;
+  const match = /^Bearer ([^\s\u0000-\u001f\u007f]+)$/i.exec(authorization);
+  return match?.[1];
+}
+
+function sendAuthorizationError(
+  response: ServerResponse,
+  error: AuthorizationError,
+  oauth: NormalizedRemoteOAuth | undefined,
+  requiredScopes: readonly string[] = [remoteMcpScopes.all],
+): void {
+  if (!oauth) {
+    response.setHeader("www-authenticate", 'Bearer realm="one-status-mcp"');
+    sendJson(response, error.status, { error: error.error });
+    return;
+  }
+  const values = [
+    'Bearer realm="one-status-remote-mcp"',
+    `error="${error.error}"`,
+    `resource_metadata="${oauth.resourceMetadataUrl}"`,
+    `scope="${requiredScopes.join(" ")}"`,
+  ];
+  response.setHeader("www-authenticate", values.join(", "));
+  sendJson(response, error.status, { error: error.error });
+}
+
+function setRemoteCorsHeaders(response: ServerResponse): void {
+  response.setHeader("access-control-allow-origin", "*");
+  response.setHeader(
+    "access-control-allow-headers",
+    "Authorization, Content-Type, MCP-Protocol-Version, MCP-Session-Id, Last-Event-ID",
+  );
+  response.setHeader("access-control-allow-methods", "GET, POST, DELETE, OPTIONS");
+  response.setHeader(
+    "access-control-expose-headers",
+    "MCP-Session-Id, WWW-Authenticate",
+  );
 }
 
 function isAuthorized(

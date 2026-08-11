@@ -34,7 +34,7 @@ describe("synced status client", () => {
     await rm(directory, { recursive: true, force: true });
   });
 
-  it("refuses registration when an older cloud cannot store the wrapped key", async () => {
+  it("refuses registration when a cloud does not support OPAQUE", async () => {
     const fetch_ = vi
       .fn<typeof fetch>()
       .mockResolvedValue(new Response(JSON.stringify({
@@ -43,9 +43,9 @@ describe("synced status client", () => {
           message: "Request validation failed.",
           details: [{
             code: "unrecognized_keys",
-            keys: ["wrappedStatusKey"],
+            keys: ["registrationRequest"],
             path: [],
-            message: 'Unrecognized key: "wrappedStatusKey"',
+            message: 'Unrecognized key: "registrationRequest"',
           }],
         },
       }), { status: 400, headers: { "content-type": "application/json" } }));
@@ -65,82 +65,52 @@ describe("synced status client", () => {
       ),
     ).rejects.toMatchObject({ code: "invalid_request", status: 400 });
     expect(fetch_).toHaveBeenCalledTimes(1);
-    expect(JSON.parse(String(fetch_.mock.calls[0]?.[1]?.body)))
-      .toHaveProperty("wrappedStatusKey");
+    const request = JSON.parse(String(fetch_.mock.calls[0]?.[1]?.body));
+    expect(request).toHaveProperty("registrationRequest");
+    expect(request).not.toHaveProperty("password");
+    expect(request).not.toHaveProperty("wrappedStatusKey");
   });
 
-  it("migrates a legacy account from its previously connected device", async () => {
+  it("re-registers an account password and rewraps the Status Key", async () => {
     const key = generateStatusKey();
-    const installationId = "4a1ae744-7102-46fe-a10f-3330f6dbe902";
-    const registration = await app.inject({
-      method: "POST",
-      url: "/v1/auth/register",
-      payload: {
-        deviceName: "Legacy Mac",
-        email: "legacy-migration@example.test",
-        initialEnvelope: encryptStatus(createEmptyStatus(), key, 1),
-        installationId,
-        password: "legacy migration password",
-      },
-    });
-    const legacy = registration.json();
     const client = new OneStatusClient({ baseUrl });
-    const migrated = await client.login(
+    const registered = await client.register(
       {
-        deviceName: "Legacy Mac",
-        email: "legacy-migration@example.test",
-        installationId,
-        password: "legacy migration password",
+        deviceName: "Original Mac",
+        email: "password-change@example.test",
+        password: "original account password",
       },
-      { statusKey: key, userId: legacy.userId },
+      key,
     );
-    expect(migrated.wrappedStatusKey).not.toBeNull();
-    expect(Buffer.from(migrated.statusKey)).toEqual(Buffer.from(key));
-
+    const requestBodies: string[] = [];
+    const trackingFetch: typeof fetch = async (input, init) => {
+      if (init?.body) requestBodies.push(String(init.body));
+      return fetch(input, init);
+    };
+    const migrated = await new OneStatusClient({
+      baseUrl,
+      fetch: trackingFetch,
+      token: registered.token,
+    }).migrateStatusKey("replacement account password", key, {
+      currentPassword: "original account password",
+    });
+    expect(migrated).toMatchObject({ migrated: true, wrappedStatusKey: { version: 2 } });
+    expect(JSON.stringify(requestBodies)).not.toContain("original account password");
+    expect(JSON.stringify(requestBodies)).not.toContain("replacement account password");
+    expect(requestBodies.some((body) => body.includes('"accountProof":"osp1_'))).toBe(true);
     const nextDevice = await client.login({
       deviceName: "New Mac",
-      email: "legacy-migration@example.test",
-      password: "legacy migration password",
+      email: "password-change@example.test",
+      password: "replacement account password",
     });
     expect(Buffer.from(nextDevice.statusKey)).toEqual(Buffer.from(key));
   });
 
-  it("revokes the new session when legacy migration requires an old device", async () => {
-    const key = generateStatusKey();
-    await app.inject({
-      method: "POST",
-      url: "/v1/auth/register",
-      payload: {
-        deviceName: "Legacy Mac",
-        email: "legacy-required@example.test",
-        initialEnvelope: encryptStatus(createEmptyStatus(), key, 1),
-        password: "legacy required password",
-      },
-    });
-    let issuedToken = "";
-    const trackingFetch: typeof fetch = async (input, init) => {
-      const response = await fetch(input, init);
-      if (String(input).endsWith("/v1/auth/login")) {
-        issuedToken = String((await response.clone().json()).token ?? "");
-      }
-      return response;
-    };
-    const client = new OneStatusClient({ baseUrl, fetch: trackingFetch });
+  it("requires an authenticated device session for Status Key rewrapping", async () => {
+    const client = new OneStatusClient({ baseUrl });
     await expect(
-      client.login({
-        deviceName: "New Mac",
-        email: "legacy-required@example.test",
-        password: "legacy required password",
-      }),
-    ).rejects.toMatchObject({
-      code: "status_key_migration_required",
-      message: expect.stringContaining("previously connected device"),
-    });
-    expect(issuedToken).not.toBe("");
-    const revoked = await fetch(`${baseUrl}/v1/status`, {
-      headers: { authorization: `Bearer ${issuedToken}` },
-    });
-    expect(revoked.status).toBe(401);
+      client.migrateStatusKey("replacement account password", generateStatusKey()),
+    ).rejects.toThrow("device session token is required");
   });
 
   it("revokes the new session when the wrapped key cannot be decrypted", async () => {
@@ -164,7 +134,7 @@ describe("synced status client", () => {
     let issuedToken = "";
     const trackingFetch: typeof fetch = async (input, init) => {
       const response = await fetch(input, init);
-      if (String(input).endsWith("/v1/auth/login")) {
+      if (String(input).endsWith("/v1/auth/opaque/login/finish")) {
         issuedToken = String((await response.clone().json()).token ?? "");
       }
       return response;
@@ -413,8 +383,11 @@ describe("synced status client", () => {
       deviceName: "First device",
     };
     const lossyRegisterFetch: typeof fetch = async (input, init) => {
-      await fetch(input, init);
-      throw new TypeError("simulated registration response loss");
+      const response = await fetch(input, init);
+      if (String(input).endsWith("/v1/auth/opaque/register/finish")) {
+        throw new TypeError("simulated registration response loss");
+      }
+      return response;
     };
     const lossyClient = new OneStatusClient({
       baseUrl,

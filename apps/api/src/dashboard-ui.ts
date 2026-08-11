@@ -644,6 +644,7 @@ function dashboardClient(): void {
   type Snapshot = any;
   const cursorConfigurationNotice =
     "需要 One Status Cursor 扩展，当前版本暂不可配置";
+  const initialWalletPassword = "123456";
   const icons = (window as unknown as { __ONE_STATUS_ICONS__: Record<string, string> })
     .__ONE_STATUS_ICONS__;
   const csrf = document
@@ -669,6 +670,7 @@ function dashboardClient(): void {
   let pendingCapabilityInstall: any;
   let pendingModelConfiguration: any;
   let transientRevealedSecrets: Record<string, string> | undefined;
+  let opaqueModulePromise: Promise<any> | undefined;
   let memoryView: "records" | "profile" | "events" | "policy" = "records";
   let toastTimer: number | undefined;
 
@@ -831,6 +833,27 @@ function dashboardClient(): void {
       }
       if (action === "change-wallet-password") {
         return openWalletPasswordChangeModal();
+      }
+      if (action === "recover-wallet-password") {
+        return openWalletPasswordRecoveryModal();
+      }
+      if (action === "decide-cloud-vault-approval") {
+        const decision = target.dataset.decision === "approve" ? "approve" : "deny";
+        const restore = setButtonBusy(
+          target as HTMLButtonElement,
+          decision === "approve" ? "正在批准" : "正在拒绝",
+        );
+        try {
+          await api(
+            `/v1/dashboard/cloud-vault-approvals/${encodeURIComponent(target.dataset.id || "")}`,
+            { method: "PATCH", body: { decision } },
+          );
+          await load(false);
+          toast(decision === "approve" ? "凭据操作已批准" : "凭据操作已拒绝");
+        } finally {
+          restore();
+        }
+        return;
       }
       if (action === "set-memory-view") {
         memoryView = (target.dataset.view || "records") as typeof memoryView;
@@ -1107,13 +1130,35 @@ function dashboardClient(): void {
     setBusy(form, true);
     try {
       if (form.dataset.form === "onboarding-register") {
-        await api("/v1/dashboard/onboarding/register", {
+        const password = stringValue(data, "password");
+        const opaque = await opaqueClient();
+        const started = opaque.client.startRegistration({ password });
+        const challenge = await api("/v1/dashboard/onboarding/register/start", {
           method: "POST",
           body: {
             deviceName: stringValue(data, "deviceName"),
             email: stringValue(data, "email"),
-            password: stringValue(data, "password"),
+            registrationRequest: started.registrationRequest,
             serverUrl: stringValue(data, "serverUrl"),
+          },
+        });
+        const finished = opaque.client.finishRegistration({
+          clientRegistrationState: started.clientRegistrationState,
+          keyStretching: challenge.profile.keyStretching,
+          password,
+          registrationResponse: challenge.registrationResponse,
+        });
+        if (finished.serverStaticPublicKey !== challenge.serverPublicKey) {
+          throw new Error("One Status OPAQUE 服务身份校验失败。");
+        }
+        clearPasswordFields(form);
+        await api("/v1/dashboard/onboarding/register/finish", {
+          method: "POST",
+          body: {
+            exportKey: finished.exportKey,
+            flowId: challenge.flowId,
+            registrationRecord: finished.registrationRecord,
+            serverStaticPublicKey: finished.serverStaticPublicKey,
           },
         });
         await load(false);
@@ -1121,13 +1166,36 @@ function dashboardClient(): void {
         return;
       }
       if (form.dataset.form === "onboarding-login") {
-        await api("/v1/dashboard/onboarding/login", {
+        const password = stringValue(data, "password");
+        const opaque = await opaqueClient();
+        const started = opaque.client.startLogin({ password });
+        const challenge = await api("/v1/dashboard/onboarding/login/start", {
           method: "POST",
           body: {
             deviceName: stringValue(data, "deviceName"),
             email: stringValue(data, "email"),
-            password: stringValue(data, "password"),
+            startLoginRequest: started.startLoginRequest,
             serverUrl: stringValue(data, "serverUrl"),
+          },
+        });
+        const finished = opaque.client.finishLogin({
+          clientLoginState: started.clientLoginState,
+          keyStretching: challenge.profile.keyStretching,
+          loginResponse: challenge.loginResponse,
+          password,
+        });
+        if (!finished) throw new Error("邮箱或密码错误。");
+        if (finished.serverStaticPublicKey !== challenge.serverPublicKey) {
+          throw new Error("One Status OPAQUE 服务身份校验失败。");
+        }
+        clearPasswordFields(form);
+        await api("/v1/dashboard/onboarding/login/finish", {
+          method: "POST",
+          body: {
+            exportKey: finished.exportKey,
+            finishLoginRequest: finished.finishLoginRequest,
+            flowId: challenge.flowId,
+            serverStaticPublicKey: finished.serverStaticPublicKey,
           },
         });
         await load(false);
@@ -1406,11 +1474,13 @@ function dashboardClient(): void {
       if (form.dataset.form === "wallet-reveal") {
         const sourceId = stringValue(data, "sourceId");
         const mode = stringValue(data, "mode") === "copy" ? "copy" : "view";
+        const walletGrant = await unlockWallet(stringValue(data, "password"));
+        clearPasswordFields(form);
         const result = await api(
           `/v1/dashboard/model-wallet/${encodeURIComponent(sourceId)}/reveal`,
           {
             method: "POST",
-            body: { password: stringValue(data, "password") },
+            body: { walletGrant },
           },
         );
         const secret = revealedModelCredential(result);
@@ -1429,11 +1499,13 @@ function dashboardClient(): void {
       if (form.dataset.form === "private-credential-reveal") {
         const credentialId = stringValue(data, "credentialId");
         const mode = stringValue(data, "mode") === "copy" ? "copy" : "view";
+        const walletGrant = await unlockWallet(stringValue(data, "password"));
+        clearPasswordFields(form);
         const result = await api(
           `/v1/dashboard/private-credentials/${encodeURIComponent(credentialId)}/reveal`,
           {
             method: "POST",
-            body: { password: stringValue(data, "password") },
+            body: { walletGrant },
           },
         );
         const credential = revealedPrivateCredential(result);
@@ -1458,19 +1530,27 @@ function dashboardClient(): void {
         return;
       }
       if (form.dataset.form === "wallet-password-change") {
+        const currentPassword = stringValue(data, "currentPassword");
         const newPassword = stringValue(data, "newPassword");
         if (newPassword !== stringValue(data, "confirmPassword")) {
           throw new Error("两次输入的新钱包密码不一致。");
         }
-        await api("/v1/dashboard/model-wallet/password", {
-          method: "POST",
-          body: {
-            currentPassword: stringValue(data, "currentPassword"),
-            newPassword,
-          },
-        });
+        const walletGrant = await unlockWallet(currentPassword);
+        await registerWalletPassword(newPassword, "change", walletGrant);
+        clearPasswordFields(form);
         closeModal();
-        toast("钱包密码已更新并加密同步");
+        toast("钱包密码已通过 OPAQUE 更新");
+        return;
+      }
+      if (form.dataset.form === "wallet-password-reset") {
+        const newPassword = stringValue(data, "newPassword");
+        if (newPassword !== stringValue(data, "confirmPassword")) {
+          throw new Error("两次输入的新钱包密码不一致。");
+        }
+        await registerWalletPassword(newPassword, "reset");
+        clearPasswordFields(form);
+        closeModal();
+        toast("钱包密码已通过 OPAQUE 恢复");
         return;
       }
       if (form.dataset.form === "persona-event") {
@@ -1596,6 +1676,9 @@ function dashboardClient(): void {
     } catch (error) {
       toast(readError(error), true);
     } finally {
+      if (form.dataset.form?.startsWith("onboarding-")) {
+        clearPasswordFields(form);
+      }
       setBusy(form, false);
     }
   });
@@ -1631,7 +1714,7 @@ function dashboardClient(): void {
     const deviceName = onboarding.deviceName || "Mac";
     const register = onboardingMode === "register";
     main.innerHTML = `<div class="onboarding-layout">
-      <div class="onboarding-head"><h2>${register ? "创建 One Status 账号" : "登录已有账号"}</h2><p>${register ? "注册账号并连接当前设备。" : "输入账号密码后直接恢复当前状态。"}</p></div>
+      <div class="onboarding-head"><h2>${register ? "创建 One Status 账号" : "登录已有账号"}</h2><p>${register ? "注册账号并连接当前设备。" : "验证账号后恢复当前状态。"}</p></div>
       <section class="onboarding-form">
         <div class="segmented" role="group" aria-label="账号操作"><button class="${register ? "active" : ""}" data-action="set-onboarding-mode" data-mode="register" type="button">注册</button><button class="${register ? "" : "active"}" data-action="set-onboarding-mode" data-mode="login" type="button">登录已有账号</button></div>
         <form data-form="onboarding-${register ? "register" : "login"}"><div class="form-grid">
@@ -1641,7 +1724,7 @@ function dashboardClient(): void {
           ${field("账号密码", "password", "", "password", "full", `required minlength="10" autocomplete="${register ? "new-password" : "current-password"}"`)}
         </div><div class="form-actions"><button class="button" type="submit">${icon(register ? "key" : "cloud")}${register ? "创建账号" : "登录设备"}</button></div></form>
       </section>
-      <div class="onboarding-security">${icon("shield")}<span>内部状态密钥由账号密码自动加密和解封。云端保存加密状态，OAuth 凭据在同步前会再次加密。</span></div>
+      <div class="onboarding-security">${icon("shield")}<span>密码只在当前页面参与 OPAQUE 计算。后台接收协议消息，云端保存加密状态。</span></div>
     </div>`;
   }
 
@@ -1723,10 +1806,28 @@ function dashboardClient(): void {
     const intents = (Object.values(control.intents) as any[]).sort(
       (left, right) => right.updatedAt.localeCompare(left.updatedAt),
     );
+    const cloudApprovals = [...(snapshot.cloudVaultApprovals || [])]
+      .filter(
+        (approval: any) =>
+          ["pending", "approved"].includes(approval.status) &&
+          Date.parse(approval.expiresAt) > Date.now(),
+      )
+      .sort(
+        (left: any, right: any) =>
+          right.createdAt.localeCompare(left.createdAt),
+      );
+    const pendingApprovalCount = cloudApprovals.filter(
+      (approval: any) => approval.status === "pending",
+    ).length;
     const actions = `<div class="header-actions"><button class="button secondary" data-action="change-wallet-password" type="button">${icon("key")}修改密码</button><button class="button secondary" data-action="add-model-source" type="button">${icon("plus")}添加模型密钥</button><button class="button secondary" data-action="add-model" type="button" ${sources.length ? "" : "disabled"}>${icon("plus")}添加模型</button><button class="button" data-action="add-private-credential" type="button">${icon("plus")}添加凭据 / 卡密</button></div>`;
     return `
-      ${pageLead(`${privateCredentials.length} 项私密凭据 · ${sources.length} 份模型密钥 · ${models.length} 个模型`, actions)}
+      ${pageLead(`${privateCredentials.length} 项私密凭据 · ${sources.length} 份模型密钥 · ${models.length} 个模型${pendingApprovalCount ? ` · ${pendingApprovalCount} 项待审批` : ""}`, actions)}
       <p class="oauth-help">${escapeHtml(cursorConfigurationNotice)}</p>
+      ${cloudApprovals.length ? `<section class="data-section"><div class="panel-title"><h3>远程凭据审批</h3><span>${pendingApprovalCount} 项待处理 · 10 分钟内有效</span></div><div class="table-wrap"><table class="model-table"><thead><tr><th>Agent</th><th>操作</th><th>凭据</th><th>范围</th><th>Secret 字段</th><th>到期</th><th></th></tr></thead><tbody>${cloudApprovals.map((approval: any) => {
+        const summary = approval.summary || {};
+        const approved = approval.status === "approved";
+        return `<tr><td><strong>${escapeHtml(approval.agentId)}</strong><br><small>${escapeHtml(approval.clientId || "Remote MCP")}</small></td><td><span class="intent-status intent-${approved ? "applied" : "pending"}">${escapeHtml(cloudApprovalOperationLabel(approval.operation))}</span></td><td><strong>${escapeHtml(summary.label || summary.credentialId || "新凭据")}</strong><br><small>${escapeHtml(summary.kind || "通用凭据")}</small></td><td>${escapeHtml(summary.projectId || "账号级")}<br><small>${escapeHtml(summary.purpose || "—")}</small></td><td>${(summary.secretKeys || []).length ? (summary.secretKeys || []).map((key: string) => `<code class="credential-secret-key">${escapeHtml(key)}</code>`).join(" ") : "—"}</td><td>${formatDate(approval.expiresAt)}</td><td>${approved ? '<span class="health-state health-available">已批准，等待执行</span>' : `<div class="row-actions"><button class="button" data-action="decide-cloud-vault-approval" data-decision="approve" data-id="${escapeHtml(approval.id)}" type="button">${icon("check")}批准</button><button class="button danger" data-action="decide-cloud-vault-approval" data-decision="deny" data-id="${escapeHtml(approval.id)}" type="button">拒绝</button></div>`}</td></tr>`;
+      }).join("")}</tbody></table></div></section>` : ""}
       <section class="data-section">
         <div class="panel-title"><h3>私密凭据与卡密</h3><span>${privateCredentials.length} 项 · E2EE 同步</span></div>
         ${privateCredentials.length ? `<div class="table-wrap"><table class="model-table private-credential-table"><thead><tr><th>名称 / 类型</th><th>脱敏定位字段</th><th>用途与标签</th><th>Secret 字段</th><th>Agent 访问</th><th>更新</th><th></th></tr></thead><tbody>${privateCredentials.map((credential: any) => `<tr><td><strong>${escapeHtml(credential.label)}</strong><br><small>${escapeHtml(privateCredentialKindLabel(credential.kind))} · ${escapeHtml(credential.id)}</small></td><td>${renderMaskedCredentialFields(credential.fields)}</td><td>${renderCredentialPurposeTags(credential)}</td><td>${renderMaskedCredentialSecrets(credential.secrets)}</td><td>${renderCredentialAccess(credential)}</td><td>${formatDate(credential.updatedAt)}${credential.expiresAt ? `<br><small>${credentialExpired(credential.expiresAt) ? "已过期" : `到期 ${formatDate(credential.expiresAt)}`}</small>` : ""}</td><td><div class="row-actions"><button class="button secondary" data-action="reveal-private-credential" data-mode="view" data-id="${escapeHtml(credential.id)}" type="button">${icon("key")}查看</button><button class="icon-button" data-action="reveal-private-credential" data-mode="copy" data-id="${escapeHtml(credential.id)}" type="button" title="验证密码并复制" aria-label="验证密码并复制">${icon("copy")}</button><button class="button secondary" data-action="edit-private-credential" data-id="${escapeHtml(credential.id)}" type="button">编辑</button><button class="icon-button" data-action="delete-private-credential" data-id="${escapeHtml(credential.id)}" type="button" title="删除私密凭据" aria-label="删除私密凭据">${icon("trash")}</button></div></td></tr>`).join("")}</tbody></table></div>` : emptyState("key", "暂无私密凭据", "SSH、云控制台、GitHub、数据库、卡密等凭据会在这里加密管理")}
@@ -1953,7 +2054,12 @@ function dashboardClient(): void {
   }
 
   function renderConnection(connection: any, provider: any): string {
-    const agents = ["codex", "claude-code"];
+    const agents = [...new Set([
+      "codex",
+      "claude-code",
+      ...(snapshot.knownAgentIds || []),
+      ...snapshot.integrations.grants.map((grant: any) => grant.agentId),
+    ])];
     const status = connectionDisplayStatus(connection);
     const source = connection.source === "imported" ? " · 本机凭据导入" : "";
     return `<div class="connection"><div class="connection-head"><div><strong>${escapeHtml(connection.label)}</strong><small>更新于 ${formatDate(connection.updatedAt)}${source}</small></div><span class="connection-status ${status.key}">${status.label}</span></div><div class="connection-scopes"><small>账号授权范围</small><div class="tag-list">${connection.scopes.map((scope: string) => `<span class="tag">${escapeHtml(shortScope(scope))}</span>`).join("") || '<span class="tag">未返回 scope</span>'}</div></div>${agents.map((agent) => {
@@ -2277,7 +2383,14 @@ function dashboardClient(): void {
   function openWalletPasswordChangeModal(): void {
     openModal(
       "修改密钥钱包密码",
-      `<form data-form="wallet-password-change"><div class="form-grid"><div class="field full"><label for="currentWalletPassword">当前密码</label><input id="currentWalletPassword" name="currentPassword" type="password" required autocomplete="current-password"><small>首次修改时使用初始密码 123456。</small></div><div class="field"><label for="newWalletPassword">新密码</label><input id="newWalletPassword" name="newPassword" type="password" minlength="6" required autocomplete="new-password"></div><div class="field"><label for="confirmWalletPassword">确认新密码</label><input id="confirmWalletPassword" name="confirmPassword" type="password" minlength="6" required autocomplete="new-password"></div><p class="oauth-help full">新密码的 scrypt verifier 会随加密 Permission Vault 同步到账号设备。</p></div>${modalActions("更新密码")}</form>`,
+      `<form data-form="wallet-password-change"><div class="form-grid"><div class="field full"><label for="currentWalletPassword">当前密码</label><input id="currentWalletPassword" name="currentPassword" type="password" required autocomplete="current-password"><small>首次修改时使用初始密码 123456。</small></div><div class="field"><label for="newWalletPassword">新密码</label><input id="newWalletPassword" name="newPassword" type="password" minlength="6" required autocomplete="new-password"></div><div class="field"><label for="confirmWalletPassword">确认新密码</label><input id="confirmWalletPassword" name="confirmPassword" type="password" minlength="6" required autocomplete="new-password"></div><p class="oauth-help full">密码只在当前页面参与 OPAQUE 计算，后台只接收协议消息。</p></div><div class="form-actions"><button class="button secondary" data-action="recover-wallet-password" type="button">忘记密码</button><button class="button secondary" data-close-modal type="button">取消</button><button class="button" type="submit">${icon("save")}更新密码</button></div></form>`,
+    );
+  }
+
+  function openWalletPasswordRecoveryModal(): void {
+    openModal(
+      "恢复密钥钱包密码",
+      `<form data-form="wallet-password-reset"><div class="form-grid"><div class="field"><label for="recoveredWalletPassword">新钱包密码</label><input id="recoveredWalletPassword" name="newPassword" type="password" minlength="6" required autocomplete="new-password"></div><div class="field"><label for="recoveredWalletPasswordConfirm">确认新钱包密码</label><input id="recoveredWalletPasswordConfirm" name="confirmPassword" type="password" minlength="6" required autocomplete="new-password"></div><p class="oauth-help full">当前已登录设备授权本次恢复。密码只在页面内完成 OPAQUE 注册。</p></div>${modalActions("恢复密码")}</form>`,
     );
   }
 
@@ -2546,6 +2659,101 @@ function dashboardClient(): void {
     const body = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(body.error?.message || body.error || `HTTP ${response.status}`);
     return body;
+  }
+
+  async function opaqueClient(): Promise<any> {
+    if (!opaqueModulePromise) {
+      const path = "/v1/auth/opaque-client.js";
+      opaqueModulePromise = import(path);
+    }
+    const opaque = await opaqueModulePromise;
+    await opaque.ready;
+    return opaque;
+  }
+
+  async function unlockWallet(
+    password: string,
+    initialize = true,
+  ): Promise<string> {
+    const opaque = await opaqueClient();
+    const started = opaque.client.startLogin({ password });
+    const challenge = await api("/v1/dashboard/wallet-pake/login/start", {
+      method: "POST",
+      body: { startLoginRequest: started.startLoginRequest },
+    });
+    const finished = opaque.client.finishLogin({
+      clientLoginState: started.clientLoginState,
+      keyStretching: challenge.profile.keyStretching,
+      loginResponse: challenge.loginResponse,
+      password,
+    });
+    if (!finished) {
+      if (initialize) {
+        try {
+          await registerWalletPassword(initialWalletPassword, "initial");
+          return unlockWallet(password, false);
+        } catch {}
+      }
+      throw new Error("钱包密码错误。");
+    }
+    if (finished.serverStaticPublicKey !== challenge.serverPublicKey) {
+      throw new Error("钱包 OPAQUE 服务身份校验失败。");
+    }
+    const verified = await api("/v1/dashboard/wallet-pake/login/finish", {
+      method: "POST",
+      body: {
+        finishLoginRequest: finished.finishLoginRequest,
+        flowId: challenge.flowId,
+      },
+    });
+    if (
+      typeof verified.walletGrant !== "string" ||
+      !/^oswg1_[A-Za-z0-9_-]{43}$/.test(verified.walletGrant)
+    ) {
+      throw new Error("钱包授权响应无效。");
+    }
+    return verified.walletGrant;
+  }
+
+  async function registerWalletPassword(
+    password: string,
+    authorization: "initial" | "change" | "reset",
+    walletGrant?: string,
+  ): Promise<void> {
+    const opaque = await opaqueClient();
+    const started = opaque.client.startRegistration({ password });
+    const challenge = await api("/v1/dashboard/wallet-pake/register/start", {
+      method: "POST",
+      body: {
+        authorization,
+        registrationRequest: started.registrationRequest,
+        ...(walletGrant ? { walletGrant } : {}),
+      },
+    });
+    const finished = opaque.client.finishRegistration({
+      clientRegistrationState: started.clientRegistrationState,
+      keyStretching: challenge.profile.keyStretching,
+      password,
+      registrationResponse: challenge.registrationResponse,
+    });
+    if (finished.serverStaticPublicKey !== challenge.serverPublicKey) {
+      throw new Error("钱包 OPAQUE 服务身份校验失败。");
+    }
+    await api("/v1/dashboard/wallet-pake/register/finish", {
+      method: "PUT",
+      body: {
+        flowId: challenge.flowId,
+        registrationRecord: finished.registrationRecord,
+      },
+    });
+  }
+
+  function clearPasswordFields(form: HTMLFormElement): void {
+    form.querySelectorAll<HTMLInputElement>('input[type="password"]').forEach(
+      (input) => {
+        input.value = "";
+      },
+    );
   }
 
   function toast(message: string, error = false): void {
@@ -2838,7 +3046,14 @@ function dashboardClient(): void {
     return "填入该 Provider Developer Console 的 OAuth redirect URL。";
   }
   function agentLabel(agentId: string): string {
-    return agentId === "claude-code" ? "Claude Code" : agentId === "codex" ? "Codex" : agentId === "cursor" ? "Cursor" : agentId;
+    if (agentId === "claude-code") return "Claude Code";
+    if (agentId === "codex") return "Codex";
+    if (agentId === "cursor") return "Cursor";
+    if (agentId.startsWith("remote:")) {
+      const [, name, identity] = agentId.split(":");
+      return `Remote ${name?.replaceAll("-", " ") || "Agent"}${identity ? ` · ${identity}` : ""}`;
+    }
+    return agentId;
   }
   function canConfigureModelForTool(toolId: string): boolean {
     return toolId !== "cursor";
@@ -3053,6 +3268,13 @@ function dashboardClient(): void {
     if (value === "add") return "新增";
     if (value === "remove") return "移除";
     return "更新";
+  }
+  function cloudApprovalOperationLabel(value: string): string {
+    if (value === "credential.create") return "登记凭据";
+    if (value === "credential.get") return "读取明文";
+    if (value === "credential.update") return "更新凭据";
+    if (value === "credential.delete") return "删除凭据";
+    return value;
   }
   function credentialStatusLabel(value: string): string {
     if (value === "available") return "可用";

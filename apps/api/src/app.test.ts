@@ -4,10 +4,15 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { FastifyInstance } from "fastify";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type {
-  EncryptedEnvelope,
-  WrappedStatusKey,
-} from "@one-status/protocol";
+import { wrapStatusKeyWithOpaqueExportKey } from "@one-status/crypto";
+import {
+  finishOpaqueLogin,
+  finishOpaqueRegistration,
+  startOpaqueLogin,
+  startOpaqueRegistration,
+  type OneStatusOpaqueProfile,
+} from "@one-status/pake";
+import type { EncryptedEnvelope, WrappedStatusKey } from "@one-status/protocol";
 import { createApp } from "./app.js";
 
 const initialEnvelope: EncryptedEnvelope = {
@@ -26,22 +31,7 @@ const envelope: EncryptedEnvelope = {
   ciphertext: "next-ciphertext-value",
 };
 
-const wrappedStatusKey: WrappedStatusKey = {
-  format: "one-status.wrapped-status-key",
-  version: 1,
-  algorithm: "AES-256-GCM",
-  kdf: {
-    algorithm: "scrypt",
-    salt: "s".repeat(22),
-    cost: 16_384,
-    blockSize: 8,
-    parallelization: 1,
-    keyLength: 32,
-  },
-  iv: "i".repeat(16),
-  ciphertext: "c".repeat(43),
-  authTag: "a".repeat(22),
-};
+const statusKey = new Uint8Array(32).fill(7);
 
 describe("sync API", () => {
   let app: FastifyInstance;
@@ -65,7 +55,7 @@ describe("sync API", () => {
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({
       name: "One Status",
-      version: "0.8.0",
+      version: "0.9.0",
       health: "/health",
     });
   });
@@ -84,7 +74,7 @@ describe("sync API", () => {
     expect(response.json()).toEqual({
       status: "ok",
       service: "one-status-api",
-      version: "0.8.0",
+      version: "0.9.0",
       release: "20260809T031700Z",
     });
   });
@@ -123,10 +113,10 @@ describe("sync API", () => {
       devices: [{ name: "Mac A", online: true, blocked: false }],
       deviceLoginPolicy: { denyNewDeviceLogins: false },
     });
-    expect(registration.wrappedStatusKey).toEqual(wrappedStatusKey);
+    expect(registration.wrappedStatusKey).toMatchObject({ version: 2 });
   });
 
-  it("accepts an older client registration without a wrapped Status Key", async () => {
+  it("does not expose the removed plaintext registration endpoint", async () => {
     const response = await app.inject({
       method: "POST",
       url: "/v1/auth/register",
@@ -138,45 +128,32 @@ describe("sync API", () => {
       },
     });
 
-    expect(response.statusCode).toBe(201);
-    expect(response.json()).toMatchObject({ wrappedStatusKey: null });
+    expect(response.statusCode).toBe(404);
   });
 
   it("reuses a stable installation ID when the device logs in again", async () => {
     const installationId = "896c1d17-9110-4261-a461-f1472980f976";
-    const registration = await app.inject({
-      method: "POST",
-      url: "/v1/auth/register",
-      payload: {
-        email: "stable-device@example.test",
-        password: "stable installation password",
-        deviceName: "Ryan Mac",
-        installationId,
-        initialEnvelope,
-        wrappedStatusKey,
-      },
+    const registration = await register(app, {
+      deviceName: "Ryan Mac",
+      email: "stable-device@example.test",
+      installationId,
+      password: "stable installation password",
     });
-    expect(registration.statusCode).toBe(201);
-    expect(registration.json().deviceId).toBe(installationId);
+    expect(registration.deviceId).toBe(installationId);
 
-    const login = await app.inject({
-      method: "POST",
-      url: "/v1/auth/login",
-      payload: {
-        email: "stable-device@example.test",
-        password: "stable installation password",
-        deviceName: "Ryan Mac renamed",
-        installationId,
-      },
+    const loginSession = await login(app, {
+      deviceName: "Ryan Mac renamed",
+      email: "stable-device@example.test",
+      installationId,
+      password: "stable installation password",
     });
-    expect(login.statusCode).toBe(200);
-    expect(login.json().deviceId).toBe(installationId);
-    expect(login.json().wrappedStatusKey).toEqual(wrappedStatusKey);
+    expect(loginSession.deviceId).toBe(installationId);
+    expect(loginSession.wrappedStatusKey).toEqual(registration.wrappedStatusKey);
 
     const account = await app.inject({
       method: "GET",
       url: "/v1/account",
-      headers: { authorization: `Bearer ${login.json().token}` },
+      headers: { authorization: `Bearer ${loginSession.token}` },
     });
     expect(account.json().devices).toEqual([
       expect.objectContaining({
@@ -189,17 +166,12 @@ describe("sync API", () => {
 
   it("tracks device presence through an authenticated heartbeat", async () => {
     const first = await register(app);
-    const secondLogin = await app.inject({
-      method: "POST",
-      url: "/v1/auth/login",
-      payload: {
-        email: "ryan@example.test",
-        password: "correct horse battery staple",
-        deviceName: "Mac B",
-        installationId: "ef4c0115-2067-40aa-a62e-90d578675585",
-      },
+    const second = await login(app, {
+      deviceName: "Mac B",
+      email: "ryan@example.test",
+      installationId: "ef4c0115-2067-40aa-a62e-90d578675585",
+      password: "correct horse battery staple",
     });
-    const second = secondLogin.json();
     const inspection = new DatabaseSync(databasePath);
     inspection
       .prepare("UPDATE devices SET last_seen_at = ? WHERE id = ?")
@@ -365,16 +337,11 @@ describe("sync API", () => {
 
   it("revokes another device and all of its sessions", async () => {
     const first = await register(app);
-    const secondLogin = await app.inject({
-      method: "POST",
-      url: "/v1/auth/login",
-      payload: {
-        email: "ryan@example.test",
-        password: "correct horse battery staple",
-        deviceName: "Mac B",
-      },
+    const second = await login(app, {
+      deviceName: "Mac B",
+      email: "ryan@example.test",
+      password: "correct horse battery staple",
     });
-    const second = secondLogin.json();
 
     const revocation = await app.inject({
       method: "DELETE",
@@ -406,30 +373,22 @@ describe("sync API", () => {
     expect(policy.statusCode).toBe(200);
     expect(policy.json()).toEqual({ denyNewDeviceLogins: true });
 
-    const denied = await app.inject({
-      method: "POST",
-      url: "/v1/auth/login",
-      payload: {
-        email: "ryan@example.test",
-        password: "correct horse battery staple",
-        deviceName: "Unknown Mac",
-        installationId: "4f26176c-2c74-479a-8d03-cb2b6509d406",
-      },
+    const denied = await loginResponse(app, {
+      deviceName: "Unknown Mac",
+      email: "ryan@example.test",
+      installationId: "4f26176c-2c74-479a-8d03-cb2b6509d406",
+      password: "correct horse battery staple",
     });
     expect(denied.statusCode).toBe(403);
     expect(denied.json()).toMatchObject({
       error: { code: "new_device_login_denied" },
     });
 
-    const existing = await app.inject({
-      method: "POST",
-      url: "/v1/auth/login",
-      payload: {
-        email: "ryan@example.test",
-        password: "correct horse battery staple",
-        deviceName: "Mac A",
-        installationId: first.deviceId,
-      },
+    const existing = await loginResponse(app, {
+      deviceName: "Mac A",
+      email: "ryan@example.test",
+      installationId: first.deviceId,
+      password: "correct horse battery staple",
     });
     expect(existing.statusCode).toBe(200);
   });
@@ -437,15 +396,11 @@ describe("sync API", () => {
   it("blocks a device until another device removes the block", async () => {
     const first = await register(app);
     const installationId = "a74c1572-7fb5-4ccf-9ca0-6d08314c0d1a";
-    const second = await app.inject({
-      method: "POST",
-      url: "/v1/auth/login",
-      payload: {
-        email: "ryan@example.test",
-        password: "correct horse battery staple",
-        deviceName: "Mac B",
-        installationId,
-      },
+    const second = await loginResponse(app, {
+      deviceName: "Mac B",
+      email: "ryan@example.test",
+      installationId,
+      password: "correct horse battery staple",
     });
     expect(second.statusCode).toBe(200);
 
@@ -463,15 +418,11 @@ describe("sync API", () => {
     });
     expect(oldSession.statusCode).toBe(401);
 
-    const deniedLogin = await app.inject({
-      method: "POST",
-      url: "/v1/auth/login",
-      payload: {
-        email: "ryan@example.test",
-        password: "correct horse battery staple",
-        deviceName: "Mac B",
-        installationId,
-      },
+    const deniedLogin = await loginResponse(app, {
+      deviceName: "Mac B",
+      email: "ryan@example.test",
+      installationId,
+      password: "correct horse battery staple",
     });
     expect(deniedLogin.statusCode).toBe(403);
     expect(deniedLogin.json()).toMatchObject({
@@ -488,15 +439,11 @@ describe("sync API", () => {
       blocked: false,
     });
 
-    const restored = await app.inject({
-      method: "POST",
-      url: "/v1/auth/login",
-      payload: {
-        email: "ryan@example.test",
-        password: "correct horse battery staple",
-        deviceName: "Mac B",
-        installationId,
-      },
+    const restored = await loginResponse(app, {
+      deviceName: "Mac B",
+      email: "ryan@example.test",
+      installationId,
+      password: "correct horse battery staple",
     });
     expect(restored.statusCode).toBe(200);
   });
@@ -504,15 +451,11 @@ describe("sync API", () => {
   it("revokes sessions while preserving the known device", async () => {
     const first = await register(app);
     const installationId = "e6b262ec-9fda-4fad-8937-22e01405f3d1";
-    const second = await app.inject({
-      method: "POST",
-      url: "/v1/auth/login",
-      payload: {
-        email: "ryan@example.test",
-        password: "correct horse battery staple",
-        deviceName: "Mac B",
-        installationId,
-      },
+    const second = await loginResponse(app, {
+      deviceName: "Mac B",
+      email: "ryan@example.test",
+      installationId,
+      password: "correct horse battery staple",
     });
     expect(second.statusCode).toBe(200);
 
@@ -533,31 +476,35 @@ describe("sync API", () => {
       headers: { authorization: `Bearer ${first.token}` },
       payload: { denyNewDeviceLogins: true },
     });
-    const relogin = await app.inject({
-      method: "POST",
-      url: "/v1/auth/login",
-      payload: {
-        email: "ryan@example.test",
-        password: "correct horse battery staple",
-        deviceName: "Mac B",
-        installationId,
-      },
+    const relogin = await loginResponse(app, {
+      deviceName: "Mac B",
+      email: "ryan@example.test",
+      installationId,
+      password: "correct horse battery staple",
     });
     expect(relogin.statusCode).toBe(200);
   });
 
   it("rejects an incorrect password without creating a device", async () => {
     const registration = await register(app);
-    const login = await app.inject({
+    const started = await startOpaqueLogin("incorrect password value");
+    const challenge = await app.inject({
       method: "POST",
-      url: "/v1/auth/login",
       payload: {
         email: "ryan@example.test",
-        password: "incorrect password value",
-        deviceName: "Untrusted device",
+        startLoginRequest: started.startLoginRequest,
       },
+      url: "/v1/auth/opaque/login/start",
     });
-    expect(login.statusCode).toBe(401);
+    expect(challenge.statusCode).toBe(200);
+    await expect(
+      finishOpaqueLogin({
+        clientLoginState: started.clientLoginState,
+        loginResponse: challenge.json().loginResponse,
+        password: "incorrect password value",
+        profile: challenge.json().profile,
+      }),
+    ).resolves.toBeNull();
 
     const account = await app.inject({
       method: "GET",
@@ -567,102 +514,134 @@ describe("sync API", () => {
     expect(account.json().devices).toHaveLength(1);
   });
 
-  it("migrates a wrapped Status Key from a legacy account device", async () => {
-    const registration = await app.inject({
+  it("re-registers the account password through OPAQUE and rewraps the Status Key", async () => {
+    const registration = await register(app, {
+      deviceName: "Original Mac",
+      email: "password-change@example.test",
+      password: "original account password",
+    });
+    const unprovedRegistration = await startOpaqueRegistration(
+      "new account password",
+    );
+    const unproved = await app.inject({
+      headers: { authorization: `Bearer ${registration.token}` },
       method: "POST",
-      url: "/v1/auth/register",
       payload: {
-        email: "legacy-migration@example.test",
-        password: "legacy migration password",
-        deviceName: "Legacy Mac",
-        initialEnvelope,
+        registrationRequest: unprovedRegistration.registrationRequest,
       },
+      url: "/v1/account/opaque/register/start",
     });
-    const rejected = await app.inject({
-      method: "PUT",
-      url: "/v1/account/wrapped-status-key",
-      headers: { authorization: `Bearer ${registration.json().token}` },
-      payload: {
-        password: "incorrect migration password",
-        wrappedStatusKey,
-      },
-    });
-    expect(rejected.statusCode).toBe(401);
-    const migrated = await app.inject({
-      method: "PUT",
-      url: "/v1/account/wrapped-status-key",
-      headers: { authorization: `Bearer ${registration.json().token}` },
-      payload: {
-        password: "legacy migration password",
-        wrappedStatusKey,
-      },
-    });
-    expect(migrated.statusCode).toBe(200);
-    expect(migrated.json()).toEqual({
-      migrated: true,
-      wrappedStatusKey,
-    });
-    const replacement = { ...wrappedStatusKey, authTag: "b".repeat(22) };
-    const repeated = await app.inject({
-      method: "PUT",
-      url: "/v1/account/wrapped-status-key",
-      headers: { authorization: `Bearer ${registration.json().token}` },
-      payload: {
-        password: "legacy migration password",
-        wrappedStatusKey: replacement,
-      },
-    });
-    expect(repeated.json()).toEqual({
-      migrated: false,
-      wrappedStatusKey,
-    });
-
-    const login = await app.inject({
+    expect(unproved.statusCode).toBe(401);
+    const staleProof = await createAccountPasswordProof(
+      app,
+      "password-change@example.test",
+      "original account password",
+    );
+    const staleRegistration = await startOpaqueRegistration(
+      "stale replacement password",
+    );
+    const staleStart = await app.inject({
+      headers: { authorization: `Bearer ${registration.token}` },
       method: "POST",
-      url: "/v1/auth/login",
       payload: {
-        email: "legacy-migration@example.test",
-        password: "legacy migration password",
-        deviceName: "New Mac",
+        accountProof: staleProof,
+        registrationRequest: staleRegistration.registrationRequest,
       },
+      url: "/v1/account/opaque/register/start",
     });
-    expect(login.statusCode).toBe(200);
-    expect(login.json()).toMatchObject({ wrappedStatusKey });
+    expect(staleStart.statusCode).toBe(200);
+    const staleChallenge = staleStart.json<OpaqueRegistrationChallenge>();
+    const staleFinished = await finishOpaqueRegistration({
+      clientRegistrationState: staleRegistration.clientRegistrationState,
+      password: "stale replacement password",
+      profile: staleChallenge.profile,
+      registrationResponse: staleChallenge.registrationResponse,
+    });
+    const accountProof = await createAccountPasswordProof(
+      app,
+      "password-change@example.test",
+      "original account password",
+    );
+    const changed = await registerAccountPassword(
+      app,
+      registration.token,
+      registration.userId,
+      "new account password",
+      accountProof,
+    );
+    expect(changed).toMatchObject({ migrated: true, wrappedStatusKey: { version: 2 } });
+    const staleFinish = await app.inject({
+      headers: { authorization: `Bearer ${registration.token}` },
+      method: "PUT",
+      payload: {
+        flowId: staleChallenge.flowId,
+        registrationRecord: staleFinished.registrationRecord,
+        wrappedStatusKey: wrapStatusKeyWithOpaqueExportKey(
+          statusKey,
+          staleFinished.exportKey,
+          registration.userId,
+        ),
+      },
+      url: "/v1/account/opaque/register/finish",
+    });
+    expect(staleFinish.statusCode).toBe(401);
+    const replayRegistration = await startOpaqueRegistration(
+      "another account password",
+    );
+    const replay = await app.inject({
+      headers: { authorization: `Bearer ${registration.token}` },
+      method: "POST",
+      payload: {
+        accountProof,
+        registrationRequest: replayRegistration.registrationRequest,
+      },
+      url: "/v1/account/opaque/register/start",
+    });
+    expect(replay.statusCode).toBe(401);
+    const next = await login(app, {
+      deviceName: "New Mac",
+      email: "password-change@example.test",
+      password: "new account password",
+    });
+    expect(next.wrappedStatusKey).toEqual(changed.wrappedStatusKey);
   });
 
-  it("rejects legacy migration from a newly created device session", async () => {
-    await app.inject({
+  it("binds an account password proof to its authenticated account", async () => {
+    const first = await register(app, {
+      email: "proof-owner@example.test",
+      password: "proof owner password",
+    });
+    const second = await register(app, {
+      email: "proof-target@example.test",
+      password: "proof target password",
+    });
+    const accountProof = await createAccountPasswordProof(
+      app,
+      "proof-owner@example.test",
+      "proof owner password",
+    );
+    const started = await startOpaqueRegistration("replacement target password");
+    const response = await app.inject({
+      headers: { authorization: `Bearer ${second.token}` },
       method: "POST",
-      url: "/v1/auth/register",
       payload: {
-        email: "legacy-new-device@example.test",
-        password: "legacy migration password",
-        deviceName: "Legacy Mac",
-        initialEnvelope,
+        accountProof,
+        registrationRequest: started.registrationRequest,
       },
+      url: "/v1/account/opaque/register/start",
     });
-    const login = await app.inject({
+    expect(response.statusCode).toBe(401);
+    expect(first.userId).not.toBe(second.userId);
+  });
+
+  it("requires an authenticated device for account OPAQUE registration", async () => {
+    const started = await startOpaqueRegistration("replacement account password");
+    const response = await app.inject({
       method: "POST",
-      url: "/v1/auth/login",
-      payload: {
-        email: "legacy-new-device@example.test",
-        password: "legacy migration password",
-        deviceName: "Unknown Mac",
-      },
+      payload: { registrationRequest: started.registrationRequest },
+      url: "/v1/account/opaque/register/start",
     });
-    const migration = await app.inject({
-      method: "PUT",
-      url: "/v1/account/wrapped-status-key",
-      headers: { authorization: `Bearer ${login.json().token}` },
-      payload: {
-        password: "legacy migration password",
-        wrappedStatusKey,
-      },
-    });
-    expect(migration.statusCode).toBe(403);
-    expect(migration.json()).toMatchObject({
-      error: { code: "status_key_migration_forbidden" },
-    });
+    expect(response.statusCode).toBe(401);
   });
 
   it("rate limits repeated login attempts by IP and identity", async () => {
@@ -677,48 +656,271 @@ describe("sync API", () => {
     });
     await app.ready();
     await register(app);
-    const payload = {
-      email: "ryan@example.test",
-      password: "incorrect password value",
-      deviceName: "Untrusted device",
-    };
+    const firstStart = await startOpaqueLogin("incorrect password value");
+    const secondStart = await startOpaqueLogin("incorrect password value");
 
     const first = await app.inject({
       method: "POST",
-      url: "/v1/auth/login",
-      payload,
+      payload: {
+        email: "ryan@example.test",
+        startLoginRequest: firstStart.startLoginRequest,
+      },
+      url: "/v1/auth/opaque/login/start",
     });
-    expect(first.statusCode).toBe(401);
+    expect(first.statusCode).toBe(200);
 
     const second = await app.inject({
       method: "POST",
-      url: "/v1/auth/login",
-      payload,
+      payload: {
+        email: "ryan@example.test",
+        startLoginRequest: secondStart.startLoginRequest,
+      },
+      url: "/v1/auth/opaque/login/start",
     });
     expect(second.statusCode).toBe(429);
     expect(second.headers["retry-after"]).toBeDefined();
     expect(second.json()).toMatchObject({ error: { code: "rate_limited" } });
   });
+
+  it("applies identity limits across source IP addresses", async () => {
+    await app.close();
+    app = createApp({
+      dbPath: join(directory, "identity-rate-limit.sqlite"),
+      authRateLimit: {
+        maxAttemptsPerIdentity: 1,
+        maxAttemptsPerIp: 10,
+        windowMs: 60_000,
+      },
+      trustProxy: true,
+    });
+    await app.ready();
+    await register(app);
+    const firstStart = await startOpaqueLogin("incorrect password value");
+    const secondStart = await startOpaqueLogin("incorrect password value");
+    const first = await app.inject({
+      headers: { "x-forwarded-for": "198.51.100.10" },
+      method: "POST",
+      payload: {
+        email: "ryan@example.test",
+        startLoginRequest: firstStart.startLoginRequest,
+      },
+      url: "/v1/auth/opaque/login/start",
+    });
+    expect(first.statusCode).toBe(200);
+    const second = await app.inject({
+      headers: { "x-forwarded-for": "203.0.113.20" },
+      method: "POST",
+      payload: {
+        email: "ryan@example.test",
+        startLoginRequest: secondStart.startLoginRequest,
+      },
+      url: "/v1/auth/opaque/login/start",
+    });
+    expect(second.statusCode).toBe(429);
+  });
 });
 
 async function register(
   app: FastifyInstance,
+  options: {
+    deviceName?: string;
+    email?: string;
+    installationId?: string;
+    password?: string;
+  } = {},
 ): Promise<{
   token: string;
   deviceId: string;
+  userId: string;
   wrappedStatusKey: WrappedStatusKey;
 }> {
+  const email = options.email ?? "ryan@example.test";
+  const password = options.password ?? "correct horse battery staple";
+  const started = await startOpaqueRegistration(password);
+  const startResponse = await app.inject({
+    method: "POST",
+    payload: {
+      email,
+      registrationRequest: started.registrationRequest,
+    },
+    url: "/v1/auth/opaque/register/start",
+  });
+  expect(startResponse.statusCode).toBe(200);
+  const challenge = startResponse.json<OpaqueRegistrationChallenge>();
+  const finished = await finishOpaqueRegistration({
+    clientRegistrationState: started.clientRegistrationState,
+    password,
+    profile: challenge.profile,
+    registrationResponse: challenge.registrationResponse,
+  });
+  expect(finished.serverStaticPublicKey).toBe(challenge.serverPublicKey);
+  const wrappedStatusKey = wrapStatusKeyWithOpaqueExportKey(
+    statusKey,
+    finished.exportKey,
+    challenge.accountBinding,
+  );
   const response = await app.inject({
     method: "POST",
-    url: "/v1/auth/register",
     payload: {
-      email: "ryan@example.test",
-      password: "correct horse battery staple",
-      deviceName: "Mac A",
+      deviceName: options.deviceName ?? "Mac A",
+      flowId: challenge.flowId,
       initialEnvelope,
+      ...(options.installationId
+        ? { installationId: options.installationId }
+        : {}),
+      registrationRecord: finished.registrationRecord,
       wrappedStatusKey,
     },
+    url: "/v1/auth/opaque/register/finish",
   });
   expect(response.statusCode).toBe(201);
   return response.json();
+}
+
+async function login(
+  app: FastifyInstance,
+  options: LoginOptions,
+): Promise<{
+  deviceId: string;
+  token: string;
+  userId: string;
+  wrappedStatusKey: WrappedStatusKey;
+}> {
+  const response = await loginResponse(app, options);
+  expect(response.statusCode).toBe(200);
+  return response.json();
+}
+
+async function loginResponse(app: FastifyInstance, options: LoginOptions) {
+  const started = await startOpaqueLogin(options.password);
+  const startResponse = await app.inject({
+    method: "POST",
+    payload: {
+      email: options.email,
+      startLoginRequest: started.startLoginRequest,
+    },
+    url: "/v1/auth/opaque/login/start",
+  });
+  expect(startResponse.statusCode).toBe(200);
+  const challenge = startResponse.json<OpaqueLoginChallenge>();
+  const finished = await finishOpaqueLogin({
+    clientLoginState: started.clientLoginState,
+    loginResponse: challenge.loginResponse,
+    password: options.password,
+    profile: challenge.profile,
+  });
+  if (!finished) throw new Error("Test OPAQUE login unexpectedly failed locally.");
+  expect(finished.serverStaticPublicKey).toBe(challenge.serverPublicKey);
+  return app.inject({
+    method: "POST",
+    payload: {
+      deviceName: options.deviceName,
+      finishLoginRequest: finished.finishLoginRequest,
+      flowId: challenge.flowId,
+      ...(options.installationId
+        ? { installationId: options.installationId }
+        : {}),
+    },
+    url: "/v1/auth/opaque/login/finish",
+  });
+}
+
+async function registerAccountPassword(
+  app: FastifyInstance,
+  token: string,
+  userId: string,
+  password: string,
+  accountProof: string,
+): Promise<{ migrated: boolean; wrappedStatusKey: WrappedStatusKey }> {
+  const started = await startOpaqueRegistration(password);
+  const startResponse = await app.inject({
+    headers: { authorization: `Bearer ${token}` },
+    method: "POST",
+    payload: { accountProof, registrationRequest: started.registrationRequest },
+    url: "/v1/account/opaque/register/start",
+  });
+  expect(startResponse.statusCode).toBe(200);
+  const challenge = startResponse.json<OpaqueRegistrationChallenge>();
+  expect(challenge.accountBinding).toBe(userId);
+  const finished = await finishOpaqueRegistration({
+    clientRegistrationState: started.clientRegistrationState,
+    password,
+    profile: challenge.profile,
+    registrationResponse: challenge.registrationResponse,
+  });
+  const wrappedStatusKey = wrapStatusKeyWithOpaqueExportKey(
+    statusKey,
+    finished.exportKey,
+    userId,
+  );
+  const response = await app.inject({
+    headers: { authorization: `Bearer ${token}` },
+    method: "PUT",
+    payload: {
+      flowId: challenge.flowId,
+      registrationRecord: finished.registrationRecord,
+      wrappedStatusKey,
+    },
+    url: "/v1/account/opaque/register/finish",
+  });
+  expect(response.statusCode).toBe(200);
+  return response.json();
+}
+
+async function createAccountPasswordProof(
+  app: FastifyInstance,
+  email: string,
+  password: string,
+): Promise<string> {
+  const started = await startOpaqueLogin(password);
+  const startResponse = await app.inject({
+    method: "POST",
+    payload: {
+      email,
+      purpose: "account-password-change",
+      startLoginRequest: started.startLoginRequest,
+    },
+    url: "/v1/auth/opaque/proof/start",
+  });
+  expect(startResponse.statusCode).toBe(200);
+  const challenge = startResponse.json<OpaqueLoginChallenge>();
+  const finished = await finishOpaqueLogin({
+    clientLoginState: started.clientLoginState,
+    loginResponse: challenge.loginResponse,
+    password,
+    profile: challenge.profile,
+  });
+  if (!finished) throw new Error("Test OPAQUE proof unexpectedly failed locally.");
+  const finishResponse = await app.inject({
+    method: "POST",
+    payload: {
+      finishLoginRequest: finished.finishLoginRequest,
+      flowId: challenge.flowId,
+    },
+    url: "/v1/auth/opaque/proof/finish",
+  });
+  expect(finishResponse.statusCode).toBe(200);
+  return finishResponse.json<{ proofToken: string }>().proofToken;
+}
+
+interface LoginOptions {
+  deviceName: string;
+  email: string;
+  installationId?: string;
+  password: string;
+}
+
+interface OpaqueRegistrationChallenge {
+  accountBinding: string;
+  flowId: string;
+  profile: OneStatusOpaqueProfile;
+  registrationResponse: string;
+  serverPublicKey: string;
+}
+
+interface OpaqueLoginChallenge {
+  flowId: string;
+  loginResponse: string;
+  profile: OneStatusOpaqueProfile;
+  serverPublicKey: string;
 }

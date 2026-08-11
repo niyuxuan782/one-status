@@ -28,6 +28,7 @@ describe("Agent credentials", () => {
       expiresAt: "2026-08-09T10:00:01.000Z",
       token: expect.stringMatching(/^osa1_[A-Za-z0-9_-]{43}$/),
     });
+    expect(database.listAgentIds("user-1", now)).toEqual(["codex"]);
     expect(database.authenticateAgent(issued.token, now)).toMatchObject({
       authentication: "agent",
       agentId: "codex",
@@ -44,6 +45,12 @@ describe("Agent credentials", () => {
         new Date("2026-08-09T10:00:01.000Z"),
       ),
     ).toBeNull();
+    expect(
+      database.listAgentIds(
+        "user-1",
+        new Date("2026-08-09T10:00:01.000Z"),
+      ),
+    ).toEqual([]);
   });
 
   it("revokes only the credential owned by the authenticated device", () => {
@@ -69,5 +76,6 @@ describe("Agent credentials", () => {
       ),
     ).toBe(true);
     expect(database.authenticateAgent(issued.token)).toBeNull();
+    expect(database.listAgentIds("user-1")).toEqual([]);
   });
 });

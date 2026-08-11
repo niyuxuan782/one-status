@@ -1,6 +1,6 @@
 {
   "name": "@one-status/cli",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "private": true,
   "type": "module",
   "bin": {
@@ -16,6 +16,7 @@
     "@one-status/crypto": "workspace:*",
     "@one-status/local-config": "workspace:*",
     "@one-status/mcp": "workspace:*",
-    "@one-status/protocol": "workspace:*"
+    "@one-status/protocol": "workspace:*",
+    "@one-status/vault": "workspace:*"
   }
 }

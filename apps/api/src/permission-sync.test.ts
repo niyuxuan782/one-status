@@ -48,11 +48,6 @@ describe("Permission Vault encrypted sync", () => {
     const [firstModelCredential] = first.listPrivateCredentials("user-1", {
       kinds: ["model"],
     });
-    expect(first.verifyModelWalletPassword("user-1", "123456")).toBe(true);
-    expect(
-      first.changeModelWalletPassword("user-1", "123456", "654321"),
-    ).toBe(true);
-    const walletPassword = first.exportBundle("user-1").walletPassword;
     await firstSync.run(() => undefined);
 
     const persisted = JSON.stringify(backend.status.permissions.vault);
@@ -87,12 +82,6 @@ describe("Permission Vault encrypted sync", () => {
         userId: "user-1",
       })?.secrets,
     ).toEqual({ apiKey: "third-party-model-secret" });
-    expect(second.exportBundle("user-1").walletPassword).toEqual(
-      walletPassword,
-    );
-    expect(second.verifyModelWalletPassword("user-1", "123456")).toBe(false);
-    expect(second.verifyModelWalletPassword("user-1", "654321")).toBe(true);
-
     await secondSync.run(() => {
       second.ignoreModelCredential("user-1", "third-party-a");
     });
@@ -110,7 +99,7 @@ describe("Permission Vault encrypted sync", () => {
     second.close();
   });
 
-  it("repairs wallet extensions omitted by a legacy client", async () => {
+  it("repairs credential extensions omitted by a legacy client", async () => {
     const backend = new MemoryBackend();
     const legacy = createVault(21);
     const current = createVault(22);
@@ -125,7 +114,6 @@ describe("Permission Vault encrypted sync", () => {
       delete bundle.modelCredentialIgnores;
       delete bundle.privateCredentialTombstones;
       delete bundle.privateCredentials;
-      delete bundle.walletPassword;
       return bundle;
     });
     legacy.configureProvider("user-1", "slack", {
@@ -135,10 +123,6 @@ describe("Permission Vault encrypted sync", () => {
       () => undefined,
     );
 
-    expect(current.verifyModelWalletPassword("user-1", "123456")).toBe(true);
-    expect(
-      current.changeModelWalletPassword("user-1", "123456", "654321"),
-    ).toBe(true);
     current.ignoreModelCredential("user-1", "deleted-source");
     const privateCredential = current.upsertPrivateCredential({
       fields: { host: "server.internal", username: "ubuntu" },
@@ -169,23 +153,12 @@ describe("Permission Vault encrypted sync", () => {
     expect(nextDevice.listPrivateCredentials("user-1")).toEqual([
       expect.objectContaining({ id: privateCredential.id }),
     ]);
-    expect(nextDevice.verifyModelWalletPassword("user-1", "654321")).toBe(
-      true,
-    );
     expect(
-      nextDevice.revealPrivateCredential(
+      nextDevice.revealPrivateCredentialAuthorized(
         "user-1",
         privateCredential.id,
-        "654321",
       )?.secrets,
     ).toEqual({ password: "private-sync-secret" });
-
-    expect(nextDevice.verifyModelWalletPassword("user-1", "123456")).toBe(
-      false,
-    );
-    expect(nextDevice.verifyModelWalletPassword("user-1", "654321")).toBe(
-      true,
-    );
     expect(
       nextDevice.isModelCredentialIgnored("user-1", "deleted-source"),
     ).toBe(true);
@@ -211,7 +184,6 @@ describe("Permission Vault encrypted sync", () => {
       delete bundle.modelCredentialIgnores;
       delete bundle.privateCredentialTombstones;
       delete bundle.privateCredentials;
-      delete bundle.walletPassword;
       return bundle;
     });
 
@@ -312,8 +284,7 @@ describe("Permission Vault encrypted sync", () => {
     });
     await secondSync.run(() => undefined);
     expect(
-      second.revealPrivateCredential("user-1", credential.id, "123456")
-        ?.secrets,
+      second.revealPrivateCredentialAuthorized("user-1", credential.id)?.secrets,
     ).toEqual({ password: "recreated-secret" });
     expect(
       JSON.stringify(backend.status.permissions.vault),
@@ -465,43 +436,6 @@ describe("Permission Vault encrypted sync", () => {
     second.close();
   });
 
-  it("keeps a concurrent cloud wallet password over a stale future device clock", async () => {
-    const backend = new MemoryBackend();
-    const first = createVault(31);
-    const second = createVault(32);
-    const context = async () => ({
-      statusKey: new Uint8Array(32).fill(33),
-      userId: "user-1",
-    });
-    const firstSync = new PermissionSyncService(backend, first, context);
-    const secondSync = new PermissionSyncService(backend, second, context);
-
-    expect(first.verifyModelWalletPassword("user-1", "123456")).toBe(true);
-    await firstSync.run(() => undefined);
-    await secondSync.run(() => undefined);
-
-    vi.useFakeTimers();
-    await secondSync.run(async () => {
-      vi.setSystemTime(new Date("2030-01-01T00:00:00.000Z"));
-      expect(
-        second.changeModelWalletPassword("user-1", "123456", "222222"),
-      ).toBe(true);
-
-      vi.setSystemTime(new Date("2026-08-10T00:00:00.000Z"));
-      await firstSync.run(() => {
-        expect(
-          first.changeModelWalletPassword("user-1", "123456", "111111"),
-        ).toBe(true);
-      });
-    });
-
-    expect(second.verifyModelWalletPassword("user-1", "222222")).toBe(false);
-    expect(second.verifyModelWalletPassword("user-1", "111111")).toBe(true);
-    await firstSync.run(() => undefined);
-    expect(first.verifyModelWalletPassword("user-1", "111111")).toBe(true);
-    first.close();
-    second.close();
-  });
 });
 
 class MemoryBackend implements DashboardBackend {

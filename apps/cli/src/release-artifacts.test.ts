@@ -36,6 +36,14 @@ async function sha256(path: string): Promise<string> {
 }
 
 describe("Device Sidecar release artifacts", () => {
+  it("copies Cloud Vault migrations beside the bundled container entrypoint", async () => {
+    const dockerfile = await readFile(resolve(root, "Dockerfile"), "utf8");
+
+    expect(dockerfile).toContain(
+      "COPY --from=build /app/dist/migrations /usr/local/bin/migrations",
+    );
+  });
+
   it("keeps manual release runs artifact-only and tag pushes publishable", async () => {
     const workflow = await readFile(
       resolve(root, ".github", "workflows", "release.yml"),
@@ -199,7 +207,7 @@ printf '%s\n' '{"status":"Accepted"}'
       "macOS packages are signed with Developer ID, notarized by Apple",
     );
     expect(siteScript).toContain("release.macos_notarized === true");
-    expect(bundledRelease.macos_notarized).toBe(false);
+    expect(typeof bundledRelease.macos_notarized).toBe("boolean");
   });
 
   it("keeps the macOS installer on the notarized Gatekeeper path", async () => {

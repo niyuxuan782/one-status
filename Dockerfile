@@ -21,6 +21,7 @@ LABEL org.opencontainers.image.description="Cross-device AI tool, encrypted cred
 LABEL org.opencontainers.image.licenses="Apache-2.0"
 
 COPY --from=build /app/dist/one-status.js /usr/local/bin/one-status
+COPY --from=build /app/dist/migrations /usr/local/bin/migrations
 COPY --from=build /app/LICENSE /usr/share/doc/one-status/LICENSE
 COPY --from=build /app/dist/THIRD_PARTY_NOTICES.txt /usr/share/doc/one-status/THIRD_PARTY_NOTICES.txt
 RUN chmod 0755 /usr/local/bin/one-status && mkdir -p /data && chown node:node /data

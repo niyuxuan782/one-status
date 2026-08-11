@@ -6,7 +6,17 @@ SSH_HOST="${ONE_STATUS_SSH_HOST:?set ONE_STATUS_SSH_HOST}"
 SSH_USER="${ONE_STATUS_SSH_USER:-ubuntu}"
 REMOTE_ROOT="${ONE_STATUS_REMOTE_ROOT:-/opt/one-status}"
 DOMAIN="${ONE_STATUS_DOMAIN:?set ONE_STATUS_DOMAIN}"
+MCP_DOMAIN="${ONE_STATUS_MCP_DOMAIN:?set ONE_STATUS_MCP_DOMAIN}"
 ACME_EMAIL="${ONE_STATUS_ACME_EMAIL:?set ONE_STATUS_ACME_EMAIL}"
+OPAQUE_SERVER_SETUP="${ONE_STATUS_OPAQUE_SERVER_SETUP:?set ONE_STATUS_OPAQUE_SERVER_SETUP}"
+VAULT_OPAQUE_SERVER_SETUP="${ONE_STATUS_VAULT_OPAQUE_SERVER_SETUP:?set ONE_STATUS_VAULT_OPAQUE_SERVER_SETUP}"
+POSTGRES_PASSWORD="${ONE_STATUS_POSTGRES_PASSWORD:?set ONE_STATUS_POSTGRES_PASSWORD}"
+VAULT_SERVICE_TOKEN="${ONE_STATUS_VAULT_SERVICE_TOKEN:?set ONE_STATUS_VAULT_SERVICE_TOKEN}"
+VAULT_KMS_KEY_ID="${ONE_STATUS_VAULT_KMS_KEY_ID:?set ONE_STATUS_VAULT_KMS_KEY_ID}"
+VAULT_KMS_REGION="${ONE_STATUS_VAULT_KMS_REGION:?set ONE_STATUS_VAULT_KMS_REGION}"
+TENCENT_SECRET_ID="${TENCENTCLOUD_SECRET_ID:?set TENCENTCLOUD_SECRET_ID}"
+TENCENT_SECRET_KEY="${TENCENTCLOUD_SECRET_KEY:?set TENCENTCLOUD_SECRET_KEY}"
+TENCENT_SESSION_TOKEN="${TENCENTCLOUD_SESSION_TOKEN:-}"
 SEED_DB="${ONE_STATUS_SEED_DB:-}"
 PREBUILT_IMAGES="${ONE_STATUS_PREBUILT_IMAGES:-false}"
 PUBLIC_HEALTH_REQUIRED="${ONE_STATUS_PUBLIC_HEALTH_REQUIRED:-true}"
@@ -20,6 +30,7 @@ LOCK_ACQUIRED=false
 DEPLOYMENT_STARTED=false
 DEPLOYMENT_FINALIZED=false
 CURL_RESOLVE_OPTIONS=()
+MCP_CURL_RESOLVE_OPTIONS=()
 SSH_OPTIONS=(
   -o ControlMaster=auto
   -o ControlPersist=120
@@ -39,8 +50,48 @@ if [[ ! "$DOMAIN" =~ ^[A-Za-z0-9.-]+$ ]]; then
   printf 'ONE_STATUS_DOMAIN contains unsupported characters.\n' >&2
   exit 1
 fi
+if [[ ! "$MCP_DOMAIN" =~ ^[A-Za-z0-9.-]+$ ]]; then
+  printf 'ONE_STATUS_MCP_DOMAIN contains unsupported characters.\n' >&2
+  exit 1
+fi
 if [[ ! "$ACME_EMAIL" =~ ^[^[:space:]@]+@[^[:space:]@]+$ ]]; then
   printf 'ONE_STATUS_ACME_EMAIL is invalid.\n' >&2
+  exit 1
+fi
+if [[ ! "$OPAQUE_SERVER_SETUP" =~ ^[A-Za-z0-9_-]{171}$ ]]; then
+  printf 'ONE_STATUS_OPAQUE_SERVER_SETUP must be a 171-character Base64URL setup.\n' >&2
+  exit 1
+fi
+if [[ ! "$VAULT_OPAQUE_SERVER_SETUP" =~ ^[A-Za-z0-9_-]{171}$ ]]; then
+  printf 'ONE_STATUS_VAULT_OPAQUE_SERVER_SETUP must be a 171-character Base64URL setup.\n' >&2
+  exit 1
+fi
+if [[ "$OPAQUE_SERVER_SETUP" == "$VAULT_OPAQUE_SERVER_SETUP" ]]; then
+  printf 'Account and Vault OPAQUE server setups must be generated independently.\n' >&2
+  exit 1
+fi
+if [[ ! "$POSTGRES_PASSWORD" =~ ^[A-Za-z0-9_-]{32,256}$ ]]; then
+  printf 'ONE_STATUS_POSTGRES_PASSWORD must be 32-256 URL-safe characters.\n' >&2
+  exit 1
+fi
+if [[ ! "$VAULT_SERVICE_TOKEN" =~ ^[A-Za-z0-9_-]{32,512}$ ]]; then
+  printf 'ONE_STATUS_VAULT_SERVICE_TOKEN must be 32-512 URL-safe characters.\n' >&2
+  exit 1
+fi
+if [[ ! "$VAULT_KMS_KEY_ID" =~ ^[A-Za-z0-9._:-]{1,256}$ ]]; then
+  printf 'ONE_STATUS_VAULT_KMS_KEY_ID is invalid.\n' >&2
+  exit 1
+fi
+if [[ ! "$VAULT_KMS_REGION" =~ ^[A-Za-z0-9-]{1,64}$ ]]; then
+  printf 'ONE_STATUS_VAULT_KMS_REGION is invalid.\n' >&2
+  exit 1
+fi
+if [[ ! "$TENCENT_SECRET_ID" =~ ^[A-Za-z0-9_-]{8,256}$ || ! "$TENCENT_SECRET_KEY" =~ ^[A-Za-z0-9_-]{8,256}$ ]]; then
+  printf 'Tencent Cloud KMS credentials contain unsupported characters.\n' >&2
+  exit 1
+fi
+if [[ -n "$TENCENT_SESSION_TOKEN" && ! "$TENCENT_SESSION_TOKEN" =~ ^[A-Za-z0-9._~+/=-]{8,4096}$ ]]; then
+  printf 'Tencent Cloud KMS session token contains unsupported characters.\n' >&2
   exit 1
 fi
 if [[ ! "$RELEASE_ID" =~ ^[0-9]{8}T[0-9]{6}Z$ ]]; then
@@ -57,6 +108,7 @@ if [[ "$PUBLIC_HEALTH_REQUIRED" != true && "$PUBLIC_HEALTH_REQUIRED" != false ]]
 fi
 if [[ "$SSH_HOST" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
   CURL_RESOLVE_OPTIONS=(--resolve "$DOMAIN:443:$SSH_HOST")
+  MCP_CURL_RESOLVE_OPTIONS=(--resolve "$MCP_DOMAIN:443:$SSH_HOST")
 fi
 
 close_control_master() {
@@ -116,7 +168,7 @@ fi
 
 ssh_run "set -e; missing=(); command -v docker >/dev/null 2>&1 || missing+=(docker.io); sudo docker compose version >/dev/null 2>&1 || missing+=(docker-compose-v2); command -v sqlite3 >/dev/null 2>&1 || missing+=(sqlite3); if (( \${#missing[@]} )); then sudo apt-get update; sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \"\${missing[@]}\"; fi; sudo systemctl enable --now docker; sudo docker compose version >/dev/null"
 
-ssh_run "set -e; sudo install -d -m 0755 '$REMOTE_ROOT' '$REMOTE_ROOT/releases' '$RELEASE_DIR' '$REMOTE_ROOT/shared'; sudo install -d -m 0700 '$REMOTE_ROOT/shared/data' '$REMOTE_ROOT/shared/backups'; sudo install -d -m 0700 -o root -g root '$REMOTE_ROOT/shared/caddy-data' '$REMOTE_ROOT/shared/caddy-config'; sudo chown '$SSH_USER' '$REMOTE_ROOT' '$REMOTE_ROOT/releases' '$RELEASE_DIR' '$REMOTE_ROOT/shared' '$REMOTE_ROOT/shared/data' '$REMOTE_ROOT/shared/backups'"
+ssh_run "set -e; sudo install -d -m 0755 '$REMOTE_ROOT' '$REMOTE_ROOT/releases' '$RELEASE_DIR' '$REMOTE_ROOT/shared'; sudo install -d -m 0700 '$REMOTE_ROOT/shared/data' '$REMOTE_ROOT/shared/backups'; sudo install -d -m 0700 -o root -g root '$REMOTE_ROOT/shared/caddy-data' '$REMOTE_ROOT/shared/caddy-config' '$REMOTE_ROOT/shared/postgres-data'; sudo chown '$SSH_USER' '$REMOTE_ROOT' '$REMOTE_ROOT/releases' '$RELEASE_DIR' '$REMOTE_ROOT/shared' '$REMOTE_ROOT/shared/data' '$REMOTE_ROOT/shared/backups'; sudo chown 999:999 '$REMOTE_ROOT/shared/postgres-data'"
 PREVIOUS_RELEASE="$(ssh_run "if [[ -L '$REMOTE_ROOT/current' ]]; then readlink -f '$REMOTE_ROOT/current'; fi")"
 
 if [[ -n "$PREVIOUS_RELEASE" ]]; then
@@ -144,11 +196,22 @@ COPYFILE_DISABLE=1 tar -C "$ROOT" \
 ssh_run "set -e
 cat > '$RELEASE_ENV' <<EOF
 ONE_STATUS_DOMAIN=$DOMAIN
+ONE_STATUS_MCP_DOMAIN=$MCP_DOMAIN
 ONE_STATUS_ACME_EMAIL=$ACME_EMAIL
 ONE_STATUS_IMAGE_TAG=$RELEASE_ID
+ONE_STATUS_OPAQUE_SERVER_SETUP=$OPAQUE_SERVER_SETUP
+ONE_STATUS_VAULT_OPAQUE_SERVER_SETUP=$VAULT_OPAQUE_SERVER_SETUP
 ONE_STATUS_DATA_DIR=$REMOTE_ROOT/shared/data
 ONE_STATUS_CADDY_DATA_DIR=$REMOTE_ROOT/shared/caddy-data
 ONE_STATUS_CADDY_CONFIG_DIR=$REMOTE_ROOT/shared/caddy-config
+ONE_STATUS_POSTGRES_DATA_DIR=$REMOTE_ROOT/shared/postgres-data
+ONE_STATUS_POSTGRES_PASSWORD=$POSTGRES_PASSWORD
+ONE_STATUS_VAULT_SERVICE_TOKEN=$VAULT_SERVICE_TOKEN
+ONE_STATUS_VAULT_KMS_KEY_ID=$VAULT_KMS_KEY_ID
+ONE_STATUS_VAULT_KMS_REGION=$VAULT_KMS_REGION
+TENCENTCLOUD_SECRET_ID=$TENCENT_SECRET_ID
+TENCENTCLOUD_SECRET_KEY=$TENCENT_SECRET_KEY
+TENCENTCLOUD_SESSION_TOKEN=$TENCENT_SESSION_TOKEN
 EOF
 chmod 0600 '$RELEASE_ENV'"
 
@@ -170,7 +233,7 @@ if [[ -n "$SEED_DB" ]]; then
 fi
 
 if [[ "$PREBUILT_IMAGES" == true ]]; then
-  ssh_run "set -e; sudo docker image inspect 'one-status:$RELEASE_ID' 'caddy:2.10.2-alpine' >/dev/null"
+  ssh_run "set -e; sudo docker image inspect 'one-status:$RELEASE_ID' 'caddy:2.10.2-alpine' 'postgres:17.6-bookworm' >/dev/null"
   compose_build_flags="--no-build --pull never"
 else
   compose_build_flags="--build"
@@ -184,7 +247,8 @@ fi
 remote_healthy=false
 for attempt in {1..60}; do
   health_response="$(ssh_run "curl --noproxy '*' --resolve '$DOMAIN:443:127.0.0.1' --connect-timeout 5 --max-time 10 -fsS 'https://$DOMAIN/health'" 2>/dev/null || true)"
-  if [[ "$health_response" == *\"release\":\"$RELEASE_ID\"* ]]; then
+  mcp_health_response="$(ssh_run "curl --noproxy '*' --resolve '$MCP_DOMAIN:443:127.0.0.1' --connect-timeout 5 --max-time 10 -fsS 'https://$MCP_DOMAIN/health'" 2>/dev/null || true)"
+  if [[ "$health_response" == *\"release\":\"$RELEASE_ID\"* && "$health_response" == *\"remoteMcp\":\"ready\"* && "$health_response" == *\"cloudVault\":\"configured\"* && "$mcp_health_response" == *\"release\":\"$RELEASE_ID\"* ]]; then
     remote_healthy=true
     break
   fi
@@ -203,7 +267,8 @@ if [[ "$PUBLIC_HEALTH_REQUIRED" == false ]]; then
 fi
 for ((attempt = 1; attempt <= public_attempts; attempt += 1)); do
   health_response="$(curl --noproxy '*' "${CURL_RESOLVE_OPTIONS[@]}" --connect-timeout 5 --max-time 10 -fsS "https://$DOMAIN/health" 2>/dev/null || true)"
-  if [[ "$health_response" == *\"release\":\"$RELEASE_ID\"* ]]; then
+  mcp_health_response="$(curl --noproxy '*' "${MCP_CURL_RESOLVE_OPTIONS[@]}" --connect-timeout 5 --max-time 10 -fsS "https://$MCP_DOMAIN/health" 2>/dev/null || true)"
+  if [[ "$health_response" == *\"release\":\"$RELEASE_ID\"* && "$health_response" == *\"remoteMcp\":\"ready\"* && "$health_response" == *\"cloudVault\":\"configured\"* && "$mcp_health_response" == *\"release\":\"$RELEASE_ID\"* ]]; then
     healthy=true
     break
   fi
@@ -218,6 +283,14 @@ if [[ "$healthy" != true ]]; then
   printf 'Public HTTPS is not reachable; promoting the release because ONE_STATUS_PUBLIC_HEALTH_REQUIRED=false.\n' >&2
 fi
 
+oauth_metadata="$(curl --noproxy '*' "${CURL_RESOLVE_OPTIONS[@]}" --connect-timeout 5 --max-time 10 -fsS "https://$DOMAIN/.well-known/oauth-authorization-server" 2>/dev/null || true)"
+resource_metadata="$(curl --noproxy '*' "${MCP_CURL_RESOLVE_OPTIONS[@]}" --connect-timeout 5 --max-time 10 -fsS "https://$MCP_DOMAIN/.well-known/oauth-protected-resource/mcp" 2>/dev/null || true)"
+mcp_status="$(curl --noproxy '*' "${MCP_CURL_RESOLVE_OPTIONS[@]}" --connect-timeout 5 --max-time 10 -sS -o /dev/null -w '%{http_code}' "https://$MCP_DOMAIN/mcp" 2>/dev/null || true)"
+if [[ "$oauth_metadata" != *\"authorization_endpoint\":\"https://$DOMAIN/oauth/authorize\"* || "$resource_metadata" != *\"resource\":\"https://$MCP_DOMAIN/mcp\"* || "$mcp_status" != 401 ]]; then
+  printf 'Remote MCP OAuth discovery verification failed.\n' >&2
+  exit 1
+fi
+
 ssh_run "set -e; ln -sfn '$RELEASE_ENV' '$REMOTE_ROOT/shared/.production.env.$RELEASE_ID'; mv -Tf '$REMOTE_ROOT/shared/.production.env.$RELEASE_ID' '$REMOTE_ROOT/shared/production.env'; ln -sfn '$RELEASE_DIR' '$REMOTE_ROOT/.current.$RELEASE_ID'; mv -Tf '$REMOTE_ROOT/.current.$RELEASE_ID' '$REMOTE_ROOT/current'; sudo install -m 0755 '$RELEASE_DIR/deploy/backup.sh' /usr/local/sbin/one-status-backup; printf 'ONE_STATUS_DEPLOY_ROOT=%s\n' '$REMOTE_ROOT' | sudo tee /etc/default/one-status-backup >/dev/null; sudo chmod 0600 /etc/default/one-status-backup; printf '17 3 * * * root . /etc/default/one-status-backup && /usr/local/sbin/one-status-backup >>/var/log/one-status-backup.log 2>&1\n' | sudo tee /etc/cron.d/one-status-backup >/dev/null; sudo chmod 0644 /etc/cron.d/one-status-backup"
 DEPLOYMENT_FINALIZED=true
-printf 'One Status Cloud is healthy: https://%s\n' "$DOMAIN"
+printf 'One Status Cloud is healthy: https://%s and https://%s/mcp\n' "$DOMAIN" "$MCP_DOMAIN"

@@ -1,11 +1,17 @@
 import { execFileSync } from "node:child_process";
-import { chmod, mkdir, rm } from "node:fs/promises";
+import { chmod, copyFile, mkdir, readFile, rm } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { resolve } from "node:path";
 import { build } from "esbuild";
 
 const root = resolve(import.meta.dirname, "..");
 const outputDirectory = resolve(root, "dist");
 const outputFile = resolve(outputDirectory, "one-status.js");
+const nodeRequire = createRequire(resolve(root, "packages/pake/package.json"));
+const opaqueBrowserBundle = await readFile(
+  nodeRequire.resolve("@serenity-kit/opaque/esm/index.js"),
+  "utf8",
+);
 
 await rm(outputDirectory, { recursive: true, force: true });
 await mkdir(outputDirectory, { recursive: true });
@@ -15,7 +21,10 @@ await build({
     js: 'import { createRequire as __oneStatusCreateRequire } from "node:module"; const require = __oneStatusCreateRequire(import.meta.url);',
   },
   bundle: true,
-  define: { "process.env.NODE_ENV": '"production"' },
+  define: {
+    "process.env.NODE_ENV": '"production"',
+    __ONE_STATUS_OPAQUE_BROWSER_BUNDLE__: JSON.stringify(opaqueBrowserBundle),
+  },
   entryPoints: [resolve(root, "apps/cli/src/main.ts")],
   format: "esm",
   legalComments: "eof",
@@ -27,6 +36,14 @@ await build({
 });
 
 await chmod(outputFile, 0o755);
+await mkdir(resolve(outputDirectory, "migrations"), { recursive: true });
+await copyFile(
+  resolve(
+    root,
+    "apps/api/src/cloud-vault/migrations/001_cloud_vault.sql",
+  ),
+  resolve(outputDirectory, "migrations/001_cloud_vault.sql"),
+);
 
 execFileSync(
   process.execPath,

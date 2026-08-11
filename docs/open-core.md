@@ -14,6 +14,7 @@ One Status 采用 Open Core 模式。个人用户能够审计、运行和自托�
 - Memory、Preferences、Task State 和 Handoff 工作流
 - Codex 与 Claude Code Adapter
 - 可自托管的密文 Sync API
+- OAuth 2.1 Remote MCP、Device Relay、Cloud Vault Runtime 与 KMS Envelope Encryption
 - Docker、Caddy 和基础部署配置
 
 用户可以在自己的设备或服务器上运行完整个人版，并检查敏感 Status 是否在上传前完成加密。
@@ -22,7 +23,7 @@ One Status 采用 Open Core 模式。个人用户能够审计、运行和自托�
 
 One Status Cloud 计划提供以下商业能力：
 
-- 托管的高可用密文同步
+- 托管的高可用密文同步与 KMS 加密钱包
 - Managed OAuth Provider 配置、轮换和可用性维护
 - 异地备份、版本历史和恢复流程
 - 团队策略、审计记录和企业支持
@@ -32,7 +33,7 @@ One Status Cloud 计划提供以下商业能力：
 
 ## 安全边界
 
-Status Key 由设备持有。云服务保存密文 envelope、同步 revision、设备 presence 和账号元数据。OAuth Token、模型 API Key、账号密码、SSH、云凭据与卡密保存在本机 Permission Vault；Agent 按连接 action 或钥匙串用途获得授权。
+Status Key 由设备持有。云服务保存 Status 密文 envelope、同步 revision、设备 presence 和账号元数据。Cloud Vault 为模型 API Key、账号密码、SSH、云凭据与卡密保存逐条密文和 KMS Wrapped DEK；Vault Runtime 只在 OAuth scope、Agent Grant 和凭据策略通过后临时解密指定条目。第三方 OAuth 连接当前仍由在线 Desktop 执行。
 
 托管 OAuth 会引入额外服务端信任边界。该能力上线前会单独发布威胁模型、Token 存储边界和撤销流程。
 

@@ -4,7 +4,6 @@ import {
   createHash,
   randomBytes,
   randomUUID,
-  scryptSync,
   timingSafeEqual,
 } from "node:crypto";
 import {
@@ -18,11 +17,10 @@ import { createRequire } from "node:module";
 import { dirname } from "node:path";
 import type { DatabaseSync as DatabaseSyncType } from "node:sqlite";
 import { z } from "zod";
+import type { OpaquePasswordRecord } from "@one-status/pake/authority";
 
 const nodeRequire = createRequire(import.meta.url);
 const FLOW_TTL_MS = 10 * 60 * 1_000;
-const DEFAULT_MODEL_WALLET_PASSWORD = "123456";
-const MODEL_WALLET_PASSWORD_BYTES = 32;
 
 export const oauthProviders = [
   "google",
@@ -183,8 +181,7 @@ export interface CredentialAccessAuditEvent {
     | "agent_not_allowed"
     | "project_denied"
     | "project_not_allowed"
-    | "approval_required"
-    | "wallet_password_invalid";
+    | "approval_required";
 }
 
 export interface UpsertPrivateCredentialInput {
@@ -239,11 +236,6 @@ export interface PermissionVaultBundle {
   }>;
   updatedAt: string;
   version: 1;
-  walletPassword?: {
-    salt: string;
-    updatedAt: string;
-    verifier: string;
-  };
 }
 
 interface PermissionVaultOptions {
@@ -380,10 +372,10 @@ export class PermissionVault {
         PRIMARY KEY (user_id, source_id)
       );
 
-      CREATE TABLE IF NOT EXISTS model_wallet_passwords (
+      CREATE TABLE IF NOT EXISTS wallet_pake_records (
         user_id TEXT PRIMARY KEY,
-        salt TEXT NOT NULL,
-        password_verifier TEXT NOT NULL,
+        registration_record TEXT NOT NULL,
+        profile TEXT NOT NULL,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
@@ -630,86 +622,6 @@ export class PermissionVault {
     ).map((row) => ({ sourceId: row.source_id, updatedAt: row.updated_at }));
   }
 
-  verifyModelWalletPassword(userId: string, passwordValue: string): boolean {
-    const password = requiredWalletPassword(passwordValue);
-    let verifier = this.#database
-      .prepare(
-        `SELECT salt, password_verifier
-           FROM model_wallet_passwords WHERE user_id = ?`,
-      )
-      .get(userId) as
-      | { password_verifier: string; salt: string }
-      | undefined;
-    if (!verifier) {
-      const now = new Date().toISOString();
-      const salt = randomBytes(16);
-      verifier = {
-        salt: salt.toString("base64url"),
-        password_verifier: deriveModelWalletPassword(
-          DEFAULT_MODEL_WALLET_PASSWORD,
-          salt,
-        ).toString("base64url"),
-      };
-      this.#database
-        .prepare(
-          `INSERT INTO model_wallet_passwords
-             (user_id, salt, password_verifier, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?)`,
-        )
-        .run(
-          userId,
-          verifier.salt,
-          verifier.password_verifier,
-          now,
-          now,
-        );
-      this.#touch(userId);
-    }
-    const salt = Buffer.from(verifier.salt, "base64url");
-    const expected = Buffer.from(verifier.password_verifier, "base64url");
-    const actual = deriveModelWalletPassword(password, salt);
-    return (
-      expected.byteLength === actual.byteLength &&
-      timingSafeEqual(expected, actual)
-    );
-  }
-
-  changeModelWalletPassword(
-    userId: string,
-    currentPasswordValue: string,
-    nextPasswordValue: string,
-  ): boolean {
-    if (!this.verifyModelWalletPassword(userId, currentPasswordValue)) {
-      return false;
-    }
-    const nextPassword = requiredWalletPassword(nextPasswordValue);
-    if (nextPassword.length < 6) {
-      throw new Error("Model wallet password must contain at least 6 characters.");
-    }
-    const now = new Date().toISOString();
-    const salt = randomBytes(16);
-    const verifier = deriveModelWalletPassword(nextPassword, salt);
-    this.#database
-      .prepare(
-        `INSERT INTO model_wallet_passwords
-           (user_id, salt, password_verifier, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?)
-         ON CONFLICT(user_id) DO UPDATE SET
-           salt = excluded.salt,
-           password_verifier = excluded.password_verifier,
-           updated_at = excluded.updated_at`,
-      )
-      .run(
-        userId,
-        salt.toString("base64url"),
-        verifier.toString("base64url"),
-        now,
-        now,
-      );
-    this.#touch(userId);
-    return true;
-  }
-
   upsertPrivateCredential(
     inputValue: UpsertPrivateCredentialInput,
   ): MaskedPrivateCredential {
@@ -862,6 +774,51 @@ export class PermissionVault {
       .map(maskPrivateCredential);
   }
 
+  getWalletPakeRecord(userId: string): OpaquePasswordRecord | null {
+    const row = this.#database
+      .prepare(
+        `SELECT registration_record, profile, created_at, updated_at
+           FROM wallet_pake_records WHERE user_id = ?`,
+      )
+      .get(userId) as
+      | {
+          created_at: string;
+          profile: string;
+          registration_record: string;
+          updated_at: string;
+        }
+      | undefined;
+    return row
+      ? {
+          createdAt: row.created_at,
+          profile: JSON.parse(row.profile) as OpaquePasswordRecord["profile"],
+          registrationRecord: row.registration_record,
+          updatedAt: row.updated_at,
+          userId,
+        }
+      : null;
+  }
+
+  upsertWalletPakeRecord(record: OpaquePasswordRecord): void {
+    this.#database
+      .prepare(
+        `INSERT INTO wallet_pake_records
+           (user_id, registration_record, profile, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(user_id) DO UPDATE SET
+           registration_record = excluded.registration_record,
+           profile = excluded.profile,
+           updated_at = excluded.updated_at`,
+      )
+      .run(
+        record.userId,
+        record.registrationRecord,
+        JSON.stringify(record.profile),
+        record.createdAt,
+        record.updatedAt,
+      );
+  }
+
   findPrivateCredentialsForAgent(input: {
     agentId: string;
     kinds?: PrivateCredentialKind[];
@@ -937,26 +894,18 @@ export class PermissionVault {
     return reason === "allowed" ? credential : null;
   }
 
-  revealPrivateCredential(
+  revealPrivateCredentialAuthorized(
     userId: string,
     credentialIdValue: string,
-    password: string,
   ): PrivateCredential | null {
     const credentialId = requiredUuid(credentialIdValue, "Credential ID");
-    const validPassword = this.verifyModelWalletPassword(userId, password);
-    const credential = validPassword
-      ? this.#getPrivateCredential(userId, credentialId)
-      : null;
+    const credential = this.#getPrivateCredential(userId, credentialId);
     this.#recordCredentialAccessAudit({
       agentId: "user",
       credentialId,
-      decision: validPassword && credential ? "allow" : "deny",
+      decision: credential ? "allow" : "deny",
       purpose: "user.reveal",
-      reason: validPassword
-        ? credential
-          ? "allowed"
-          : "credential_not_found"
-        : "wallet_password_invalid",
+      reason: credential ? "allowed" : "credential_not_found",
       userId,
     });
     return credential;
@@ -1587,14 +1536,6 @@ export class PermissionVault {
       source_id: string;
       updated_at: string;
     }>;
-    const walletPasswordRow = this.#database
-      .prepare(
-        `SELECT salt, password_verifier, updated_at
-           FROM model_wallet_passwords WHERE user_id = ?`,
-      )
-      .get(userId) as
-      | { password_verifier: string; salt: string; updated_at: string }
-      | undefined;
     const ignoredModelSources = this.#database
       .prepare(
         "SELECT source_id, updated_at FROM model_credential_ignores WHERE user_id = ? ORDER BY source_id",
@@ -1662,15 +1603,6 @@ export class PermissionVault {
       }),
       updatedAt: this.#updatedAt(userId),
       version: 1,
-      ...(walletPasswordRow
-        ? {
-            walletPassword: {
-              salt: walletPasswordRow.salt,
-              updatedAt: walletPasswordRow.updated_at,
-              verifier: walletPasswordRow.password_verifier,
-            },
-          }
-        : {}),
     });
   }
 
@@ -1900,27 +1832,6 @@ export class PermissionVault {
         }
       }
 
-      if (bundle.walletPassword) {
-        validateModelWalletVerifier(bundle.walletPassword);
-        this.#database
-          .prepare(
-            `INSERT INTO model_wallet_passwords
-               (user_id, salt, password_verifier, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?)
-             ON CONFLICT(user_id) DO UPDATE SET
-               salt = excluded.salt,
-               password_verifier = excluded.password_verifier,
-               updated_at = excluded.updated_at`,
-          )
-          .run(
-            userId,
-            bundle.walletPassword.salt,
-            bundle.walletPassword.verifier,
-            bundle.walletPassword.updatedAt,
-            bundle.walletPassword.updatedAt,
-          );
-      }
-
       this.#database
         .prepare(
           `INSERT INTO permission_vault_state (user_id, updated_at)
@@ -2020,8 +1931,6 @@ export class PermissionVault {
              UNION ALL
              SELECT updated_at FROM model_credentials WHERE user_id = ?
              UNION ALL
-             SELECT updated_at FROM model_wallet_passwords WHERE user_id = ?
-             UNION ALL
              SELECT updated_at FROM model_credential_ignores WHERE user_id = ?
              UNION ALL
              SELECT updated_at FROM private_credentials WHERE user_id = ?
@@ -2031,7 +1940,6 @@ export class PermissionVault {
            )`,
       )
       .get(
-        userId,
         userId,
         userId,
         userId,
@@ -2363,14 +2271,6 @@ const permissionVaultBundleSchema: z.ZodType<PermissionVaultBundle> = z
     ),
     updatedAt: z.iso.datetime({ offset: true }),
     version: z.literal(1),
-    walletPassword: z
-      .object({
-        salt: z.string().regex(/^[A-Za-z0-9_-]{22}$/),
-        updatedAt: z.iso.datetime({ offset: true }),
-        verifier: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
-      })
-      .strict()
-      .optional(),
   })
   .strict();
 
@@ -2870,29 +2770,6 @@ function requiredSecretValue(
     throw new Error(`${label} is invalid.`);
   }
   return normalized;
-}
-
-function requiredWalletPassword(value: string): string {
-  if (!value || value.length > 256) {
-    throw new Error("Model wallet password is invalid.");
-  }
-  return value;
-}
-
-function deriveModelWalletPassword(password: string, salt: Uint8Array): Buffer {
-  return scryptSync(password, salt, MODEL_WALLET_PASSWORD_BYTES);
-}
-
-function validateModelWalletVerifier(
-  value: NonNullable<PermissionVaultBundle["walletPassword"]>,
-): void {
-  if (
-    Buffer.from(value.salt, "base64url").byteLength !== 16 ||
-    Buffer.from(value.verifier, "base64url").byteLength !==
-      MODEL_WALLET_PASSWORD_BYTES
-  ) {
-    throw new Error("Model wallet password verifier is invalid.");
-  }
 }
 
 function safeSecretEqual(left: string, right: string): boolean {

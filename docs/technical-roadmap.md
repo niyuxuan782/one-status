@@ -65,17 +65,19 @@ interface StatusDocument {
 
 ## 账号、设备与密钥
 
-账号密码经 `scrypt` 加盐后保存。设备登录成功后获得随机会话 Token，服务端只保存 Token 的 SHA-256 摘要。
+账号注册和登录采用 OPAQUE（RFC 9807，Ristretto255 + SHA-512）PAKE。密码只在客户端参与协议计算；Sync API 接收 OPAQUE 消息并保存注册记录，无法获得账号密码。设备登录成功后获得随机会话 Token，服务端只保存 Token 的 SHA-256 摘要。
 
 Status Key 是独立的 256 位随机值，由客户端自动管理：
 
 1. 首台设备本地生成 Status Key，不向用户展示。
-2. 客户端使用账号密码经 `scrypt` 派生的密钥封装 Status Key。
+2. 客户端使用 OPAQUE `exportKey` 经 HKDF-SHA-256 派生封装密钥，再以 AES-256-GCM 封装 Status Key。
 3. 注册事务原子保存封装后的 Status Key、设备会话和 revision 1 密文 vault。
-4. 新设备通过账密登录后下载封装密文并在本地自动解封。
+4. 新设备完成 OPAQUE 登录后下载封装密文，并使用本次协议生成的 `exportKey` 在本地自动解封。
 5. Status 使用 AES-256-GCM 加密，AAD 绑定协议版本和同步 revision。
 
 新设备默认可以直接登录。任一已登录设备可以撤销其他设备的 Session、封禁或解除封禁设备，并通过账号策略拒绝后续新设备登录。
+
+历史数据库中的 `password_salt`、`password_hash` 和 `legacy-scrypt` 标记仅用于识别待迁移账号。服务端不再执行 scrypt 注册、登录或口令校验；已登录的受信任设备可发起一次 OPAQUE 注册迁移。旧版 scrypt Status Key wrapper 仅保留客户端读取兼容能力。
 
 ## 同步协议
 

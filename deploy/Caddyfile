@@ -3,45 +3,77 @@
 	email {$ONE_STATUS_ACME_EMAIL}
 }
 
+(api_proxy) {
+	reverse_proxy api:8787 {
+		health_uri /health
+		health_interval 30s
+		health_timeout 5s
+	}
+}
+
+(security_headers) {
+	header {
+		-Server
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), geolocation=(), microphone=()"
+	}
+}
+
 {$ONE_STATUS_DOMAIN} {
 	encode zstd gzip
 
 	request_body {
-		max_size 2MB
+		max_size 8MB
 	}
+
+	@sensitive path /oauth /oauth/* /v1/relay /v1/vault /v1/vault/*
+	log_skip @sensitive
 
 	handle /health {
-		reverse_proxy api:8787 {
-			health_uri /health
-			health_interval 30s
-			health_timeout 5s
-		}
+		import api_proxy
 	}
 
-	@api path /v1 /v1/*
-	handle @api {
-		reverse_proxy api:8787 {
-			health_uri /health
-			health_interval 30s
-			health_timeout 5s
-		}
+	@cloud path /v1 /v1/* /oauth /oauth/* /.well-known/oauth-authorization-server /.well-known/oauth-authorization-server/*
+	handle @cloud {
+		import api_proxy
 	}
 
 	handle {
 		redir https://niyuxuan782.github.io/one-status{uri} 302
 	}
 
-	header {
-		-Server
-		Content-Security-Policy "default-src 'self'; base-uri 'self'; connect-src 'self' https://api.github.com; font-src 'self'; form-action 'self'; frame-ancestors 'none'; img-src 'self' data:; object-src 'none'; script-src 'self'; style-src 'self'"
-		Strict-Transport-Security "max-age=31536000; includeSubDomains"
-		X-Content-Type-Options "nosniff"
-		Referrer-Policy "strict-origin-when-cross-origin"
-		Permissions-Policy "camera=(), geolocation=(), microphone=()"
-	}
+	import security_headers
 
 	log {
 		output stdout
 		format json
 	}
+}
+
+{$ONE_STATUS_MCP_DOMAIN} {
+	encode zstd gzip
+
+	request_body {
+		max_size 2MB
+	}
+
+	@mcp_sensitive path /mcp
+	log_skip @mcp_sensitive
+
+	handle /health {
+		import api_proxy
+	}
+
+	@remote_mcp path /mcp /.well-known/oauth-protected-resource /.well-known/oauth-protected-resource/*
+	handle @remote_mcp {
+		import api_proxy
+	}
+
+	handle {
+		respond "One Status Remote MCP" 404
+	}
+
+	import security_headers
 }

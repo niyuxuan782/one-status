@@ -1,8 +1,8 @@
 const releaseFallback = {
-  tag_name: "v0.8.0",
+  tag_name: "v0.9.0",
   assets: [],
   html_url: "https://github.com/niyuxuan782/one-status/releases/latest",
-  macos_notarized: true,
+  macos_notarized: false,
 };
 
 const assetRules = {
@@ -15,7 +15,7 @@ const assetRules = {
 async function loadRelease() {
   let release = releaseFallback;
   try {
-    const response = await fetch("./release.json?v=0.8.0-20260811", {
+    const response = await fetch("./release.json?v=0.9.0-20260811", {
       headers: { Accept: "application/json" },
     });
     if (response.ok) release = await response.json();
@@ -45,19 +45,19 @@ function updateMacReleaseStatus(release) {
   if (title) {
     title.textContent = notarized
       ? "macOS Developer ID 与 Apple 公证"
-      : `${tag} macOS 旧版预览`;
+      : `${tag} macOS 公开预览`;
   }
   if (note) {
     note.textContent = notarized
       ? "该 Release 已通过 Developer ID、Apple notarization、stapled ticket 与 Gatekeeper 校验。"
-      : "该 Release 尚未完成 Apple 公证，macOS 可能显示开发者或安全警告。新的发布流水线会拒绝上传未签名或未公证的包。";
+      : "该 Release 尚未完成 Apple 公证，macOS 可能显示开发者或安全警告。Developer ID 构建已进入独立的 Apple 公证流程。";
   }
   for (const id of ["download-mac-arm", "download-mac-intel"]) {
     const status = document.querySelector(`#${id} [data-mac-release-status]`);
     if (status) {
       status.textContent = notarized
         ? ".dmg · Developer ID + 公证"
-        : ".dmg · 未公证旧版";
+        : ".dmg · 未公证预览";
     }
   }
 }

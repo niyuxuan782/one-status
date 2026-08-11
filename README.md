@@ -2,7 +2,7 @@
 
 **一处管理所有设备上的 AI 工具、密钥、模型和记忆。**
 
-One Status 是跨设备的个人 AI 控制中心。它自动扫描 Codex、Claude Code、Cursor 等工具的本机配置，把模型 API Key、常用账号、SSH、云平台凭据、卡密和其他可复用 Secret 收进端到端加密的密钥钱包，并持续同步项目、记忆、连接与工作状态。
+One Status 是跨设备的个人 AI 控制中心。它自动扫描 Codex、Claude Code、Cursor 等工具的本机配置，把模型 API Key、常用账号、SSH、云平台凭据、卡密和其他可复用 Secret 收进加密密钥钱包，并持续同步项目、记忆、连接与工作状态。
 
 ```text
 设备 -> AI 工具 -> 密钥钱包 -> 可配模型 -> 使用与同步状态
@@ -45,7 +45,7 @@ Office Mac mini                            离线 · 18 分钟前
 扫描设备配置
 -> 本机识别密钥、Endpoint 与请求格式
 -> 加密写入钱包
--> E2EE 同步到其他设备
+-> 每条凭据独立加密并同步到 Cloud Vault
 -> 选择设备、工具和模型
 -> Model Gateway 转换目标工具协议
 -> 本机原子应用并报告结果
@@ -55,25 +55,28 @@ Office Mac mini                            离线 · 18 分钟前
 
 ```text
 用户提供账号、密码、Token、SSH、云凭据或卡密
+-> Remote Agent 调用 credentials_request_approval 提交精确写入摘要
+-> 用户在密钥钱包批准，Agent 取得 10 分钟一次性 approvalToken
 -> Agent 同轮调用 credentials_register
 -> One Status 加密存储并同步
 -> 后续任务按用途、服务、主机、账号和项目匹配
 -> credentials_get 只为当前任务返回所需 Secret
--> 凭据轮换时 credentials_update 更新原条目
+-> 凭据轮换时用同一审批流程调用 credentials_update 更新原条目
 ```
 
-通用条目支持 `account`、`ssh`、`cloud_console`、`github`、`database`、`api`、`oauth`、`license`、`card_key`、`model`、`email`、`vpn`、`certificate`、`signing`、Registry、域名、远程桌面、Webhook 和自定义类型。列表、匹配和普通响应只返回脱敏元数据；Agent 明文读取与用户查看都会留下不含 Secret 的本机审计记录。
+通用条目支持 `account`、`ssh`、`cloud_console`、`github`、`database`、`api`、`oauth`、`license`、`card_key`、`model`、`email`、`vpn`、`certificate`、`signing`、Registry、域名、远程桌面、Webhook 和自定义类型。列表、匹配和普通响应只返回脱敏元数据；Agent 明文读取与用户查看都会留下不含 Secret 的云端审计记录。
 
 当前本机 Model Gateway 支持 OpenAI Responses、OpenAI Chat Completions、Anthropic Messages、Azure OpenAI 和 Ollama 常用接口。Codex 统一接收 Responses，Claude Code 统一接收 Anthropic Messages；上游密钥继续留在 Permission Vault，Agent 配置只保存本机 Gateway Token。OpenAI 来源可以配置到 Claude Code，Anthropic 来源也可以配置到 Codex。Cursor 的原生模型选择器尚未公开自定义 Provider 写入接口，当前版本会明确阻止配置，等待 One Status Cursor 扩展接管。
 
 安全交互保持简单：
 
 - **查看或复制密钥**：必须输入钱包密码。
-- **初始钱包密码**：`123456`，可以在密钥钱包页修改；服务端不保存密码明文。
+- **初始钱包密码**：`123456`，可以在密钥钱包页修改；OPAQUE 保证密码不进入服务端。
 - **切换模型**：无需输入钱包密码，后台只使用已授权的加密引用。
 - **Agent 调用模型**：常规模型请求使用本机 Gateway Token；明确请求模型凭据时可通过 `credentials_get` 获取当前任务所需 API Key。
 - **Agent 使用凭据**：无需钱包密码，受 Agent、项目、用途和标签策略约束；返回值禁止写入普通 Status、Persona、Activity 与错误信息。
-- **设备同步**：钱包条目在客户端加密后上传，云端保存密文 envelope。
+- **远程凭据写入**：登记、更新和删除必须先在密钥钱包批准精确请求；审批 Token 绑定 Agent Session、操作、参数与 10 分钟有效期，使用后立即失效。
+- **设备同步**：Cloud Vault 为每条凭据生成独立 DEK，使用 AES-256-GCM 加密，再由腾讯云 KMS 包装 DEK。
 - **配置写入**：先预览目标文件，在线设备原子应用，失败时恢复原配置；离线设备保存加密意图。
 
 密钥详情显示协议、Endpoint 域名、兼容工具、可配模型、最后验证时间和当前授权。本机绝对路径不会随钱包同步，普通 Status、Agent 上下文与 Activity 日志不会保存密钥明文。
@@ -169,14 +172,16 @@ curl -fsSL https://niyuxuan782.github.io/one-status/install.sh | bash -s -- --cl
 one-status app
 ```
 
-安装器从 GitHub Releases 下载原生产物并校验 `SHA256SUMS.txt`。CLI 安装会同时安装对应平台的 Device Sidecar。公开的 `v0.8.0` macOS 附件已经通过 Developer ID、Apple notarization、stapled ticket 与 Gatekeeper 校验；Release workflow 会拒绝发布未通过这些检查的 macOS 包。Windows Authenticode 仍待接入。
+安装器从 GitHub Releases 下载原生产物并校验 `SHA256SUMS.txt`。CLI 安装会同时安装对应平台的 Device Sidecar。`v0.9.0` 先公开未公证预览，再由 GitHub Actions 构建 Developer ID 版本并提交 Apple；Homebrew stable 会在 stapling 与 Gatekeeper 验证完成后更新。Windows Authenticode 仍待接入。
 
 [查看最新 Release 附件](https://github.com/niyuxuan782/one-status/releases/latest) · [阅读完整安装文档](docs/installation.md)
 
 ## 隐私边界
 
-- Status Key 在首台设备本地生成；云端只保存由账号密码派生密钥加密后的封装密文。
-- 密钥钱包中的模型 API Key、账号密码、SSH、云凭据、卡密，以及 Memory、Preferences、Task State 与配置意图都在设备端加密。
+- Status Key 在首台设备本地生成；云端只保存由 OPAQUE `exportKey` 经 HKDF 派生密钥加密后的封装密文。
+- 账号密码和钱包密码只在客户端参与 OPAQUE，Sync API、OAuth Server 与 Vault Service 只接收协议消息。
+- Memory、Preferences、Task State 与配置意图继续在设备端 E2EE。
+- 密钥钱包持久层只保存凭据密文和 KMS Wrapped DEK；授权请求期间，隔离的 Vault Runtime 只在内存中解密指定凭据。
 - 查看或复制密钥需要钱包密码，日常模型切换不会显示密钥明文。
 - macOS 的设备 Token 与 Status Key 默认存入系统 Keychain。
 - Desktop 概览可开启开机自启动；系统登录只启动 `127.0.0.1:8787` 后台，点击 App 时再显示界面。
@@ -188,6 +193,14 @@ one-status app
 [Threat Model](docs/threat-model.md) 记录当前安全假设与剩余风险。
 
 ## Agent 接入
+
+云端和移动端 Agent 使用 OAuth 2.1 + PKCE 连接：
+
+```text
+https://mcp.os.furesta.top/mcp
+```
+
+Remote MCP 读取 Profile、Context、Memory 和云端密钥钱包；Calendar、Slack、GitHub 等设备连接通过出站 WSS 路由到在线 Desktop。设备离线时，状态和本机连接调用返回明确的 `device_offline`，Cloud Vault 仍可按授权独立工作。
 
 Codex：
 

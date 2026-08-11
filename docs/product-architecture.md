@@ -1,4 +1,4 @@
-# One Status 产品架构 v0.8
+# One Status 产品架构 v0.9
 
 ## 产品定义
 
@@ -14,18 +14,23 @@
 flowchart TD
     Desktop["One Status Desktop"] --> Local["Local Background Service"]
     Local --> Inventory["Read-only Local Inventory"]
-    Local --> Wallet["E2EE Key Wallet"]
+    Local --> Wallet["Local Wallet Cache"]
     Local --> Usage["Bounded Model Usage Scanner"]
     Local --> Adapters["Codex / Claude Code Adapters"]
     Local --> ModelGateway["Local Model Gateway"]
     ModelGateway --> Providers["OpenAI / Anthropic / Azure / Ollama"]
     Local --> Packs["Capability Pack Compiler"]
-    Local <--> Cloud["Encrypted One Status Cloud"]
+    Local <--> Cloud["Sync API / Device Relay"]
+    Remote["ChatGPT / Claude / Mobile Agent"] --> MCP["Remote MCP + OAuth 2.1 PKCE"]
+    MCP --> Cloud
+    MCP --> Vault["Vault Runtime"]
+    Vault --> KMS["Tencent Cloud KMS"]
+    Vault --> Postgres["PostgreSQL Ciphertext + Wrapped DEK"]
     Local <--> GitHub["GitHub Repositories"]
     Cloud --> Presence["Device Presence / Request Routing"]
 ```
 
-桌面应用负责确认和操作，本机后台服务负责扫描、同步、Adapter 与 Handoff。云端保存加密状态和最少量路由元数据。GitHub保存代码、项目文档和用户确认发布的 Handoff 文件。
+桌面应用负责确认和本机操作，本机后台服务负责扫描、同步、Adapter、Handoff 与出站 WSS Relay。Remote MCP 服务 ChatGPT、Claude Web/Mobile 和云端 Agent。云端保存加密状态、路由元数据与 KMS Envelope 凭据。GitHub 保存代码、项目文档和用户确认发布的 Handoff 文件。
 
 ## 密钥钱包
 
@@ -35,12 +40,13 @@ flowchart TD
 Local config / CC Switch profile
   -> local credential discovery
   -> domain-separated SHA-256 fingerprint
-  -> encrypted Permission Vault entry
-  -> E2EE Vault bundle sync
+  -> authenticated Cloud Vault backfill
+  -> independent AES-256-GCM DEK per credential
+  -> Tencent Cloud KMS wrapped DEK
   -> source ID + model metadata in encrypted Status
 ```
 
-查看或复制密钥需要钱包密码。初始密码为 `123456`，用户可以在密钥钱包页修改。钱包只同步随机 salt 和 scrypt verifier，不保存密码明文。模型切换传递 source ID，由目标设备本地解密密钥并原子写入 Agent 配置。
+查看或复制密钥需要钱包密码。初始密码为 `123456`，用户可以在密钥钱包页修改。钱包认证使用 RFC 9807 OPAQUE，密码只在客户端参与计算；服务端保存 registration record。模型切换传递 source ID，目标设备按授权取得密钥并原子写入 Agent 配置。
 
 同一 Permission Vault 也提供通用钥匙串。账号密码、SSH、云控制台、GitHub、数据库、API、OAuth Client、License、卡密、模型、邮箱、VPN、证书、签名、Registry、域名、远程桌面、Webhook 和自定义凭据采用统一结构：
 
@@ -53,7 +59,9 @@ kind + label + purposes + tags
   + created / updated / expiration timestamps
 ```
 
-SQLite 中每个条目的完整 payload 使用 AES-256-GCM 加密。列表、搜索与 Dashboard snapshot 只返回遮罩后的 Secret 字段名；用户查看或复制时验证钱包密码。Agent 通过绑定 user、device、agent 的短期凭据调用 `credentials_resolve` 与 `credentials_get`，无需钱包密码。每次 Agent 明文读取、登记、更新和删除都写入不含 Secret 的本机审计记录。
+Cloud Vault 为每个条目生成独立 256-bit DEK，使用 AES-256-GCM 加密完整 Secret，再由腾讯云 KMS 的 KEK 包装 DEK。PostgreSQL 保存密文、IV、Auth Tag、Wrapped DEK 和经过字段名白名单约束的非敏感索引。列表与搜索只返回遮罩后的 Secret 字段名；用户查看验证钱包密码。Agent 使用最长一小时的短期 Session 和独立 Grant 调用 `credentials_resolve` 与 `credentials_get`，无需钱包密码。Project ID 必须由服务端签发的 Session 绑定。远程登记、更新和删除使用一次性审批 Token，审批绑定 Agent Session、操作和完整请求摘要。每次读取、登记、更新和删除都写入不含 Secret 的云端审计记录，凭据变更与审计在同一 PostgreSQL 事务提交。
+
+首次 Backfill 迁移凭据明文后由 Vault Runtime 立即重新加密。后续重放只允许相同记录或补齐缺失记录；云端条目已经更新或云端存在本机集合之外的条目时返回 `migration_conflict`。钱包 OPAQUE record 通过独立注册流程建立。
 
 模型钱包记录动态映射为稳定 UUID 的 `kind=model` 凭据，沿用原模型表和删除墓碑，不复制第二份 API Key。Agent 可以按 `model.api` 或 `model.configure` 读取；轮换后回写原模型凭据。
 
@@ -93,7 +101,7 @@ Status schema v3 同步包 ID、版本、manifest digest、目标平台、启用
 
 ## Universal Tool Gateway
 
-Codex、Claude Code 及使用第三方模型 API 的 Agent 只需要连接 One Status MCP。Agent 可以通过 `capabilities_get` 读取能力目录和安装状态；遇到邮件、日历、文件、协作、项目管理或设计任务时，MCP instructions 要求 Agent 先读取 `tools_list`，再通过 `tools_execute` 调用获准 action。One Status 在本机完成 Token 使用、刷新、scope 校验和审计，模型上下文只接收规范化后的业务结果。
+Codex、Claude Code 及使用第三方模型 API 的 Agent 只需要连接 One Status MCP。本机 Agent 使用 stdio MCP，云端与移动端 Agent 使用 OAuth 2.1 + PKCE 和 Streamable HTTP MCP。Agent 遇到邮件、日历、文件、协作、项目管理或设计任务时先读取 `tools_list`，再通过 `tools_execute` 调用获准 action。设备连接由 WSS 路由到在线 Desktop；Cloud Vault 凭据工具可以在设备离线时按授权运行。
 
 ```text
 Agent request
@@ -134,7 +142,9 @@ MCP instructions 要求 Agent 在用户提供可复用 Secret 的同一轮完成
 | 设备在线时间 | One Status Cloud | 是 |
 | Capability Pack manifest、版本、摘要和安装意图 | One Status E2EE；实际输出留在设备 | 否 |
 | Skills、Rules、MCP Manifest | 本机；确认后由 Adapter 生成 | 默认否 |
-| OAuth Token、模型 API Key、账号密码、SSH、云凭据、卡密、钱包 verifier | 本机 Permission Vault；二次加密 bundle 随 Status 同步 | 否 |
+| 模型 API Key、账号密码、SSH、云凭据、卡密 | Cloud Vault：每条凭据独立密文 + KMS Wrapped DEK | 授权请求期间可临时解密指定条目 |
+| 钱包 OPAQUE registration record | Cloud Vault PostgreSQL | 仅用于 PAKE 验证，不含钱包密码 |
+| 第三方 OAuth Token | 当前本机 Permission Vault；在线 Desktop 通过 Relay 执行 | 默认否 |
 | 模型 Token 汇总、请求数、数据来源和统计时间 | Device Sidecar 聚合；随加密设备报告同步 | 否 |
 | 项目代码、大文件、`HANDOFF.md` | GitHub | 受 GitHub 仓库权限控制 |
 | 本机绝对路径 | 每台设备本地映射 | 否 |
@@ -175,16 +185,20 @@ MCP instructions 要求 Agent 在用户提供可复用 Secret 的同一轮完成
 
 ## One Status Cloud
 
-生产云仅运行 Sync API：
+生产云运行相互隔离的服务模块：
 
-- 账号、密码 hash、设备 session 与撤销
+- 账号、OPAQUE registration record、设备 session 与撤销
 - 加密 Status envelope
 - CAS revision 与 mutation 幂等
 - 设备 presence
 - 登录与注册限流
+- OAuth Authorization Server 与 Streamable HTTP Remote MCP
+- 出站 WSS Device Relay、多设备能力路由和明确离线状态
+- Vault Runtime、PostgreSQL 与腾讯云 KMS Envelope Encryption
+- 短期 Agent Session、Credential Grant 和脱敏审计
 - HTTPS、健康检查、持久化与备份
 
-云端不配置 Status Key、本地 profile 或可解密 Permission Vault。云端只看到外层 Status ciphertext；其中的 Permission Vault bundle 还使用 Status Key 派生密钥独立加密。当前 HTTP MCP 适合单用户信任的远程运行时，不进入多人共享云进程。
+云端不配置 Status Key 或本地 profile。Status、Memory 与 Persona 继续保持 E2EE。在线 Desktop 只向 Relay 返回 Profile、Context 或 Memory 的最小投影视图。Vault Runtime 独占 KMS 权限，在 OAuth scope、Agent Grant、凭据策略、用途、项目、过期时间和撤销校验通过后临时解密指定凭据；明文和 DEK 不写日志、不进入缓存和持久层。
 
 ## GitHub 与 Handoff
 
